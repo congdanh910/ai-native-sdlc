@@ -1,0 +1,21 @@
+{
+  "product": "Team Task Board",
+  "repository": "https://github.com/congdanh910/ai-native-product-demo.git",
+  "baseline_branch": "pilot/task-board-baseline",
+  "base_commit": "ec9cdeb9c5c4e72f279eba3599eb4b31c869f713",
+  "agent_context_path": "AGENTS.md",
+  "agent_context_sha256": "10612116850a04d18448da270d8d2a69c80e84145131ba1d49b0f25de61879bf",
+  "required_ci_check": "task-board-tests",
+  "validation_commands": [
+    "npm test",
+    "node --check src/app.js",
+    "node --check src/tasks.js"
+  ],
+  "tasks": [
+    { "id": "search-filter", "requirement_file": "01-search-filter.md" },
+    { "id": "due-dates", "requirement_file": "02-due-dates.md" },
+    { "id": "priority", "requirement_file": "03-priority.md" },
+    { "id": "archive", "requirement_file": "04-archive.md" },
+    { "id": "backup", "requirement_file": "05-backup.md" }
+  ]
+}
