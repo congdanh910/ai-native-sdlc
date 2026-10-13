@@ -32,7 +32,7 @@ from controller.app.schemas import (PlanPayload, PlanTask, Review, Spec, TestPla
 from controller.app.state_machine import transition_run, transition_task
 from controller.app.states import RunStatus, TaskStatus, TeamRole
 from controller.app.team.base import RunContext, StepResult, Team
-from controller.app.team.tidy import tidy_plan, tidy_tests
+from controller.app.team.tidy import tidy_plan, tidy_spec, tidy_tests
 
 MAX_REMEDIATIONS = 2
 
@@ -220,7 +220,8 @@ def compute(team: Team, loaded: Loaded) -> dict:
 
     result: dict = {}
     if loaded.kind == "specify":
-        result = {"spec": team.specify(context).model_dump()}
+        spec, tidied = tidy_spec(team.specify(context), context.policy)
+        result = {"spec": spec.model_dump(), "tidied": tidied}
         record()
     elif loaded.kind == "plan":
         plan, tidied = tidy_plan(team.plan(context), context.policy)

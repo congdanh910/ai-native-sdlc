@@ -1,14 +1,39 @@
 """Deterministic clean-up of a model's plan and test plan before grounding.
 
 Prompts alone did not stop Qwen3 from planning test-file tasks or numbering test
-cases against tasks that do not exist (eval 3). These are policy rules, so the
+cases against tasks that do not exist (eval 3), nor the BA from writing "all tests
+pass" criteria that no task can deliver (eval 4). These are policy rules, so the
 coordinator enforces them in code and records every change it made. Nothing is
-invented: paths and tasks are only removed, and a test case is only moved to a
+invented: criteria, paths and tasks are only moved or removed, and a test case is only moved to a
 task that already delivers the criterion it proves.
 """
 
+import re
+
 from controller.app.projects.config import EffectivePolicy, matches_any
-from controller.app.schemas import PlanPayload, TestPlan
+from controller.app.schemas import PlanPayload, Spec, TestPlan
+
+PROCESS_CRITERION = re.compile(
+    r"\b(?:(?:all|existing|unit|the)\s+)?tests?\b[^.;]*\bpass(?:es|ed)?\b|\btest suite\b|\bsyntax checks?\b|\blint(?:er|ing)?\b",
+    re.I)
+
+
+def tidy_spec(spec: Spec, policy: EffectivePolicy) -> tuple[Spec, list[str]]:
+    """Move criteria about running tests or checks to concerns: validation proves them, no task can deliver them."""
+    commands = [" ".join(command.run) for command in policy.validation]
+    process = [c for c in spec.acceptance_criteria
+               if PROCESS_CRITERION.search(c.text) or any(command in c.text for command in commands)]
+    if not process or len(process) == len(spec.acceptance_criteria):
+        return spec, []
+    kept = [c for c in spec.acceptance_criteria if c not in process]
+    renumber = {c.id: f"AC-{index}" for index, c in enumerate(kept, start=1)}
+    notes = [f"{c.id}: moved to concerns; validation runs tests and checks, so it is not a criterion" for c in process]
+    if any(old != new for old, new in renumber.items()):
+        notes.append("renumbered criteria: " + ", ".join(f"{old}→{new}" for old, new in renumber.items() if old != new))
+    data = spec.model_dump()
+    data["acceptance_criteria"] = [{"id": renumber[c.id], "text": c.text} for c in kept]
+    data["concerns"] = data["concerns"] + [f"Covered by validation, not a criterion: {c.text}" for c in process]
+    return Spec.model_validate(data), notes
 
 
 def tidy_plan(plan: PlanPayload, policy: EffectivePolicy) -> tuple[PlanPayload, list[str]]:

@@ -1,7 +1,7 @@
 from controller.app.config import PROJECT_ROOT
 from controller.app.projects.config import effective_policy, parse_project_config
-from controller.app.schemas import PlanPayload, TestPlan
-from controller.app.team.tidy import tidy_plan, tidy_tests
+from controller.app.schemas import PlanPayload, Spec, TestPlan
+from controller.app.team.tidy import tidy_plan, tidy_spec, tidy_tests
 
 
 def policy():
@@ -50,3 +50,28 @@ def test_cases_on_unknown_tasks_move_to_the_task_that_delivers_the_criterion():
     tidied, notes = tidy_tests(tests, plan)
     assert [c.task_id for c in tidied.cases] == ["T1", "T2", "T9"]
     assert notes == ["TC-2: moved from unknown task T7 to T2, which delivers AC-2"]
+
+
+def spec(*texts):
+    return Spec(goal="g", user_stories=["s"],
+                acceptance_criteria=[{"id": f"AC-{i}", "text": t} for i, t in enumerate(texts, start=1)])
+
+
+def test_process_criteria_move_to_concerns_and_the_rest_renumber():
+    tidied, notes = tidy_spec(spec(
+        "The card shows the due date.",
+        "All tests in `tests/tasks.test.js` pass when run with `npm test`, including an overdue case.",
+        "The code passes syntax checks using `node --check src/app.js`.",
+        "A wrong password is rejected.",
+        "An invalid date is rejected and saved data is kept."), policy())
+    assert [(c.id, c.text[:12]) for c in tidied.acceptance_criteria] == [
+        ("AC-1", "The card sho"), ("AC-2", "A wrong pass"), ("AC-3", "An invalid d")]
+    assert len(tidied.concerns) == 2 and tidied.concerns[0].startswith("Covered by validation, not a criterion: All tests")
+    assert notes[:2] == ["AC-2: moved to concerns; validation runs tests and checks, so it is not a criterion",
+                         "AC-3: moved to concerns; validation runs tests and checks, so it is not a criterion"]
+    assert "AC-4→AC-2" in notes[2] and "AC-5→AC-3" in notes[2]
+
+
+def test_behavioural_spec_is_unchanged():
+    clean = spec("The card shows the due date.", "Tasks without a due date still load.")
+    assert tidy_spec(clean, policy()) == (clean, [])
