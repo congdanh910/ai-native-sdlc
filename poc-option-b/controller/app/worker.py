@@ -5,10 +5,15 @@ Run with `python -m controller.app.worker`; `sdlc up` starts it in the backgroun
 
 import logging
 import os
+import shutil
 import signal
 import socket
+import subprocess
+import sys
 import threading
 import time
+
+from sqlalchemy import select
 
 from controller.app import coordinator, jobs
 from controller.app.db import session_scope
@@ -83,14 +88,51 @@ def advance_evals() -> None:
             log.info("eval %s completed", eval_id)
 
 
+class StayAwake:
+    """Keep macOS from idle-sleeping while the team has work; sleep would cut the GX10 tunnel."""
+
+    def __init__(self, idle_release_seconds: float = 120):
+        self.idle_release_seconds = idle_release_seconds
+        self.process: subprocess.Popen | None = None
+        self.last_work = 0.0
+
+    def busy(self) -> None:
+        self.last_work = time.monotonic()
+        if self.process is None and sys.platform == "darwin" and shutil.which("caffeinate"):
+            self.process = subprocess.Popen(["caffeinate", "-i", "-w", str(os.getpid())])
+            log.info("holding an idle-sleep assertion while jobs run")
+
+    def idle(self, queue_has_work: bool) -> None:
+        if queue_has_work:
+            self.busy()
+        elif self.process and time.monotonic() - self.last_work > self.idle_release_seconds:
+            self.release()
+
+    def release(self) -> None:
+        if self.process:
+            self.process.terminate()
+            self.process = None
+            log.info("released the idle-sleep assertion")
+
+
+def _queue_has_work() -> bool:
+    with session_scope() as session:
+        return session.scalar(select(Execution.id).where(Execution.status.in_(("queued", "running"))).limit(1)) is not None
+
+
 def run_forever(poll_seconds: float = 1.0) -> None:
     team = get_team()
     stopping = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stopping.set())
+    awake = StayAwake()
     log.info("worker %s started with team %s", WORKER_ID, team.engine)
     while not stopping.is_set():
         try:
             busy = run_once(team)
+            if busy:
+                awake.busy()
+            else:
+                awake.idle(_queue_has_work())
         except Exception:
             log.exception("worker loop error")
             busy = False
@@ -100,6 +142,7 @@ def run_forever(poll_seconds: float = 1.0) -> None:
             except Exception:
                 log.exception("eval scoring failed")
             stopping.wait(poll_seconds)
+    awake.release()
     log.info("worker stopped")
 
 

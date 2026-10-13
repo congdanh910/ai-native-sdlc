@@ -5,7 +5,7 @@ Input keys: intent (Markdown), answers (questions already answered by the Produc
 Output keys:
 - goal: one or two sentences.
 - user_stories: array of strings in the form "As a <user>, I want <capability> so that <benefit>".
-- acceptance_criteria: array of objects with keys id and text. Ids are "AC-1", "AC-2" and so on. Each text is one observable, testable behaviour of the product, including edge cases and error handling the intent asks for. Do not invent requirements that the intent does not support. Do not write criteria about running tests, linters or syntax checks: the team runs them automatically. Keep exact formats, values and limits that the intent states.
+- acceptance_criteria: array of objects with keys id and text. Ids are "AC-1", "AC-2" and so on. Each text is one observable, testable behaviour of the product, including edge cases and error handling the intent asks for. Do not invent requirements that the intent does not support. Do not write criteria about running tests, linters or syntax checks: the team runs them automatically. Keep exact formats, values and limits that the intent states. Write at most 8 criteria: combine closely related behaviours into one criterion rather than splitting them.
 - assumptions: array of strings; include every answer from the input that you relied on.
 - concerns: array of strings: risks, conflicts with agents_md, scope that looks too large, and technical questions for the Tech Lead.
 - questions: array of objects with keys question and blocking (true or false), for the Product Owner only.

@@ -20,6 +20,7 @@ PROMPTS = PROJECT_ROOT / "langflow" / "prompts"
 MAX_RESPONSE_BYTES = 2_000_000
 FLOW_PREFIX = "sdlc-v3-"
 ROLES = ("intent-draft", "spec", "plan", "test-design", "review")
+OLLAMA_TIMEOUT_SECONDS = 300
 
 
 class LangflowError(RuntimeError):
@@ -79,7 +80,7 @@ def extract_json(text: str) -> dict:
 
 
 class LangflowClient:
-    def __init__(self, base_url: str, api_key: str, *, timeout: float = 600.0,
+    def __init__(self, base_url: str, api_key: str, *, timeout: float = OLLAMA_TIMEOUT_SECONDS + 60,
                  transport: httpx.BaseTransport | None = None) -> None:
         parsed = urlsplit(base_url)
         if parsed.scheme != "http" or parsed.hostname not in {"localhost", "127.0.0.1"}:
@@ -155,7 +156,8 @@ class LangflowClient:
 
 
 def flow_description(prompt: RolePrompt, model: str, num_ctx: int) -> str:
-    return f"AI-native SDLC {prompt.role} role. prompt {prompt.version}, model {model}, num_ctx {num_ctx}. Managed by sdlc up."
+    return (f"AI-native SDLC {prompt.role} role. prompt {prompt.version}, model {model}, num_ctx {num_ctx}, "
+            f"timeout {OLLAMA_TIMEOUT_SECONDS}s. Managed by sdlc up.")
 
 
 def build_graph(template: dict, ollama_component: dict, prompt: str, *, model: str, ollama_url: str,
@@ -175,6 +177,7 @@ def build_graph(template: dict, ollama_component: dict, prompt: str, *, model: s
     fields["temperature"]["value"] = 0.0
     fields["stream"]["value"] = False
     fields["num_ctx"]["value"] = num_ctx
+    fields["timeout"]["value"] = OLLAMA_TIMEOUT_SECONDS
     for edge in graph["edges"]:
         for key in ("source", "target", "sourceHandle", "targetHandle", "id"):
             if isinstance(edge.get(key), str):

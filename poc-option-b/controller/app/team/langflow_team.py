@@ -9,16 +9,19 @@ from collections.abc import Callable
 import time
 from typing import TypeVar
 
+import httpx
 from pydantic import BaseModel, ValidationError
 
 from controller.app import capacity
 from controller.app.config import Settings
 from controller.app.integrations.langflow import (InvalidModelOutput, LangflowClient, client_from_settings,
                                                   extract_json, role_prompt)
-from controller.app.schemas import Intent, PlanPayload, Review, Spec, TestPlan
+from controller.app.projects.config import matches_any
+from controller.app.schemas import Intent, PlanPayload, Review, Spec, TestPlan, parse_criteria
 from controller.app.team import normalize
 from controller.app.team.base import CallRecord, CapacityBusy, RunContext
 from controller.app.team.mock import MockTeam
+from controller.app.tunnel import ensure_tunnel, tunnel_status
 
 MAX_FORMAT_RETRIES = 2
 CAPACITY_CACHE_SECONDS = 120
@@ -27,13 +30,16 @@ Model = TypeVar("Model", bound=BaseModel)
 
 class LangflowTeam(MockTeam):
     def __init__(self, settings: Settings, client: LangflowClient | None = None,
-                 check_capacity: Callable[[], list[str]] | None = None):
+                 check_capacity: Callable[[], list[str]] | None = None,
+                 check_ollama: Callable[[], None] | None = None):
         self.settings = settings
         self.client = client or client_from_settings(settings)
         self.engine = settings.ollama_model
         self.last_call: CallRecord | None = None
         self._check_capacity = check_capacity or self._gx10_capacity
         self._capacity_ok_until = 0.0
+        if check_ollama is not None:
+            self._ensure_ollama = check_ollama
 
     # ------------------------------------------------------------ plumbing
 
@@ -42,7 +48,27 @@ class LangflowTeam(MockTeam):
         return capacity.evaluate(sample, min_available_mib=self.settings.gx10_min_available_mib,
                                  max_gpu_util=self.settings.gx10_max_gpu_util)
 
+    def _ensure_ollama(self) -> None:
+        """Ollama must answer through the tunnel; reopen a tunnel that sdlc manages if it dropped."""
+        if self._ollama_reachable():
+            return
+        if tunnel_status(self.settings).state == "down":
+            try:
+                ensure_tunnel(self.settings)
+            except RuntimeError as exc:
+                raise CapacityBusy(f"the SSH tunnel to GX10 is down and could not be reopened: {exc}") from exc
+            if self._ollama_reachable():
+                return
+        raise CapacityBusy("Ollama on GX10 does not answer through the tunnel")
+
+    def _ollama_reachable(self) -> bool:
+        try:
+            return httpx.get(f"{self.settings.ollama_url}/api/tags", timeout=5).status_code == 200
+        except httpx.HTTPError:
+            return False
+
     def _ensure_capacity(self) -> None:
+        self._ensure_ollama()
         if time.monotonic() < self._capacity_ok_until:
             return
         try:
@@ -100,8 +126,15 @@ class LangflowTeam(MockTeam):
                          context.session_id)
 
     def design_tests(self, context: RunContext, plan: PlanPayload) -> TestPlan:
-        payload = {"spec": context.spec_md, "plan": plan.model_dump(), "agents_md": context.agents_md,
-                   "repository": context.repository, "policy": self._policy(context)}
+        criteria = [{"id": c.id, "text": c.text} for c in parse_criteria(context.spec_md or "")]
+        # The QA Analyst needs the existing tests and the names it can call, not every source file;
+        # a smaller input leaves room in the context window for one case per criterion.
+        test_paths = context.policy.test_paths
+        repository = {"files": context.repository.get("files", []), "symbols": context.repository.get("symbols", {}),
+                      "selected_files": [f for f in context.repository.get("selected_files", [])
+                                         if matches_any(f["path"], test_paths)]}
+        payload = {"spec": context.spec_md, "criteria": criteria, "plan": plan.model_dump(),
+                   "agents_md": context.agents_md, "repository": repository, "policy": self._policy(context)}
         return self._ask("test-design", payload, TestPlan, normalize.test_plan, context.session_id)
 
     def review(self, context: RunContext, plan: PlanPayload, tests: TestPlan) -> Review:

@@ -19,6 +19,8 @@ Rules:
 - Follow agents_md: put rules where its architecture says they belong.
 - Every acceptance criterion must be delivered by at least one task.
 - Never reference a file, function or storage key that is not in the input. If something you need is missing, say so in the summary.
-- Every task changes at least one source file. Never include protected paths, test files (the QA Engineer writes tests), CI configuration, or tasks that only run checks, tests or reviews.
+- Every task changes at least one source file. Never include protected paths, test files, CI configuration, or tasks that only run checks, tests or reviews.
+- When agents_md asks to add or update tests, that work belongs to the QA Engineer, who writes the tests from the test plan before each task. Do not plan a task for it and do not list test files in modify or create.
+- For user-visible changes, include the markup and stylesheet files from repository.files that the change needs, not only the scripts.
 - Use at most policy.max_tasks tasks; prefer fewer, cohesive tasks.
 - If feedback is present, fix every problem it lists.

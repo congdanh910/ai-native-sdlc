@@ -85,7 +85,7 @@ SPEC = {"goal": "g", "user_stories": ["s"], "acceptance_criteria": [{"id": "AC-1
 
 def test_invalid_answer_is_sent_back_with_the_error(settings):
     client = FakeClient(["not json", json.dumps({"goal": "g"}), json.dumps(SPEC)])
-    team = LangflowTeam(settings, client=client, check_capacity=lambda: [])
+    team = LangflowTeam(settings, client=client, check_capacity=lambda: [], check_ollama=lambda: None)
     spec = team.specify(context())
     assert spec.acceptance_criteria[0].id == "AC-1"
     assert team.last_call.attempts == 3 and team.last_call.engine == "qwen3:30b-instruct"
@@ -93,21 +93,22 @@ def test_invalid_answer_is_sent_back_with_the_error(settings):
 
 
 def test_gives_up_after_three_invalid_answers(settings):
-    team = LangflowTeam(settings, client=FakeClient(["x", "y", "z"]), check_capacity=lambda: [])
+    team = LangflowTeam(settings, client=FakeClient(["x", "y", "z"]), check_capacity=lambda: [], check_ollama=lambda: None)
     with pytest.raises(InvalidModelOutput, match="after 3 attempts"):
         team.specify(context())
 
 
 def test_busy_gx10_stops_before_any_model_call(settings):
     client = FakeClient([json.dumps(SPEC)])
-    team = LangflowTeam(settings, client=client, check_capacity=lambda: ["GPU utilization 95% is above 20%"])
+    team = LangflowTeam(settings, client=client, check_capacity=lambda: ["GPU utilization 95% is above 20%"],
+                        check_ollama=lambda: None)
     with pytest.raises(CapacityBusy, match="GPU"):
         team.specify(context())
     assert client.calls == []
 
 
 def test_doing_roles_remain_mocked(settings):
-    team = LangflowTeam(settings, client=FakeClient([]), check_capacity=lambda: [])
+    team = LangflowTeam(settings, client=FakeClient([]), check_capacity=lambda: [], check_ollama=lambda: None)
     assert team.validate(context(), None).detail.startswith("mock:")
 
 
@@ -116,3 +117,13 @@ def test_normalize_joins_list_sentences_in_test_cases():
                                            "expected": ["a", "b"], "target_file": "tests/x.test.js"}]})
     case = data["cases"][0]
     assert case["expected"] == "a; b" and case["description"] == "given; when" and case["id"] == "TC-1"
+
+
+def test_unreachable_ollama_postpones_instead_of_failing(settings, monkeypatch):
+    from controller.app.team import langflow_team
+    from controller.app.tunnel import TunnelStatus
+    monkeypatch.setattr(langflow_team, "tunnel_status", lambda s: TunnelStatus("external"))
+    team = LangflowTeam(settings, client=FakeClient([json.dumps(SPEC)]), check_capacity=lambda: [])
+    monkeypatch.setattr(team, "_ollama_reachable", lambda: False)
+    with pytest.raises(CapacityBusy, match="does not answer"):
+        team.specify(context())
