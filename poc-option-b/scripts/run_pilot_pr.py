@@ -35,7 +35,7 @@ def main() -> None:
             raise SystemExit("run is not a reviewed run on the pinned pilot commit")
         try:
             feature_id = feature_id_for_requirement(manifest, run.requirement, project_root)
-            base_branch = pr_base_branch(manifest, feature_id)
+            base_branch = pr_base_branch(manifest, feature_id, run.executor)
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
     pilot_repo = project_root / ".data/repos/ai-native-product-demo"

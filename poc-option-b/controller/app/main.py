@@ -1,5 +1,6 @@
 import hmac
 import json
+from typing import Literal
 from uuid import UUID
 from uuid import uuid4
 
@@ -89,7 +90,8 @@ def api_pilot_features() -> list[dict[str, str]]:
 
 @app.post("/api/pilot/runs/{feature_id}", dependencies=[Depends(require_controller_token)], status_code=201)
 def api_create_pilot_run(
-    feature_id: str, session: Session = Depends(get_session), settings: Settings = Depends(get_settings),
+    feature_id: str, executor: Literal["codex", "claude"] = "codex",
+    session: Session = Depends(get_session), settings: Settings = Depends(get_settings),
 ) -> dict:
     manifest = json.loads((PILOT_ROOT / "benchmark.json").read_text())
     feature = next((item for item in manifest["tasks"] if item["id"] == feature_id), None)
@@ -100,6 +102,7 @@ def api_create_pilot_run(
         base_commit=manifest["base_commit"],
         requirement=(PILOT_ROOT / feature["requirement_file"]).read_text(),
         idempotency_key=f"pilot:{feature_id}:{uuid4()}",
+        executor=executor,
     )
     run = create_run(session, request, settings.repo_allowlist)
     session.commit()

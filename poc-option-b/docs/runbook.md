@@ -44,6 +44,7 @@ The same workflow can be controlled from a terminal. `show` displays the current
 ./sdlc features
 ./sdlc runs
 ./sdlc create backup
+./sdlc create search-filter --executor claude
 ./sdlc show RUN_ID
 ./sdlc revise-plan RUN_ID --file corrected-plan.json --actor your-name --reason 'Correct model boundary'
 ./sdlc approve-plan RUN_ID --plan-sha SHA256 --actor your-name
@@ -51,7 +52,7 @@ The same workflow can be controlled from a terminal. `show` displays the current
 ./sdlc events RUN_ID
 ```
 
-Set `GX10_SSH_HOST`, `GX10_SSH_PORT`, and `GX10_SSH_IDENTITY_FILE` in `.env` (or pass matching CLI flags) to run `analyze RUN_ID` and `review RUN_ID`. Both commands invoke the three-sample read-only capacity gate immediately before Langflow inference and refuse to continue on failure. If the same three CDP containers remain unhealthy, pass `--allow-unhealthy cdp-backend --allow-unhealthy cdp-frontend --allow-unhealthy cdp-storefront` after checking their state. `code RUN_ID` processes one approved task; repeat until the run enters `VALIDATING`. Then use `review RUN_ID`, `prepare-base RUN_ID`, `publish-pr RUN_ID`, `reconcile-ci RUN_ID`, inspect the PR and CI evidence, and `approve-pr RUN_ID --actor your-name` after human review. `prepare-base` creates only the feature-specific branch at the immutable benchmark commit, and refuses to overwrite a moved branch. Approval records a decision but does not merge the PR. Every worker command is scoped to the fixed benchmark run and uses the existing `--execute` gate internally. Use `SDLC_CONTROLLER_URL` to point CLI read/decision commands to a different local port.
+Set `GX10_SSH_HOST`, `GX10_SSH_PORT`, and `GX10_SSH_IDENTITY_FILE` in `.env` (or pass matching CLI flags) to run `analyze RUN_ID` and `review RUN_ID`. Both commands invoke the three-sample read-only capacity gate immediately before Langflow inference and refuse to continue on failure. If the same three CDP containers remain unhealthy, pass `--allow-unhealthy cdp-backend --allow-unhealthy cdp-frontend --allow-unhealthy cdp-storefront` after checking their state. `code RUN_ID` processes one approved Codex task; for a Claude run use `code RUN_ID --executor claude`. Repeat until the run enters `VALIDATING`. Then use `review RUN_ID`, `prepare-base RUN_ID`, `publish-pr RUN_ID`, `reconcile-ci RUN_ID`, inspect the PR and CI evidence, and `approve-pr RUN_ID --actor your-name` after human review. `prepare-base` creates only the feature-specific branch at the immutable benchmark commit, and refuses to overwrite a moved branch. Approval records a decision but does not merge the PR. Every worker command is scoped to the fixed benchmark run and uses the existing `--execute` gate internally. Use `SDLC_CONTROLLER_URL` to point CLI read/decision commands to a different local port.
 
 The in-memory B2 demo ends at `VALIDATING` and does not access GX10. To set up dedicated local services from scratch, copy `.env.example` to `.env`, replace every `CHANGE_ME` value with a locally generated value, and keep `.env` out of Git. Keep `DATABASE_URL` consistent with `SDLC_DB_PASSWORD` and `SDLC_DB_PORT`; use URL-safe database passwords. Then run:
 

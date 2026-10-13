@@ -68,6 +68,7 @@ def main() -> None:
             raise SystemExit("pilot PR is not awaiting CI reconciliation")
         repo, number, sha = pr.repo_full_name, pr.number, pr.head_sha
         requirement = run.requirement
+        executor = run.executor
         expected_branch = session.scalar(
             select(Execution.branch).join(Task, Execution.task_id == Task.id)
             .where(Task.run_id == args.run_id, Execution.status == "COMPLETED")
@@ -81,7 +82,7 @@ def main() -> None:
     project_root = Path(__file__).resolve().parents[1]
     try:
         feature_id = feature_id_for_requirement(manifest, requirement, project_root)
-        base_branch = pr_base_branch(manifest, feature_id)
+        base_branch = pr_base_branch(manifest, feature_id, executor)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
     details = gh_json(

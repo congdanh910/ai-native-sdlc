@@ -167,6 +167,10 @@ def test_dashboard_lists_and_creates_pinned_pilot_runs(db_session: Session) -> N
         listed = client.get("/api/runs", headers=headers)
         assert listed.status_code == 200
         assert listed.json()[0]["id"] == created.json()["id"]
+        claude = client.post("/api/pilot/runs/search-filter?executor=claude", headers=headers)
+        assert claude.status_code == 201
+        assert claude.json()["executor"] == "claude"
+        assert client.post("/api/pilot/runs/search-filter?executor=other", headers=headers).status_code == 422
         assert client.get("/api/runs?limit=101", headers=headers).status_code == 422
     finally:
         app.dependency_overrides.clear()

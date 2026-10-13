@@ -11,7 +11,7 @@
   <header><div><small>AI NATIVE SDLC · OPTION B</small><h1>Control room</h1><p>Theo dõi run, đọc plan và ghi nhận quyết định.</p></div><span class="badge">Local pilot</span></header>
   <main>
     <section class="panel auth"><label for="token">Controller token</label><input id="token" type="password" autocomplete="off" placeholder="CONTROLLER_TOKEN trong .env"><button id="connect">Kết nối</button><span id="connection">Chưa kết nối</span></section>
-    <section class="panel create"><div><h2>Tạo run benchmark</h2><p>Chọn một feature cố định; workflow vẫn cần CLI để chạy model và coding.</p></div><select id="feature" aria-label="Feature"></select><button id="create">Tạo run</button></section>
+    <section class="panel create"><div><h2>Tạo run benchmark</h2><p>Chọn feature và executor; workflow vẫn cần CLI để chạy model và coding.</p></div><select id="feature" aria-label="Feature"></select><select id="executor" aria-label="Executor"><option value="codex">Codex</option><option value="claude">Claude</option></select><button id="create">Tạo run</button></section>
     <div class="layout"><section class="panel runs"><div class="section-head"><h2>Runs</h2><button id="refresh" class="quiet">Làm mới</button></div><div id="runs" class="run-list"></div></section>
     <section class="panel detail"><div class="section-head"><h2>Chi tiết</h2><code id="run-id"></code></div><div id="detail" class="empty">Chọn một run để xem plan, task, sự kiện và PR.</div></section></div>
     <div id="message" role="status" aria-live="polite"></div>

@@ -169,7 +169,7 @@ $("refresh").onclick = () => refresh().catch((error) => message(error.message));
 $("create").onclick = async () => {
   $("create").disabled = true;
   try {
-    const run = await api(`/api/pilot/runs/${encodeURIComponent($("feature").value)}`, {method: "POST"});
+    const run = await api(`/api/pilot/runs/${encodeURIComponent($("feature").value)}?executor=${encodeURIComponent($("executor").value)}`, {method: "POST"});
     selectedId = run.id;
     await refresh();
     message(`Đã tạo run ${run.id}. Dùng CLI để chạy analysis.`, true);

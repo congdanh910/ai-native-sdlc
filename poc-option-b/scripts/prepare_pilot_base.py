@@ -40,7 +40,8 @@ def main() -> None:
                 or run.status != "PR_READY"):
             raise SystemExit("run is not a reviewed pinned pilot ready for PR")
         feature = feature_id_for_requirement(manifest, run.requirement, root)
-    branch = pr_base_branch(manifest, feature)
+        executor = run.executor
+    branch = pr_base_branch(manifest, feature, executor)
     repo = root / ".data/repos/ai-native-product-demo"
     if git(repo, "remote", "get-url", "origin") != manifest["repository"]:
         raise SystemExit("pilot clone origin differs from manifest")

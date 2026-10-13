@@ -16,5 +16,6 @@ def test_benchmark_features_have_isolated_pr_bases():
         expected = (manifest["baseline_branch"] if feature_id == "search-filter"
                     else f"pilot/benchmark-base-{feature_id}")
         assert pr_base_branch(manifest, feature_id) == expected
+        assert pr_base_branch(manifest, feature_id, "claude") == f"pilot/benchmark-base-claude-{feature_id}"
     with pytest.raises(ValueError, match="requirement"):
         feature_id_for_requirement(manifest, "unlisted requirement", root)

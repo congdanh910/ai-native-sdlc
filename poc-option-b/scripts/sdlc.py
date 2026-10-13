@@ -56,6 +56,7 @@ def main() -> None:
     commands.add_parser("features", help="list fixed benchmark features")
     create = commands.add_parser("create", help="create a run for one fixed benchmark feature")
     create.add_argument("feature")
+    create.add_argument("--executor", choices=("codex", "claude"), default="codex")
     for name in ("show", "events", "approve-plan", "reject-plan", "revise-plan", "approve-pr", "cancel", "analyze", "code", "review", "prepare-base", "publish-pr", "reconcile-ci"):
         command = commands.add_parser(name)
         command.add_argument("run_id", type=UUID)
@@ -84,7 +85,7 @@ def main() -> None:
     elif name == "features":
         result = [{"id": item["id"]} for item in request("GET", "/api/pilot/features")]
     elif name == "create":
-        result = request("POST", f"/api/pilot/runs/{quote(args.feature, safe='')}")
+        result = request("POST", f"/api/pilot/runs/{quote(args.feature, safe='')}?executor={args.executor}")
     elif name in {"show", "events"}:
         suffix = "/events" if name == "events" else ""
         result = request("GET", f"/api/runs/{args.run_id}{suffix}")
