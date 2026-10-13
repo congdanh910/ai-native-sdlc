@@ -7,6 +7,7 @@ import subprocess
 import sys
 from pathlib import Path
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 from uuid import UUID
 
@@ -18,7 +19,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def request(method: str, path: str, payload: dict | None = None) -> object:
     token = get_settings().controller_token
-    url = os.environ.get("SDLC_CONTROLLER_URL", "http://127.0.0.1:8765").rstrip("/") + path
+    base_url = os.environ.get("SDLC_CONTROLLER_URL", "http://127.0.0.1:8765")
+    parsed = urlsplit(base_url)
+    if (parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+            or parsed.username or parsed.password or parsed.path not in {"", "/"}
+            or parsed.query or parsed.fragment):
+        raise SystemExit("SDLC_CONTROLLER_URL must be a local loopback HTTP origin")
+    url = base_url.rstrip("/") + path
     data = None if payload is None else json.dumps(payload).encode("utf-8")
     headers = {"X-Controller-Token": token}
     if data is not None:
@@ -77,7 +84,7 @@ def main() -> None:
     elif name == "features":
         result = [{"id": item["id"]} for item in request("GET", "/api/pilot/features")]
     elif name == "create":
-        result = request("POST", f"/api/pilot/runs/{args.feature}")
+        result = request("POST", f"/api/pilot/runs/{quote(args.feature, safe='')}")
     elif name in {"show", "events"}:
         suffix = "/events" if name == "events" else ""
         result = request("GET", f"/api/runs/{args.run_id}{suffix}")

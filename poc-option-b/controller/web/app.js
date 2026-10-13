@@ -24,7 +24,12 @@ async function api(path, options = {}) {
     cache: "no-store",
   });
   const body = await response.json();
-  if (!response.ok) throw new Error(typeof body.detail === "string" ? body.detail : `HTTP ${response.status}`);
+  if (!response.ok) {
+    const detail = Array.isArray(body.detail)
+      ? body.detail.map((item) => `${item.loc?.join(".") || "input"}: ${item.msg}`).join("; ")
+      : body.detail;
+    throw new Error(typeof detail === "string" ? detail : `HTTP ${response.status}`);
+  }
   return body;
 }
 
@@ -162,10 +167,12 @@ async function selectRun(id, refreshList = true) {
 $("connect").onclick = () => connect();
 $("refresh").onclick = () => refresh().catch((error) => message(error.message));
 $("create").onclick = async () => {
+  $("create").disabled = true;
   try {
     const run = await api(`/api/pilot/runs/${encodeURIComponent($("feature").value)}`, {method: "POST"});
     selectedId = run.id;
     await refresh();
     message(`Đã tạo run ${run.id}. Dùng CLI để chạy analysis.`, true);
   } catch (error) { message(error.message); }
+  finally { $("create").disabled = false; }
 };
