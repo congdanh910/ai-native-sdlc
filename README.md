@@ -1,5 +1,5 @@
 # AI-Native SDLC
 
-The project follows [Option B](AI_Native_SDLC_Option_B.md): Python and PostgreSQL own the SDLC lifecycle; Langflow provides Qwen3 analysis, planning and review.
+A single-operator POC of an AI-native development team, following [Option B](AI_Native_SDLC_Option_B.md): Python and PostgreSQL own the SDLC lifecycle; Langflow provides Qwen3 reasoning; Codex and Claude Code write tests and code; humans approve every spec, plan and merge.
 
-The implementation starts in [poc-option-b/](poc-option-b/README.md). It includes a CLI and a local browser control room backed by the same PostgreSQL controller. Its [runbook](poc-option-b/docs/runbook.md) describes setup, commands, safeguards and current pilot results.
+The design is in [AI_Native_SDLC_Option_B.md](AI_Native_SDLC_Option_B.md). The implementation is being rebuilt phase by phase in `poc-option-b/`.
