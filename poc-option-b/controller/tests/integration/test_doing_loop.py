@@ -192,7 +192,7 @@ def test_a_ruled_dispute_lets_the_qa_engineer_update_existing_tests(db, sample_r
     assert subjects[2].startswith("feat(T1)") and sum(s.startswith("test(T1)") for s in subjects) == 2
     with session_scope() as session:
         report = coordinator_report(session, run_id)
-    assert "QA Engineer updated the tests" in report and "test/tasks.test.js (-1 line(s))" in report
+    assert "QA Engineer updated the tests" in report and "test/tasks.test.js (+1/-1)" in report
 
 
 def test_kept_tests_send_the_developer_back_with_the_decision(db, sample_repo, tmp_path):

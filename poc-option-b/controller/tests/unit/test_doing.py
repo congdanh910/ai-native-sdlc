@@ -177,12 +177,14 @@ def test_developer_dispute_and_remediation_feedback(worktree, tmp_path):
 
 
 def test_red_check_needs_a_failing_test_unless_cases_are_regression_guards(worktree, tmp_path):
-    team, runner = doing(tmp_path, exit_codes=[1, 0, 0])
-    assert team.red_check(context(worktree), TASK, TESTS).ok  # unit-tests fail before the code: red
+    syntax_only = TASK.model_copy(update={"validation": ["syntax"]})  # the red check still runs the tests
+    team, runner = doing(tmp_path, exit_codes=[1, 0, 0, 0])
+    assert team.red_check(context(worktree), syntax_only, TESTS).ok  # unit-tests fail before the code: red
+    assert [call[1][0] for call in runner.calls] == ["npm", "node"]
     result = team.red_check(context(worktree), TASK, TESTS)
     assert not result.ok and "already pass" in result.detail
     guard = TestPlan(cases=[{**TESTS.cases[0].model_dump(), "expected_pass": True}])
-    team, runner = doing(tmp_path, exit_codes=[0])
+    team, runner = doing(tmp_path, exit_codes=[0, 0])
     assert team.red_check(context(worktree), TASK, guard).ok
     assert runner.calls[0][2:] == (False, False)  # no network, read-only
 

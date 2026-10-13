@@ -109,7 +109,8 @@ class CliDoing:
             changes.discard(worktree)
             return StepResult(False, "test changes rejected: " + "; ".join(problems),
                               evidence=self._evidence(result, label, problems=problems))
-        amended = [f"{c.path} (-{c.deleted} line(s))" for c in staged if c.deleted]
+        # Under a ruling every touched existing test file is listed: inserting a line into an assertion changes it too.
+        amended = [f"{c.path} (+{c.added}/-{c.deleted})" for c in staged if amend and c.status != "A"]
         subject = f"test({task.id}): {'update tests after a ruled dispute' if amend else task.title}"
         sha = changes.commit(worktree, subject, "qa_engineer")
         files = [c.path for c in staged]
@@ -127,7 +128,9 @@ class CliDoing:
                                   evidence={"reused": True})
         cases = self._cases(tests, task)
         expect_pass = bool(cases) and all(case["expected_pass"] for case in cases)
-        ok, detail, reports = red_check(self._gate(context), task.validation, expect_pass, f"{task.id}-red")
+        # Every command, not only the task's: a task may list just a syntax check, and the new tests must run.
+        names = [c.name for c in context.policy.validation]
+        ok, detail, reports = red_check(self._gate(context), names, expect_pass, f"{task.id}-red")
         return StepResult(ok, detail, evidence={"reports": reports})
 
     def implement(self, context: RunContext, task: PlanTask, attempt: int, tests: TestPlan | None = None,
