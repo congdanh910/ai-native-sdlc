@@ -307,7 +307,7 @@ The playbook treats agent configuration as code that needs regression tests. The
 - **Suite:** the five Task Board features at their pinned base commit, with the human-approved spec and plan of each as golden references. Later projects add their own suites.
 - **Plan-only evals** run Business Analyst, Tech Lead and QA Analyst and compare the result with the golden plan: grounding result, files and tasks matched, acceptance criteria covered. They need only Qwen3 and run in minutes.
 - **Full evals** also run coding, validation and review in disposable branches, never merged. They use subscription time, so the operator starts them explicitly.
-- **Triggers:** a change to `AGENTS.md`, `REVIEW.md`, prompts, Langflow flows, the model, the reasoning engine of a role or routing rules starts a plan-only eval; the web Evals page shows the delta from the last baseline.
+- **Triggers:** a change to `AGENTS.md`, `REVIEW.md`, prompts, Langflow flows, the model, the reasoning engine of a role or routing rules should start a plan-only eval; the web Evals page shows the delta from the last baseline. In B3 the operator starts evals from the Evals page; each eval records a fingerprint of the configuration and names the prompts that changed since the baseline. Automatic triggers follow once evals run unattended.
 - Every new failure category observed in real runs should add an eval case.
 
 ## Instructions to Codex

@@ -162,6 +162,18 @@ def check_api(settings: Settings) -> Check:
     return _guard("api", "Run ./sdlc up", run)
 
 
+def check_flows(settings: Settings) -> Check:
+    from controller.app.integrations.langflow import client_from_settings
+
+    def run() -> Check:
+        drift = client_from_settings(settings).flow_drift(settings.ollama_model, settings.ollama_num_ctx)
+        if drift:
+            status = FAIL if settings.sdlc_team_mode == "qwen3" else WARN
+            return Check("flows", status, "; ".join(drift), "Run ./sdlc up to sync langflow/prompts into Langflow")
+        return Check("flows", OK, f"5 role flows match langflow/prompts (team mode {settings.sdlc_team_mode})")
+    return _guard("flows", "Run ./sdlc up", run)
+
+
 def check_worker() -> Check:
     pid = WORKER.pid()
     if pid is None:
@@ -171,7 +183,7 @@ def check_worker() -> Check:
 
 def readiness_checks(settings: Settings, engine: Engine) -> list[Check]:
     """Fast checks for /health/ready."""
-    return [check_postgres(engine), check_migrations(engine), check_langflow(settings),
+    return [check_postgres(engine), check_migrations(engine), check_langflow(settings), check_flows(settings),
             check_tunnel(settings), check_ollama(settings), check_worker()]
 
 

@@ -95,8 +95,8 @@ def inbox(session: Session) -> list[dict]:
     rows = session.execute(select(Run, Project.key).join(Project, Project.id == Run.project_id)
                            .order_by(Run.updated_at)).all()
     for run, key in rows:
-        if run.status not in ACTIVE and not needs_classification(run):
-            continue
+        if run.experiment or (run.status not in ACTIVE and not needs_classification(run)):
+            continue  # experiment runs are followed on the Evals page
         need = waiting(run)
         if need:
             items.append({**run_summary(run, key), **{"role": need["role"], "action": need["action"],

@@ -36,6 +36,22 @@ class Project(Base):
                                                  onupdate=func.now(), nullable=False)
 
 
+class EvalRun(Base):
+    """One execution of an eval suite; its cases are experiment runs."""
+    __tablename__ = "eval_runs"
+    id: Mapped[uuid.UUID] = _id()
+    suite: Mapped[str] = mapped_column(String(64), nullable=False)
+    scope: Mapped[str] = mapped_column(String(8), nullable=False)  # plan (full arrives with B4)
+    trigger: Mapped[str] = mapped_column(String(32), nullable=False)
+    fingerprint: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="running")
+    results: Mapped[dict | None] = mapped_column(JSONB)
+    baseline_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("eval_runs.id"))
+    actor: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = _created()
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class Run(Base):
     __tablename__ = "runs"
     id: Mapped[uuid.UUID] = _id()
@@ -53,6 +69,9 @@ class Run(Base):
     resume_status: Mapped[str | None] = mapped_column(String(32))
     status_reason: Mapped[str | None] = mapped_column(Text)
     experiment: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    stage_overrides: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    eval_run_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("eval_runs.id"))
+    eval_case: Mapped[str | None] = mapped_column(String(64))
     human_corrected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     failure_category: Mapped[str | None] = mapped_column(String(32))
     failure_stage: Mapped[str | None] = mapped_column(String(32))
@@ -104,6 +123,7 @@ class Plan(Base):
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
     test_plan: Mapped[dict] = mapped_column(JSONB, nullable=False)
     grounding_report: Mapped[dict | None] = mapped_column(JSONB)
+    regenerated_from: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("plans.id"))
     commit_sha: Mapped[str | None] = mapped_column(String(40))
     created_at: Mapped[datetime] = _created()
     __table_args__ = (UniqueConstraint("run_id", "version"),)
@@ -150,6 +170,7 @@ class Execution(Base):
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     worker_id: Mapped[str | None] = mapped_column(String(64))
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    available_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     engine: Mapped[str | None] = mapped_column(String(32))
     prompt_version: Mapped[str | None] = mapped_column(String(64))
     result: Mapped[dict | None] = mapped_column(JSONB)

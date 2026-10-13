@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     ollama_tunnel_port: int = 11435
     ollama_remote_port: int = 11437
     ollama_model: str = "qwen3:30b-instruct"
+    ollama_num_ctx: int = 8192
+    context_char_budget: int = 16000
 
     gx10_ssh_host: str = PLACEHOLDER
     gx10_ssh_port: int = 22

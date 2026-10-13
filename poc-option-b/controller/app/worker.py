@@ -15,10 +15,13 @@ from controller.app.db import session_scope
 from controller.app.models import Execution, Run
 from controller.app.states import RUN_TRANSITIONS, RunStatus
 from controller.app.team import get_team
-from controller.app.team.base import Team
+from controller.app.integrations.langflow import InvalidModelOutput
+from controller.app.team.base import CapacityBusy, Team
 
 log = logging.getLogger("sdlc.worker")
 WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
+CAPACITY_WAIT_SECONDS = 120
+RETRY_BASE_SECONDS = 10
 
 
 def _heartbeat(execution_id, stop: threading.Event) -> None:
@@ -60,12 +63,24 @@ def _fail(execution_id, exc: Exception) -> None:
         execution = session.get(Execution, execution_id, with_for_update=True)
         run = session.get(Run, execution.run_id, with_for_update=True)
         message = f"{type(exc).__name__}: {exc}"[:500]
-        if not execution.side_effects and execution.attempts < jobs.MAX_ATTEMPTS:
-            execution.status, execution.worker_id, execution.lease_until, execution.error = "queued", None, None, message
+        if isinstance(exc, CapacityBusy):
+            jobs.postpone(session, execution, CAPACITY_WAIT_SECONDS, message)
+            return
+        retryable = not execution.side_effects and not isinstance(exc, InvalidModelOutput)
+        if retryable and execution.attempts < jobs.MAX_ATTEMPTS:
+            jobs.postpone(session, execution, RETRY_BASE_SECONDS * 2 ** execution.attempts, message)
+            execution.attempts += 1  # postpone does not count capacity waits; failures do count
             return
         jobs.finish(session, execution, "failed", error=message)
         if RunStatus.NEEDS_HUMAN in RUN_TRANSITIONS[RunStatus(run.status)]:
             coordinator.to_needs_human(session, run, f"{execution.kind} failed: {message}")
+
+
+def advance_evals() -> None:
+    from controller.app import evals
+    with session_scope() as session:
+        for eval_id in evals.advance(session):
+            log.info("eval %s completed", eval_id)
 
 
 def run_forever(poll_seconds: float = 1.0) -> None:
@@ -80,6 +95,10 @@ def run_forever(poll_seconds: float = 1.0) -> None:
             log.exception("worker loop error")
             busy = False
         if not busy:
+            try:
+                advance_evals()
+            except Exception:
+                log.exception("eval scoring failed")
             stopping.wait(poll_seconds)
     log.info("worker stopped")
 

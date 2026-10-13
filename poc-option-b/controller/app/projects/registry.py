@@ -3,6 +3,7 @@
 from dataclasses import asdict, dataclass
 from pathlib import Path
 import re
+import shutil
 
 from pydantic import ValidationError
 from sqlalchemy import select
@@ -45,7 +46,7 @@ def mirror_for(project: Project) -> Mirror:
     return Mirror(Path(project.mirror_path))
 
 
-def add_project(session: Session, key: str, repo_url: str, actor: str) -> Project:
+def add_project(session: Session, key: str, repo_url: str, actor: str, branch: str | None = None) -> Project:
     if not KEY.fullmatch(key):
         raise ProjectError("key must be 2-40 lowercase letters, digits or '-', starting with a letter")
     if session.scalar(select(Project).where(Project.key == key)):
@@ -59,9 +60,11 @@ def add_project(session: Session, key: str, repo_url: str, actor: str) -> Projec
         raise ProjectError(f"a mirror for {key} already exists at {mirror.path}; remove it first")
     try:
         mirror.clone(url)
-        branch = mirror.default_branch()
-    except GitError as exc:
-        raise ProjectError(f"cannot clone repository: {exc}") from exc
+        branch = branch.strip() if branch and branch.strip() else mirror.default_branch()
+        mirror.resolve(branch)
+    except (GitError, ValueError) as exc:
+        shutil.rmtree(mirror.path, ignore_errors=True)
+        raise ProjectError(f"cannot use repository: {exc}") from exc
     project = Project(key=key, repo_url=url, default_branch=branch, mirror_path=str(mirror.path),
                       readiness="not_ready", readiness_report={})
     session.add(project)

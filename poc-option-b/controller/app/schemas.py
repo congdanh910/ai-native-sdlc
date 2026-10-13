@@ -176,8 +176,23 @@ def render_plan(title: str, version: int, plan: PlanPayload, tests: TestPlan, gr
     return "\n".join(lines).rstrip() + "\n"
 
 
+class Finding(Contract):
+    severity: Literal["important", "nit"]
+    file: str | None = None
+    text: str
+
+
 class Review(Contract):
     verdict: Literal["pass", "concerns"]
-    findings: list[dict] = []
+    findings: list[Finding] = []
     coverage: dict[str, list[str]] = {}
-    markdown: str
+    markdown: str = ""
+
+
+def render_review(title: str, review: Review, engine: str) -> str:
+    rows = "\n".join(f"| {criterion} | {', '.join(cases) or 'none'} |" for criterion, cases in review.coverage.items())
+    findings = "\n".join(f"- {f.severity.capitalize()}: {f.text}" + (f" (`{f.file}`)" if f.file else "")
+                         for f in review.findings) or "_None._"
+    return (f"# Review: {title}\n\nVerdict: **{review.verdict}** (Code Reviewer, {engine})\n\n"
+            f"## Acceptance-criteria coverage\n\n| Criterion | Test cases |\n|---|---|\n{rows}\n\n"
+            f"## Findings\n\n{findings}\n")

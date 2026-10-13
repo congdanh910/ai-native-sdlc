@@ -18,6 +18,9 @@ class RunContext:
     files: list[str]
     spec_md: str | None = None
     answers: list[tuple[str, str]] = field(default_factory=list)
+    repository: dict = field(default_factory=dict)  # files, symbols, selected_files
+    feedback: list[str] = field(default_factory=list)
+    session_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -35,8 +38,21 @@ class ReleaseResult:
     simulated: bool
 
 
+class CapacityBusy(RuntimeError):
+    """The model host has no capacity now; the job should wait and run later."""
+
+
+@dataclass(frozen=True)
+class CallRecord:
+    """How a role produced its answer, stored on the execution."""
+    engine: str
+    prompt_version: str | None = None
+    attempts: int = 1
+
+
 class Team(Protocol):
     engine: str
+    last_call: CallRecord | None
 
     def draft_intent(self, text: str, title: str) -> Intent: ...
     def specify(self, context: RunContext) -> Spec: ...

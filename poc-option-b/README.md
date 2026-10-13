@@ -6,8 +6,9 @@ Implementation of [AI_Native_SDLC_Option_B.md](../AI_Native_SDLC_Option_B.md), b
 |---|---|
 | B1 — Foundation: services, tunnel, health checks, `sdlc up/down/doctor` | Done |
 | B2 — Durable controller, web control room, mock team | Done |
-| B3 — Thinking roles on Qwen3 via Langflow, grounding check | Next |
-| B4 – B7 | Planned |
+| B3 — Thinking roles on Qwen3 via Langflow, grounding check, plan-only evals | Built; real Qwen3 eval pending |
+| B4 — Doing roles: Codex/Claude CLI, validation container, real draft PRs | Next |
+| B5 – B7 | Planned |
 
 Start with the [user guide](docs/user-guide.md). Operations and troubleshooting are in the [runbook](docs/runbook.md).
 

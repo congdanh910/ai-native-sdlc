@@ -27,6 +27,7 @@ def _items(text: str) -> list[str]:
 
 class MockTeam:
     engine = "mock"
+    last_call = None
 
     def draft_intent(self, text: str, title: str) -> Intent:
         sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text.strip()) if s.strip()]

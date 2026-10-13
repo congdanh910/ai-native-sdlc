@@ -7,11 +7,11 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
-from controller.app import services
+from controller.app import evals, services
 from controller.app.api import views
 from controller.app.config import get_settings
 from controller.app.db import session_scope
-from controller.app.models import Project, Run
+from controller.app.models import EvalRun, Project, Run
 from controller.app.projects import registry
 from controller.app.schemas import Intent
 from controller.app.states import STAGE_STARTER, HumanRole
@@ -27,6 +27,7 @@ class Body(BaseModel):
 class NewProject(Body):
     key: str
     repo_url: str
+    branch: str | None = None
 
 
 class DraftRequest(Body):
@@ -130,7 +131,8 @@ def list_projects() -> list[dict]:
 def add_project(body: NewProject) -> dict:
     try:
         with session_scope() as session:
-            return views.project_view(registry.add_project(session, body.key, body.repo_url, actor=operator()))
+            return views.project_view(registry.add_project(session, body.key, body.repo_url, actor=operator(),
+                                                         branch=body.branch))
     except registry.ProjectError as exc:
         raise HTTPException(400, str(exc)) from exc
 
@@ -261,3 +263,45 @@ def pr_decision(run_id: uuid.UUID, body: PrDecision) -> dict:
 def classify(run_id: uuid.UUID, body: Classification) -> dict:
     return _decide(run_id, lambda s, r: services.classify(s, r, actor=operator(), category=body.category,
                                                           stage=body.stage, role=body.role, note=body.note))
+
+
+class NewEval(Body):
+    suite: str
+
+
+@router.get("/eval-suites")
+def eval_suites() -> list[dict]:
+    suites = []
+    for name in evals.list_suites():
+        suite = evals.load_suite(name)
+        suites.append({"name": suite.name, "project": suite.project, "base_commit": suite.base_commit,
+                       "cases": [case.id for case in suite.cases]})
+    return suites
+
+
+@router.get("/evals")
+def list_evals() -> list[dict]:
+    with session_scope() as session:
+        rows = session.scalars(select(EvalRun).order_by(EvalRun.created_at.desc()).limit(50))
+        return [evals.eval_view(session, e, with_cases=False) for e in rows]
+
+
+@router.post("/evals", status_code=201)
+def start_eval(body: NewEval) -> dict:
+    try:
+        with session_scope() as session:
+            evaluation = evals.start_eval(session, body.suite, actor=operator())
+            return evals.eval_view(session, evaluation)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except services.DecisionError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.get("/evals/{eval_id}")
+def get_eval(eval_id: uuid.UUID) -> dict:
+    with session_scope() as session:
+        evaluation = session.get(EvalRun, eval_id)
+        if evaluation is None:
+            raise HTTPException(404, "eval not found")
+        return evals.eval_view(session, evaluation)

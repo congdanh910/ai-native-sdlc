@@ -36,6 +36,14 @@ A job that finds its run in another state (for example cancelled) is recorded as
 
 The API listens on loopback only and has no login, because the POC has one operator. Requests with a Host header other than `127.0.0.1:PORT` or `localhost:PORT` are refused (DNS rebinding), and every write must carry the header `X-SDLC-Client: web`, which other web pages cannot add without a CORS preflight that the API never grants.
 
+## Langflow flows
+
+`./sdlc up` syncs `langflow/prompts/<role>.md` (plus `common.md`) into the flows `sdlc-v3-intent-draft`, `-spec`, `-plan`, `-test-design` and `-review`. Each flow is Chat Input → Prompt → Ollama (`OLLAMA_MODEL`, temperature 0, `OLLAMA_NUM_CTX`) → Chat Output. The flow description records the prompt version, so `./sdlc doctor` can tell when a flow was edited in Langflow. Prompts must not contain braces, because Langflow treats them as variables.
+
+## Model calls and GX10
+
+Only `SDLC_TEAM_MODE=qwen3` calls the model. Before a call the worker samples GX10 free RAM and GPU use over SSH (read-only) and caches a good result for two minutes. A busy GX10 postpones the job by two minutes without counting an attempt. Transport errors are retried with backoff (10, 20, 40 seconds), at most three attempts. Invalid model output is retried inside the call twice with the validation error, then the run goes to `NEEDS_HUMAN`.
+
 ## Tunnel ownership
 
 `sdlc up` opens the tunnel only when nothing listens on `OLLAMA_TUNNEL_PORT`. A tunnel you opened yourself is reported as "opened outside sdlc" and is never stopped by `sdlc down`. A tunnel opened by `sdlc` is tracked in `.data/run/gx10-tunnel.pid` and stopped by `sdlc down`. If it drops, `sdlc doctor` fails the tunnel check and `sdlc up` reopens it.

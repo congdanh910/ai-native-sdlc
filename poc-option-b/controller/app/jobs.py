@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from controller.app.events import record_event
@@ -36,7 +36,8 @@ def enqueue(session: Session, run: Run, kind: str, role: str, *, side_effects: b
 
 
 def claim(session: Session, worker_id: str) -> Execution | None:
-    execution = session.scalar(select(Execution).where(Execution.status == "queued")
+    ready = or_(Execution.available_at.is_(None), Execution.available_at <= now())
+    execution = session.scalar(select(Execution).where(Execution.status == "queued", ready)
                                .order_by(Execution.created_at).limit(1).with_for_update(skip_locked=True))
     if execution is None:
         return None
@@ -46,6 +47,17 @@ def claim(session: Session, worker_id: str) -> Execution | None:
     execution.started_at = now()
     execution.lease_until = now() + LEASE
     return execution
+
+
+def postpone(session: Session, execution: Execution, seconds: float, reason: str) -> None:
+    """Put work back in the queue for later without counting it as a failed attempt."""
+    execution.status, execution.worker_id, execution.lease_until = "queued", None, None
+    execution.attempts = max(0, execution.attempts - 1)
+    execution.available_at = now() + timedelta(seconds=seconds)
+    execution.error = reason
+    record_event(session, "job.postponed", actor=COORDINATOR, run_id=execution.run_id,
+                 payload={"kind": execution.kind, "execution": str(execution.id), "reason": reason,
+                          "seconds": seconds})
 
 
 def heartbeat(session: Session, execution_id) -> None:

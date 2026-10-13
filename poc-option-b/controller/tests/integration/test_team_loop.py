@@ -9,13 +9,13 @@ from sqlalchemy import select
 from controller.app import coordinator, jobs, services
 from controller.app.db import session_scope
 from controller.app.documents import latest_document, latest_plan
-from controller.app.models import Execution, Project, PullRequest, Run, Task
+from controller.app.models import Execution, Plan, Project, PullRequest, Run, Task
 from controller.app.projects import registry
 from controller.app.projects.repo import Mirror
 from controller.app.schemas import Intent
 from controller.app.state_machine import InvalidTransition, StaleVersion, transition_run
 from controller.app.states import RunStatus
-from controller.app.team.base import StepResult
+from controller.app.team.base import CapacityBusy, StepResult
 from controller.app.team.mock import MockTeam
 from controller.app.worker import run_once
 from controller.tests.conftest import git
@@ -106,7 +106,7 @@ def test_full_loop_commits_the_artifact_thread(db, sample_repo):
         plan = latest_plan(session, run_id)
         assert [t["modify"] for t in plan.payload["tasks"]][0][0].startswith("src/")
         assert len(plan.test_plan["cases"]) == 2
-        assert plan.grounding_report["status"] == "skipped"
+        assert plan.grounding_report == {"status": "pass", "findings": []}
     approve_plan(run_id)
     drain()
     assert status(run_id) == RunStatus.WAITING_PR_APPROVAL
@@ -307,3 +307,70 @@ def test_requested_changes_go_back_through_coding(db, sample_repo):
         run = session.get(Run, run_id)
         attempts = {t.attempt_count for t in session.scalars(select(Task).where(Task.run_id == run_id))}
     assert run.status == RunStatus.WAITING_PR_APPROVAL and attempts == {2} and run.human_corrected
+
+
+def test_project_can_use_another_branch(db, sample_repo):
+    git(sample_repo, "switch", "--quiet", "-c", "onboarding")
+    git(sample_repo, "switch", "--quiet", "main")
+    with session_scope() as session:
+        project = registry.add_project(session, "task-board", str(sample_repo), actor=OPERATOR, branch="onboarding")
+        assert project.default_branch == "onboarding" and project.readiness == "plan_only"
+        with pytest.raises(registry.ProjectError, match="cannot use repository"):
+            registry.add_project(session, "other-board", str(sample_repo), actor=OPERATOR, branch="missing")
+
+
+class InventingPlanner(MockTeam):
+    """Plans against a file that does not exist, like the pilot's renderBoard."""
+    def __init__(self):
+        self.feedback_seen = []
+
+    def plan(self, context):
+        self.feedback_seen.append(list(context.feedback))
+        plan = super().plan(context)
+        first = plan.tasks[0].model_copy(update={"modify": ["src/board.js"]})
+        return plan.model_copy(update={"tasks": [first, *plan.tasks[1:]]})
+
+
+def test_ungrounded_plan_is_regenerated_once_then_shown_with_findings(db, sample_repo):
+    team = InventingPlanner()
+    run_id = new_run(add_project(sample_repo))
+    drain(team)
+    approve_spec(run_id)
+    drain(team)
+    assert status(run_id) == RunStatus.WAITING_PLAN_APPROVAL
+    assert team.feedback_seen[0] == [] and "src/board.js" in team.feedback_seen[1][0]
+    with session_scope() as session:
+        plans = session.scalars(select(Plan).where(Plan.run_id == run_id).order_by(Plan.version)).all()
+        assert [p.grounding_report["status"] for p in plans] == ["fail", "fail"]
+        assert plans[1].regenerated_from == plans[0].id
+        assert "grounding failed with 1 finding" in session.get(Run, run_id).status_reason
+
+
+def test_human_revision_is_grounded_too(db, sample_repo):
+    run_id = new_run(add_project(sample_repo))
+    drain()
+    approve_spec(run_id)
+    drain()
+    with session_scope() as session:
+        run = services.get_run(session, run_id)
+        plan = latest_plan(session, run_id)
+        payload = dict(plan.payload)
+        payload["tasks"] = [{**payload["tasks"][0], "modify": ["src/missing.js"]}, *payload["tasks"][1:]]
+        services.revise_plan(session, run, payload, plan.test_plan, actor=OPERATOR, reason="try")
+    with session_scope() as session:
+        assert latest_plan(session, run_id).grounding_report["status"] == "fail"
+
+
+class BusyGx10(MockTeam):
+    def specify(self, context):
+        raise CapacityBusy("GX10 is busy: GPU utilization 95% is above 20%")
+
+
+def test_busy_gx10_postpones_without_using_an_attempt(db, sample_repo):
+    run_id = new_run(add_project(sample_repo))
+    drain(BusyGx10())
+    with session_scope() as session:
+        execution = session.scalar(select(Execution).where(Execution.run_id == run_id, Execution.kind == "specify"))
+        assert (execution.status, execution.attempts) == ("queued", 0)
+        assert execution.available_at > jobs.now() and "GPU" in execution.error
+    assert status(run_id) == RunStatus.SPECIFYING

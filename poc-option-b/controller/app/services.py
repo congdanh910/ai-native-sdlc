@@ -58,14 +58,16 @@ def get_run(session: Session, run_id: uuid.UUID) -> Run:
 # ---------------------------------------------------------------- Product Owner
 
 def create_run(session: Session, project: Project, intent: Intent, *, actor: str, idempotency_key: str,
-               experiment: bool = False) -> Run:
+               experiment: bool = False, base_commit: str | None = None, stage_overrides: dict | None = None,
+               eval_run_id: uuid.UUID | None = None, eval_case: str | None = None) -> Run:
     existing = session.scalar(select(Run).where(Run.idempotency_key == idempotency_key))
     if existing:
         return existing
     if project.readiness == "not_ready":
         raise DecisionError(f"project {project.key} is not ready; open Projects and run the check")
     run = Run(project_id=project.id, title=intent.title, idempotency_key=idempotency_key,
-              status=RunStatus.RECEIVED.value, experiment=experiment)
+              status=RunStatus.RECEIVED.value, experiment=experiment, base_commit=base_commit,
+              stage_overrides=stage_overrides or {}, eval_run_id=eval_run_id, eval_case=eval_case)
     session.add(run)
     session.flush()
     add_document(session, run.id, "intent", render_intent(intent), author_kind="human", author=actor,
@@ -166,7 +168,7 @@ def revise_plan(session: Session, run: Run, payload: dict, test_plan: dict, *, a
         raise DecisionError(f"{'.'.join(str(p) for p in error['loc'])}: {error['msg']}") from exc
     plan = add_plan(session, run.id, plan_model.model_dump(), tests_model.model_dump(), author_kind="human",
                     author=actor)
-    plan.grounding_report = coordinator.grounding_report(plan.payload, plan.test_plan)
+    coordinator.ground(session, run, plan)
     _approval(session, run, "plan", "revise", actor, TL, reason=reason, plan_id=plan.id)
     _corrected(run)
 

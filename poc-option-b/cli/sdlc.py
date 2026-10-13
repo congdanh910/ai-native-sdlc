@@ -13,6 +13,7 @@ from controller.app import health, migrations
 from controller.app.compose import SERVICES, run_compose
 from controller.app.config import ENV_FILE, PROJECT_ROOT, Settings
 from controller.app.db import get_engine
+from controller.app.integrations.langflow import LangflowError, client_from_settings
 from controller.app.processes import API, WORKER, port_listening
 from controller.app.tunnel import TUNNEL, ensure_tunnel, stop_tunnel
 
@@ -96,22 +97,30 @@ def cmd_up(args: argparse.Namespace) -> int:
     if docker.status == health.FAIL:
         raise CliError(f"{docker.detail}. {docker.hint}")
 
-    say("1/4 Starting PostgreSQL and Langflow (first start can take a few minutes)…")
+    say("1/5 Starting PostgreSQL and Langflow (first start can take a few minutes)…")
     result = run_compose("up", "-d", "--wait", *SERVICES)
     if result.returncode:
         raise CliError(f"docker compose failed:\n{result.stderr.strip()}")
 
-    say("2/4 Applying database migrations…")
+    say("2/5 Applying database migrations…")
     migrations.upgrade_to_head(get_engine())
 
-    say("3/4 Opening the SSH tunnel to GX10…")
+    say("3/5 Syncing role prompts into Langflow flows…")
+    try:
+        changes = client_from_settings(settings).sync_flows(settings.ollama_model, settings.ollama_url_from_langflow,
+                                                           settings.ollama_num_ctx)
+    except LangflowError as exc:
+        raise CliError(f"cannot sync Langflow flows: {exc}") from exc
+    say("    " + ("; ".join(changes) if changes else "flows already match langflow/prompts"))
+
+    say("4/5 Opening the SSH tunnel to GX10…")
     try:
         tunnel = ensure_tunnel(settings)
     except RuntimeError as exc:
         raise CliError(str(exc)) from exc
     say(f"    tunnel {tunnel.state}")
 
-    say("4/4 Starting the controller API and the team worker…")
+    say("5/5 Starting the controller API and the team worker…")
     say(f"    API {_ensure_api(settings)}")
     say(f"    worker {_ensure_worker()}")
 

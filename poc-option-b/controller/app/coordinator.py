@@ -16,7 +16,9 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from controller.app.config import DATA_DIR
+from controller.app.config import DATA_DIR, get_settings
+from controller.app.context.builder import build_context as build_code_context
+from controller.app.context.grounding import check_with_bundle
 from controller.app.documents import (add_document, add_plan, latest_document, latest_plan, sha256_text,
                                       thread_path)
 from controller.app.events import record_event
@@ -25,7 +27,8 @@ from controller.app.models import Artifact, Clarification, Execution, Project, P
 from controller.app.projects.config import EffectivePolicy, effective_policy, matches_any
 from controller.app.projects.registry import mirror_for, read_snapshot
 from controller.app.projects.repo import Worktree
-from controller.app.schemas import PlanPayload, PlanTask, Spec, TestPlan, render_plan, render_spec
+from controller.app.schemas import (PlanPayload, PlanTask, Review, Spec, TestPlan, parse_criteria, render_plan,
+                                    render_review, render_spec)
 from controller.app.state_machine import transition_run, transition_task
 from controller.app.states import RunStatus, TaskStatus, TeamRole
 from controller.app.team.base import RunContext, StepResult, Team
@@ -156,19 +159,30 @@ class Loaded:
     extra: dict = field(default_factory=dict)
 
 
-def build_context(session: Session, run: Run) -> RunContext:
-    policy = EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy"))
+def context_files(session: Session, run: Run) -> list[str]:
     project = session.get(Project, run.project_id)
     files = mirror_for(project).list_files(run.base_commit)
-    include = json.loads(artifact(session, run.id, "context_rules") or '{"include": ["**"], "exclude": []}')
-    files = [f for f in files if matches_any(f, include["include"]) and not matches_any(f, include["exclude"])]
+    rules = json.loads(artifact(session, run.id, "context_rules") or '{"include": ["**"], "exclude": []}')
+    return [f for f in files if matches_any(f, rules["include"]) and not matches_any(f, rules["exclude"])]
+
+
+def code_bundle(session: Session, run: Run, query_texts: list[str], budget: int):
+    project = session.get(Project, run.project_id)
+    return build_code_context(mirror_for(project), run.base_commit, context_files(session, run), query_texts, budget)
+
+
+def build_context(session: Session, run: Run, *, kind: str = "", feedback: list[str] | None = None) -> RunContext:
+    policy = EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy"))
     spec = latest_document(session, run.id, "spec")
+    intent = latest_document(session, run.id, "intent").content
+    agents = artifact(session, run.id, "agents_md") or ""
     answers = [(c.question, c.answer) for c in session.scalars(
         select(Clarification).where(Clarification.run_id == run.id, Clarification.answer.is_not(None)))]
-    return RunContext(title=run.title, policy=policy, agents_md=artifact(session, run.id, "agents_md") or "",
-                      review_md=artifact(session, run.id, "review_md"),
-                      intent_md=latest_document(session, run.id, "intent").content, files=files,
-                      spec_md=spec.content if spec else None, answers=answers)
+    bundle = code_bundle(session, run, [intent, spec.content if spec else "", agents],
+                         get_settings().context_char_budget)
+    return RunContext(title=run.title, policy=policy, agents_md=agents, review_md=artifact(session, run.id, "review_md"),
+                      intent_md=intent, files=bundle.files, spec_md=spec.content if spec else None, answers=answers,
+                      repository=bundle.as_input(), feedback=feedback or [], session_id=f"{run.id}:{kind}")
 
 
 def load(session: Session, execution: Execution) -> Loaded:
@@ -176,8 +190,13 @@ def load(session: Session, execution: Execution) -> Loaded:
     loaded = Loaded(execution.id, execution.kind, run.id, run.version)
     if execution.kind in ("preflight", "ground", "release"):
         return loaded
-    loaded.context = build_context(session, run)
     plan = latest_plan(session, run.id)
+    feedback: list[str] = []
+    if (execution.kind == "plan" and plan and plan.author_kind == "ai" and plan.regenerated_from is None
+            and (plan.grounding_report or {}).get("status") == "fail"):
+        feedback = list(plan.grounding_report["findings"])
+        loaded.extra["regenerated_from"] = str(plan.id)
+    loaded.context = build_context(session, run, kind=execution.kind, feedback=feedback)
     if plan:
         loaded.plan = PlanPayload.model_validate(plan.payload)
         loaded.tests = TestPlan.model_validate(plan.test_plan)
@@ -191,17 +210,34 @@ def load(session: Session, execution: Execution) -> Loaded:
 
 def compute(team: Team, loaded: Loaded) -> dict:
     context = loaded.context
+    calls: list[dict] = []
+
+    def record() -> None:
+        call = getattr(team, "last_call", None)
+        if call:
+            calls.append({"engine": call.engine, "prompt_version": call.prompt_version, "attempts": call.attempts})
+
+    result: dict = {}
     if loaded.kind == "specify":
-        return {"spec": team.specify(context).model_dump()}
-    if loaded.kind == "plan":
+        result = {"spec": team.specify(context).model_dump()}
+        record()
+    elif loaded.kind == "plan":
         plan = team.plan(context)
+        record()
         tests = team.design_tests(context, plan)
-        return {"plan": plan.model_dump(), "tests": tests.model_dump()}
-    if loaded.kind == "code_task":
-        return {"steps": _work_task(team, loaded)}
-    if loaded.kind == "review":
-        return {"review": team.review(context, loaded.plan, loaded.tests).model_dump()}
-    return {}
+        record()
+        result = {"plan": plan.model_dump(), "tests": tests.model_dump(),
+                  "regenerated_from": loaded.extra.get("regenerated_from"), "feedback": context.feedback}
+    elif loaded.kind == "code_task":
+        result = {"steps": _work_task(team, loaded)}
+    elif loaded.kind == "review":
+        result = {"review": team.review(context, loaded.plan, loaded.tests).model_dump()}
+        record()
+    if context is not None:
+        result["_context"] = {"selected": [f["path"] for f in context.repository.get("selected_files", [])],
+                              "files": len(context.files)}
+    result["_calls"] = calls
+    return result
 
 
 def _work_task(team: Team, loaded: Loaded) -> list[dict]:
@@ -243,6 +279,9 @@ def apply(session: Session, loaded: Loaded, result: dict, team: Team) -> None:
                      payload={"kind": loaded.kind, "execution": str(execution.id)})
         return
     execution.engine = team.engine
+    calls = result.get("_calls") or []
+    if calls:
+        execution.prompt_version = ",".join(sorted({c["prompt_version"] for c in calls if c["prompt_version"]}))
     handler = {"preflight": _apply_preflight, "specify": _apply_specify, "plan": _apply_plan,
                "ground": _apply_ground, "code_task": _apply_code_task, "review": _apply_review,
                "release": _apply_release}[loaded.kind]
@@ -272,7 +311,10 @@ def _apply_preflight(session: Session, run: Run, execution: Execution, result: d
     if snapshot.review_md:
         store_artifact(session, run, "review_md", TeamRole.COORDINATOR, snapshot.review_md)
     run.base_commit = base
-    run.stage_modes = policy.stages.model_dump()
+    modes = {**policy.stages.model_dump(), **run.stage_overrides}
+    if modes.get("plan") not in ("manual", "gated"):
+        modes["plan"] = "gated"  # the plan gate cannot be removed
+    run.stage_modes = modes
     run.commit_artifacts = policy.commit_artifacts
     run.branch = f"sdlc/run-{str(run.id)[:8]}"
     run.worktree_path = str(DATA_DIR / "worktrees" / str(run.id))
@@ -311,6 +353,8 @@ def accept_spec(session: Session, run: Run, document, *, actor: str, acting_role
 def _apply_plan(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
     plan = add_plan(session, run.id, result["plan"], result["tests"], author_kind="ai",
                     author=TeamRole.TECH_LEAD.value)
+    if result.get("regenerated_from"):
+        plan.regenerated_from = uuid.UUID(result["regenerated_from"])
     record_event(session, "plan.proposed", actor=TeamRole.TECH_LEAD.value, run_id=run.id,
                  payload={"plan": str(plan.id), "version": plan.version,
                           "test_cases": len(result["tests"]["cases"]), "qa_analyst": team.engine})
@@ -318,16 +362,31 @@ def _apply_plan(session: Session, run: Run, execution: Execution, result: dict, 
     queue(session, run, "ground")
 
 
-def grounding_report(plan_payload: dict, test_plan: dict) -> dict:
-    """Placeholder until the deterministic grounding check of B3."""
-    return {"status": "skipped", "findings": ["The grounding check arrives in B3; review file references by hand."]}
+def ground(session: Session, run: Run, plan) -> dict:
+    """Run the deterministic grounding check on a plan version and store the report on it."""
+    policy = EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy"))
+    spec = latest_document(session, run.id, "spec")
+    bundle = code_bundle(session, run, [], budget=0)
+    report = check_with_bundle(PlanPayload.model_validate(plan.payload), TestPlan.model_validate(plan.test_plan),
+                               parse_criteria(spec.content), policy, bundle)
+    plan.grounding_report = report
+    record_event(session, "plan.grounded", actor=COORDINATOR, run_id=run.id,
+                 payload={"plan": str(plan.id), "version": plan.version, "status": report["status"],
+                          "findings": len(report["findings"])})
+    return report
 
 
 def _apply_ground(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
     plan = latest_plan(session, run.id)
-    plan.grounding_report = grounding_report(plan.payload, plan.test_plan)
+    report = ground(session, run, plan)
+    if report["status"] == "fail" and plan.author_kind == "ai" and plan.regenerated_from is None:
+        transition_run(session, run, RunStatus.PLANNING, actor=COORDINATOR,
+                       reason=f"grounding found {len(report['findings'])} problem(s); the Tech Lead replans once")
+        queue(session, run, "plan", key=f"regen:{plan.id}")
+        return
+    note = "passed" if report["status"] == "pass" else f"failed with {len(report['findings'])} finding(s)"
     transition_run(session, run, RunStatus.WAITING_PLAN_APPROVAL, actor=COORDINATOR,
-                   reason=f"plan v{plan.version} ready; grounding {plan.grounding_report['status']}")
+                   reason=f"plan v{plan.version} ready; grounding {note}")
 
 
 def plan_markdown(run: Run, plan) -> str:
@@ -368,7 +427,8 @@ def _apply_code_task(session: Session, run: Run, execution: Execution, result: d
 
 def _apply_review(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
     review = result["review"]
-    document = add_document(session, run.id, "review", review["markdown"], author_kind="ai",
+    markdown = review.get("markdown") or render_review(run.title, Review.model_validate(review), team.engine)
+    document = add_document(session, run.id, "review", markdown, author_kind="ai",
                             author=TeamRole.CODE_REVIEWER.value, data=review)
     document.commit_sha = commit_thread(session, run, "review", document.content, "sdlc: review")
     transition_run(session, run, RunStatus.PR_OPEN, actor=TeamRole.CODE_REVIEWER.value,

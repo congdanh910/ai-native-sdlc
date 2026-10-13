@@ -110,3 +110,37 @@ git --git-dir .data/projects/<key>/mirror.git log --oneline sdlc/run-<id>
 ### Stage modes
 
 `.sdlc/project.yaml` → `stages` sets each stage to `manual` (waits for you to start it), `gated` (runs, then waits for your acceptance) or `auto` (runs and hands off). The plan stage is always gated, merge is always a human action, and nothing deploys.
+
+## Real thinking roles (B3)
+
+Set `SDLC_TEAM_MODE=qwen3` in `.env` and run `./sdlc up` again. The Business Analyst, Tech Lead, QA Analyst and Code Reviewer then run on Qwen3 on GX10 through Langflow. The QA Engineer, Developer and Validation Gate stay mocked until B4, so runs still change no code. With `mock`, no model is called.
+
+What changes for you:
+
+- **Draft intent.md with AI** asks the Business Analyst on Qwen3.
+- The Tech Lead receives code context: the file list, the functions and constants of every file, and the most relevant files in full, within `CONTEXT_CHAR_BUDGET` characters.
+- Every plan goes through the **grounding check** before you see it: files to modify must exist, files to create must not, referenced functions must be defined, paths must be allowed and not protected, every acceptance criterion needs a task and a test case. A failing AI plan is sent back to the Tech Lead once with the findings; if it still fails, you see it with the findings listed.
+- Before each model call the worker checks GX10 (free RAM and GPU use). When GX10 is busy, the job waits two minutes and tries again; the run shows the job as postponed.
+- A model answer that is not valid JSON for the role's contract is sent back up to twice with the error. After that the run stops in `NEEDS_HUMAN`.
+
+### Prompts and Langflow
+
+The prompts of the five thinking flows live in `langflow/prompts/` and are the source of truth. `./sdlc up` creates or updates the flows `sdlc-v3-*` in Langflow (<http://127.0.0.1:7870>, user `admin`, password `LANGFLOW_SUPERUSER_PASSWORD` in `.env`). You can experiment in the Langflow editor, but `./sdlc doctor` reports a changed flow and the next `./sdlc up` restores it from `langflow/prompts/`. Copy a change you want to keep into the prompt file.
+
+## Evals (B3)
+
+**Evals** runs a suite of fixed features through the thinking roles at a pinned commit, with the spec stage on auto, and stops at the plan gate. Nothing reaches coding, and the experiment runs are cancelled when the eval is scored. Experiment runs do not appear in your inbox.
+
+The `task-board` suite contains the five features of the v1 pilot. Each plan is compared with the plan you approved in the pilot:
+
+| Metric | Meaning |
+|---|---|
+| Grounding pass, first plan / final plan | Share of cases whose plan passed the grounding check, before and after the one automatic replan |
+| File recall | Share of the source files the approved plan touched that the new plan also plans to change; a miss usually means forgotten wiring |
+| File precision | Share of planned source files that the approved plan also touched |
+| Blocking questions | Cases where the Business Analyst stopped to ask |
+| Seconds to plan | From request to plan, including waits for GX10 |
+
+Each eval records a fingerprint (team mode, model, context budget, prompt versions) and compares itself with the previous completed eval of the suite. Run an eval after you change a prompt, the model or the context budget.
+
+To use the suite, register the project once: Projects → Add, key `task-board`, repository `https://github.com/congdanh910/ai-native-product-demo`, branch `sdlc-v3/onboarding`.

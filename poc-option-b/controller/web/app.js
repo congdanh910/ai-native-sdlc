@@ -423,9 +423,10 @@ async function projectsView() {
   const projects = await api("/api/projects");
   const key = h("input", { placeholder: "task-board" });
   const url = h("input", { placeholder: "https://github.com/owner/repo, git@github.com:owner/repo or /absolute/path" });
+  const branch = h("input", { placeholder: "empty = the repository's default branch" });
   const add = h("button", { class: "primary" }, "Add project");
   add.addEventListener("click", () => act(add, async () => {
-    await api("/api/projects", { method: "POST", body: { key: key.value.trim(), repo_url: url.value.trim() } });
+    await api("/api/projects", { method: "POST", body: { key: key.value.trim(), repo_url: url.value.trim(), branch: branch.value.trim() || null } });
     toast("Project added and checked.");
     projectsView();
   }));
@@ -445,8 +446,88 @@ async function projectsView() {
     }),
     h("div", { class: "card" }, h("h2", { style: "margin-top: 0" }, "Add a project"),
       h("label", {}, "Key ", h("span", { class: "muted" }, "— must equal `project:` in .sdlc/project.yaml")), key,
-      h("label", {}, "Repository"), url, h("div", { class: "actions" }, add)),
+      h("label", {}, "Repository"), url,
+      h("label", {}, "Branch ", h("span", { class: "muted" }, "— runs start from its head; draft PRs target it")), branch,
+      h("div", { class: "actions" }, add)),
   );
+}
+
+// ------------------------------------------------------------------ evals
+
+const METRICS = [
+  ["grounding_pass_v1", "Grounding pass, first plan", "%"], ["grounding_pass_final", "Grounding pass, final plan", "%"],
+  ["file_recall", "Files the approved plan touched that were planned", "%"],
+  ["file_precision", "Planned files the approved plan also touched", "%"],
+  ["asked_blocking_questions", "Cases that stopped for a blocking question", ""],
+  ["mean_seconds_to_plan", "Mean seconds from request to plan", "s"],
+];
+
+function engineLabel(fingerprint) {
+  return fingerprint.team_mode === "mock" ? "mock team (no model)" : `${fingerprint.team_mode} ${fingerprint.model}`;
+}
+
+function metric(value, unit) {
+  if (value === null || value === undefined) return "–";
+  return unit === "%" ? `${Math.round(value * 100)}%` : `${value}${unit}`;
+}
+
+async function evalsView(id) {
+  if (id) return evalView(id);
+  const [suites, runs] = await Promise.all([api("/api/eval-suites"), api("/api/evals")]);
+  render(
+    h("h1", {}, "Evals"),
+    h("p", { class: "sub" }, "Plan-only evals run the thinking roles on fixed features at a pinned commit and compare their plans with the human-approved plans of the pilot. Runs never reach coding."),
+    ...suites.map((suite) => {
+      const start = h("button", { class: "primary" }, `Run ${suite.name}`);
+      start.addEventListener("click", () => act(start, async () => {
+        const evaluation = await api("/api/evals", { method: "POST", body: { suite: suite.name } });
+        location.hash = `#/evals/${evaluation.id}`;
+      }));
+      return h("div", { class: "card" }, h("div", { class: "row" }, h("strong", { class: "grow" }, suite.name), start),
+        h("div", { class: "muted small" }, `project ${suite.project} · base ${suite.base_commit.slice(0, 10)} · ${suite.cases.join(", ")}`));
+    }),
+    h("h2", {}, "History"),
+    runs.length ? h("div", { class: "table-wrap" }, h("table", {},
+      h("thead", {}, h("tr", {}, ...["Started", "Suite", "Status", "Grounding v1", "Grounding final", "File recall", "Model / prompts"].map((t) => h("th", {}, t)))),
+      h("tbody", {}, ...runs.map((e) => h("tr", {},
+        h("td", {}, h("a", { href: `#/evals/${e.id}` }, when(e.created_at))), h("td", {}, e.suite), h("td", {}, pill(e.status)),
+        h("td", {}, metric(e.summary && e.summary.grounding_pass_v1, "%")), h("td", {}, metric(e.summary && e.summary.grounding_pass_final, "%")),
+        h("td", {}, metric(e.summary && e.summary.file_recall, "%")),
+        h("td", { class: "small muted" }, engineLabel(e.fingerprint))))))) : h("p", { class: "muted" }, "No evals yet."),
+  );
+  poll(route, 10000);
+}
+
+async function evalView(id) {
+  const e = await api(`/api/evals/${id}`);
+  const base = e.baseline && e.baseline.summary;
+  const changed = e.baseline ? Object.keys(e.fingerprint.prompts).filter((role) =>
+    e.fingerprint.prompts[role] !== (e.baseline.fingerprint.prompts || {})[role]) : [];
+  render(
+    h("p", { class: "small" }, h("a", { href: "#/evals" }, "← Evals")),
+    h("div", { class: "row" }, h("h1", { class: "grow" }, `Eval ${e.suite}`), pill(e.status)),
+    h("p", { class: "sub" }, `${when(e.created_at)} · ${engineLabel(e.fingerprint)} · context ${e.fingerprint.context_char_budget} chars`,
+      e.baseline ? ` · baseline ${when(e.baseline.created_at)}${changed.length ? `; prompts changed: ${changed.join(", ")}` : ""}` : " · no baseline yet"),
+    e.status === "running" ? h("div", { class: "card" }, h("h3", { style: "margin-top: 0" }, "Progress"),
+      ...e.progress.map((p) => h("div", { class: "row small" }, h("span", { class: "grow" }, p.case), pill(p.status)))) : null,
+    e.summary ? h("div", { class: "table-wrap" }, h("table", {},
+      h("thead", {}, h("tr", {}, h("th", {}, "Metric"), h("th", {}, "This eval"), h("th", {}, "Baseline"))),
+      h("tbody", {}, ...METRICS.map(([key, label, unit]) => h("tr", {}, h("td", {}, label),
+        h("td", {}, h("strong", {}, metric(e.summary[key], unit))), h("td", {}, base ? metric(base[key], unit) : "–")))))) : null,
+    ...(e.cases || []).map((c) => h("div", { class: "card" },
+      h("div", { class: "row" }, h("strong", { class: "grow" }, c.case), c.plans ? pill(c.grounding_final) : pill(c.status),
+        h("a", { href: `#/runs/${c.run_id}`, class: "small" }, "run →")),
+      c.plans ? h("div", { class: "small" },
+        `${c.criteria} criteria · ${c.tasks} tasks (approved plan: ${c.golden_tasks}) · ${c.test_cases} test cases · ${c.seconds_to_plan}s`,
+        c.regenerated ? " · replanned after grounding" : "",
+        h("div", {}, "Files: ", ...c.files.map((f) => h("code", {}, f, " "))),
+        c.missed_files.length ? h("div", { class: "fail" }, "Missed vs approved plan: ", c.missed_files.join(", ")) : null,
+        c.extra_files.length ? h("div", { class: "warn" }, "Extra vs approved plan: ", c.extra_files.join(", ")) : null,
+        ...[["First plan", c.findings_v1], ["Final plan", c.findings_final]].filter(([, f]) => f && f.length).map(([label, f]) =>
+          h("details", {}, h("summary", {}, `${label}: ${f.length} grounding finding(s)`), h("ul", {}, ...f.map((x) => h("li", {}, x))))))
+        : h("div", { class: "muted small" }, c.reason || "no plan", c.blocking_questions.length ? ` · asked: ${c.blocking_questions.join(" | ")}` : ""))),
+  );
+  if (e.status === "running") poll(() => evalView(id), 5000);
 }
 
 // ------------------------------------------------------------------ health
@@ -489,6 +570,7 @@ async function route() {
     else if (page === "runs" && id) await runView(id);
     else if (page === "runs") await runsView();
     else if (page === "projects") await projectsView();
+    else if (page === "evals") await evalsView(id);
     else if (page === "health") await healthView();
     else await inboxView();
   } catch (error) {
