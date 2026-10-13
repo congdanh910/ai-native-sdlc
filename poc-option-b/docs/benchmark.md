@@ -2,7 +2,7 @@
 
 ## Scope
 
-The fixed five-feature set and immutable benchmark base are in [`../fixtures/task-board/benchmark.json`](../fixtures/task-board/benchmark.json). Five Codex feature candidates have run; four PRs are merged and Backup PR approval is pending. Matched Claude executions have not run. Do not treat this as a Codex–Claude comparison.
+The fixed five-feature set and immutable benchmark base are in [`../fixtures/task-board/benchmark.json`](../fixtures/task-board/benchmark.json). All five Codex feature candidates ran and their PRs merged into isolated benchmark branches. Matched Claude executions have not run. Do not treat this as a Codex–Claude comparison.
 
 ## Search and filter — Codex, Qwen3:30B Instruct
 
@@ -42,8 +42,10 @@ Run `56a33b13-67ac-44a9-881e-e7ef5165f562` used the same immutable base and exec
 - [PR #4](https://github.com/congdanh910/ai-native-product-demo/pull/4) passed GitHub Actions `task-board-tests` on head `dcf38f295690d607a8ff6e278417af7827c41ffb`. The user approved it, and it merged into `pilot/benchmark-base-archive` at `a0f2907c36e8f3819f7da77b08ef5dce42666c1a`. The controller run is `COMPLETED` version 11. The repo's `main` was unchanged.
 - Browser interaction remains untested in this environment; automated tests cover the pure archive model, persistence, restore, and active counts.
 
+## JSON backup — Codex, Qwen3:30B Instruct
+
+Backup run `0d1f7bd0-fc77-47c0-825d-2dca1f6ca17a` passed a fresh three-sample GX10 gate and Qwen3:30B Instruct analysis/planning. Plan v1 named a nonexistent `renderBoard` function and the wrong localStorage key. The corrected [plan v2](pilot-30b-backup-reviewed-plan.json), ID `4d2f4a71-4a9d-4163-b72e-c342d1bce159`, received explicit human approval. Three of three Codex tasks completed on first execution with no remediation. Recorded task elapsed times (including validation) were 62.473, 46.604, and 76.121 seconds; sum 185.198 seconds. Each passed `npm test` and both Node syntax checks in isolated validation. The final worktree was clean; `git diff --check` passed. A fresh three-sample GX10 gate before advisory review passed with 109089, 109079, and 109074 MiB available RAM and 0% GPU utilization; review returned `pass` with no findings. [PR #5](https://github.com/congdanh910/ai-native-product-demo/pull/5) passed GitHub Actions `task-board-tests` on head `62480f8d103e0254444bfa5c45b36e0d384ce744`. The user approved it, and it merged into `pilot/benchmark-base-backup` at `68b4a45a8e06c420b65fdcb9f6205290defc2c4a`. The controller run is `COMPLETED` version 11; the demo repo's `main` was unchanged.
+
 ## Remaining evidence
 
-Backup run `0d1f7bd0-fc77-47c0-825d-2dca1f6ca17a` passed a fresh three-sample GX10 gate and Qwen3:30B Instruct analysis/planning. Plan v1 named a nonexistent `renderBoard` function and the wrong localStorage key. The corrected [plan v2](pilot-30b-backup-reviewed-plan.json), ID `4d2f4a71-4a9d-4163-b72e-c342d1bce159`, received explicit human approval. Three of three Codex tasks completed on first execution with no remediation. Recorded task elapsed times (including validation) were 62.473, 46.604, and 76.121 seconds; sum 185.198 seconds. Each passed `npm test` and both Node syntax checks in isolated validation. The final worktree was clean; `git diff --check` passed. A fresh three-sample GX10 gate before advisory review passed with 109089, 109079, and 109074 MiB available RAM and 0% GPU utilization; review returned `pass` with no findings. [PR #5](https://github.com/congdanh910/ai-native-product-demo/pull/5) is a draft targeting `pilot/benchmark-base-backup` from head `62480f8d103e0254444bfa5c45b36e0d384ce744`; GitHub Actions `task-board-tests` passed and was reconciled in the controller. Human PR approval is pending.
-
-Complete Backup and matched Claude runs from the same pinned per-feature base, record all plan corrections and failure categories, validate GitHub CI for each candidate, and report test success, retries, elapsed time, memory, and observable usage only where measured. Preserve the immutable original commit as benchmark input and use feature-specific PR targets.
+Matched Claude runs from the same pinned per-feature base are still required for a Codex–Claude comparison. Record all plan corrections and failure categories, validate GitHub CI for each candidate, and report test success, retries, elapsed time, memory, and observable usage only where measured. Preserve the immutable original commit as benchmark input and use feature-specific PR targets.
