@@ -5,13 +5,11 @@ on:
     paths:
       - ".github/workflows/option-b-ci.yml"
       - "poc-option-b/**"
-      - "AI_Native_SDLC_Option_B.md"
   push:
     branches: [main]
     paths:
       - ".github/workflows/option-b-ci.yml"
       - "poc-option-b/**"
-      - "AI_Native_SDLC_Option_B.md"
 
 permissions:
   contents: read
@@ -22,18 +20,28 @@ jobs:
     defaults:
       run:
         working-directory: poc-option-b
+    services:
+      postgres:
+        image: postgres:16.14-trixie
+        env:
+          POSTGRES_DB: sdlc
+          POSTGRES_USER: sdlc
+          POSTGRES_PASSWORD: ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sdlc -d sdlc"
+          --health-interval 5s --health-timeout 3s --health-retries 12
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
-          version: latest-known
+          version: "0.9.1"
       - name: Install Python and locked dependencies
-        run: |
-          uv python install 3.12
-          uv sync --locked --dev --python 3.12
-      - name: Test controller and check browser script
-        run: |
-          uv run --no-sync pytest -q
-          node --check controller/web/app.js
+        run: uv sync --locked --dev
+      - name: Unit and integration tests
+        env:
+          SDLC_TEST_DATABASE_URL: postgresql+psycopg://sdlc:ci-only@127.0.0.1:5432/sdlc
+        run: uv run --no-sync pytest -q

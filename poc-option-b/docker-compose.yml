@@ -1,0 +1,68 @@
+# Local services for the Option B v3 POC. Ports bind to loopback only.
+name: ai-native-sdlc-v3
+
+services:
+  controller-db:
+    image: postgres:16.14-trixie
+    environment:
+      POSTGRES_DB: sdlc
+      POSTGRES_USER: sdlc
+      POSTGRES_PASSWORD: ${SDLC_DB_PASSWORD:?Run ./sdlc init}
+    ports:
+      - "127.0.0.1:${SDLC_DB_PORT:-55442}:5432"
+    volumes:
+      - controller-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sdlc -d sdlc"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  langflow-db:
+    image: postgres:16.14-trixie
+    environment:
+      POSTGRES_DB: langflow
+      POSTGRES_USER: langflow
+      POSTGRES_PASSWORD: ${LANGFLOW_DB_PASSWORD:?Run ./sdlc init}
+    volumes:
+      - langflow-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langflow -d langflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  langflow:
+    image: langflowai/langflow:1.12.0
+    depends_on:
+      langflow-db:
+        condition: service_healthy
+    environment:
+      LANGFLOW_DATABASE_URL: postgresql://langflow:${LANGFLOW_DB_PASSWORD:?Run ./sdlc init}@langflow-db:5432/langflow
+      LANGFLOW_AUTO_LOGIN: "false"
+      LANGFLOW_SUPERUSER: admin
+      LANGFLOW_SUPERUSER_PASSWORD: ${LANGFLOW_SUPERUSER_PASSWORD:?Run ./sdlc init}
+      LANGFLOW_SECRET_KEY: ${LANGFLOW_SECRET_KEY:?Run ./sdlc init}
+      LANGFLOW_API_KEY_SOURCE: env
+      LANGFLOW_API_KEY: ${LANGFLOW_API_KEY:?Run ./sdlc init}
+      LANGFLOW_SSRF_ALLOWED_HOSTS: host.docker.internal
+      LANGFLOW_ENABLE_SIGNUP: "false"
+      LANGFLOW_NEW_USER_IS_ACTIVE: "false"
+      LANGFLOW_ENABLE_SUPERUSER_CLI: "false"
+      LANGFLOW_DEVELOPER_API_ENABLED: "true"
+      LANGFLOW_CONFIG_DIR: /app/langflow
+    ports:
+      - "127.0.0.1:${LANGFLOW_PORT:-7870}:7860"
+    volumes:
+      - langflow-data:/app/langflow
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:7860/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+volumes:
+  controller-postgres:
+  langflow-postgres:
+  langflow-data:

@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Operator CLI for the AI-native SDLC POC. Run from anywhere.
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$here"
+exec uv run --quiet --locked python -m cli.sdlc "$@"
