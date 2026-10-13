@@ -149,6 +149,14 @@ def test_qa_engineer_commits_tests_and_routes_to_the_qa_executor(worktree, tmp_p
     assert session.writable == ["test/**"] and "TC-1" in session.prompt and "Keep rules in src/tasks.js." in session.prompt
 
 
+def test_tests_rejected_by_the_red_check_are_rewritten_not_appended(worktree, tmp_path):
+    qa = FakeExecutor("claude", {"test/due.test.js": "test('due', () => {});\n"})
+    team, _ = doing(tmp_path, qa=qa)
+    team.write_tests(context(worktree, qa_executor="claude"), TASK, TESTS)
+    team.write_tests(context(worktree, qa_executor="claude"), TASK, TESTS, feedback="already pass")
+    assert git(worktree, "log", "--format=%s").splitlines()[:2] == ["test(T1): Add due date", "initial"]
+
+
 def test_rejected_test_changes_are_discarded(worktree, tmp_path):
     team, _ = doing(tmp_path, qa=FakeExecutor("claude", {"src/tasks.js": "// stub to make tests pass\n"}))
     result = team.write_tests(context(worktree, qa_executor="claude"), TASK, TESTS)

@@ -106,5 +106,14 @@ def discard(worktree: Path) -> None:
     _git("clean", "-fdq", *(arg for name in GENERATED for arg in ("-e", name)), cwd=worktree)
 
 
+def drop_commit(worktree: Path, subject_prefix: str) -> bool:
+    """Undo the last commit if its subject starts with the prefix (rejected tests are rewritten, not appended)."""
+    subject = _git("log", "-1", "--format=%s", cwd=worktree).strip()
+    if not subject.startswith(subject_prefix):
+        return False
+    _git("reset", "--quiet", "--hard", "HEAD~1", cwd=worktree)
+    return True
+
+
 def head(worktree: Path) -> str:
     return _git("rev-parse", "HEAD", cwd=worktree).strip()

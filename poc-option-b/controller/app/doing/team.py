@@ -75,6 +75,8 @@ class CliDoing:
     def write_tests(self, context: RunContext, task: PlanTask, tests: TestPlan, feedback: str = "") -> StepResult:
         worktree = self._worktree(context)
         changes.discard(worktree)  # a crashed earlier session must not leak into this one
+        if feedback:  # the red check rejected the previous tests: rewrite them instead of adding a second copy
+            changes.drop_commit(worktree, f"test({task.id}):")
         cases = self._cases(tests, task)
         prompt = _prompt("qa-engineer", agents_md=context.agents_md, task_id=task.id, task_title=task.title,
                          task_files=", ".join(task.modify + task.create), criteria=self._criteria(context, task),

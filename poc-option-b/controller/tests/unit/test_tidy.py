@@ -75,3 +75,13 @@ def test_process_criteria_move_to_concerns_and_the_rest_renumber():
 def test_behavioural_spec_is_unchanged():
     clean = spec("The card shows the due date.", "Tasks without a due date still load.")
     assert tidy_spec(clean, policy()) == (clean, [])
+
+
+def test_all_expected_pass_cases_are_reset():
+    plan = PlanPayload(summary="s", tasks=[task("T1", ["src/tasks.js"]), task("T2", ["src/app.js"], criteria=["AC-2"])])
+    tests = TestPlan(cases=[{**case("TC-1", "T1", "AC-1"), "expected_pass": True},
+                            {**case("TC-2", "T2", "AC-2"), "expected_pass": True}])
+    tidied, notes = tidy_tests(tests, plan)
+    assert [c.expected_pass for c in tidied.cases] == [False, False] and "reset to false" in notes[0]
+    one_guard = TestPlan(cases=[{**case("TC-1", "T1", "AC-1"), "expected_pass": True}, case("TC-2", "T2", "AC-2")])
+    assert tidy_tests(one_guard, plan) == (one_guard, [])

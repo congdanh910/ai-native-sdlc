@@ -4,7 +4,7 @@ Prompts alone did not stop Qwen3 from planning test-file tasks or numbering test
 cases against tasks that do not exist (eval 3), nor the BA from writing "all tests
 pass" criteria that no task can deliver (eval 4). These are policy rules, so the
 coordinator enforces them in code and records every change it made. Nothing is
-invented: criteria, paths and tasks are only moved or removed, and a test case is only moved to a
+invented: criteria, paths and tasks are only moved or removed, flags only reset, and a test case is only moved to a
 task that already delivers the criterion it proves.
 """
 
@@ -77,10 +77,19 @@ def tidy_plan(plan: PlanPayload, policy: EffectivePolicy) -> tuple[PlanPayload, 
 
 
 def tidy_tests(tests: TestPlan, plan: PlanPayload) -> tuple[TestPlan, list[str]]:
-    """Move a case that names an unknown task to the first task that delivers its criterion."""
+    """Move a case that names an unknown task to the first task that delivers its criterion.
+
+    A plan whose every case is expected_pass misread the flag as "passes after the change" (first B4 run):
+    a feature request cannot consist only of regression guards, so every case is reset to false.
+    """
     notes: list[str] = []
     known = {task.id for task in plan.tasks}
     cases = [case.model_dump() for case in tests.cases]
+    if len(cases) > 1 and all(case["expected_pass"] for case in cases):
+        for case in cases:
+            case["expected_pass"] = False
+        notes.append("every case was marked expected_pass; reset to false, since new behaviour fails before the "
+                     "implementation")
     for case in cases:
         if case["task_id"] in known:
             continue

@@ -108,7 +108,8 @@ def red_check(gate: ValidationGate, names: list[str], expect_pass: bool, label: 
     if expect_pass:
         ok = all(r.ok for r in reports)
         return ok, ("regression guards pass as expected" if ok else
-                    f"tests marked expected_pass fail: {summary(reports)}"), data
+                    f"every case of this task is a regression guard (expected_pass), but the tests fail on the "
+                    f"current code: {summary(reports)}"), data
     ok = any(not r.ok for r in reports)
     return ok, (f"red: {summary(reports)}" if ok else
                 f"the new tests already pass before the implementation, so they prove nothing: {summary(reports)}"), data

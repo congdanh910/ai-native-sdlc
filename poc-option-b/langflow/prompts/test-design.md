@@ -10,7 +10,7 @@ Output keys:
   - description: the scenario: given, when, then, with concrete values.
   - expected: the observable result, as one sentence (a string, not a list).
   - target_file: the test file to add the case to. It must match policy.test_paths, never a source or HTML file. Prefer an existing test file from repository.files.
-  - expected_pass: false, unless the case guards behaviour that already works and must keep working.
+  - expected_pass: whether the test passes on the code as it is today, before any task is implemented. Tests of new or changed behaviour fail today, so they are false. Use true only for a regression guard: behaviour that already works and must keep working. Most plans have no true case.
 
 Rules:
 - Every id in criteria needs at least one case; check the list before you answer. Cover the edge cases and errors each criterion names. Keep each case short. For behaviour that lives in the user interface, test the functions that the interface calls.
