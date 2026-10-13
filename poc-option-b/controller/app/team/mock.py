@@ -88,7 +88,7 @@ class MockTeam:
         names = ", ".join(command.name for command in context.policy.validation)
         return StepResult(True, f"mock: validation not run ({names})")
 
-    def review(self, context, plan, tests) -> Review:
+    def review(self, context, plan, tests, diff="", validation="") -> Review:
         coverage = {c.id: [case.id for case in tests.cases if case.criterion == c.id]
                     for c in parse_criteria(context.spec_md or "")}
         gaps = [criterion for criterion, cases in coverage.items() if not cases]

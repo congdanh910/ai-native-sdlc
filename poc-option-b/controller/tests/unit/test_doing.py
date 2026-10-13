@@ -295,3 +295,16 @@ def test_access_needs_push_permission():
     assert "can push" in github.check_access("o/r", runner=FakeGh(['{"push": true, "private": false}']))
     with pytest.raises(github.GitHubError, match="cannot push"):
         github.check_access("o/r", runner=FakeGh(['{"push": false, "private": false}']))
+
+
+def test_review_diff_puts_sources_first_and_leaves_out_the_thread(worktree):
+    base = changes.head(worktree)
+    (worktree / "src" / "tasks.js").write_text("export const PRIORITIES = ['Low'];\n")
+    (worktree / "test" / "tasks.test.js").write_text("// existing tests\n" + "test('x', () => {});\n" * 200)
+    (worktree / ".sdlc" / "runs").mkdir(parents=True)
+    (worktree / ".sdlc" / "runs" / "spec.md").write_text("# Spec\n")
+    changes.stage_changes(worktree)
+    changes.commit(worktree, "feat", "developer")
+    diff = changes.run_diff(worktree, base, ["test/**"], budget=1500)
+    assert diff.index("src/tasks.js") < diff.index("test/tasks.test.js") and ".sdlc" not in diff
+    assert "truncated by the context budget" in diff and len(diff) < 1600

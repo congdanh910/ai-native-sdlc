@@ -127,5 +127,30 @@ def find_commit(worktree: Path, base: str, subject_prefix: str) -> str | None:
     return None
 
 
+def run_diff(worktree: Path, base: str, test_paths: list[str], budget: int) -> str:
+    """The run's code change for the reviewer: source files first, then tests, within a character budget.
+
+    The artifact thread (.sdlc/) is left out; it is reviewed as documents, not as code.
+    """
+    files = [f for f in _git("diff", "--name-only", f"{base}..HEAD", cwd=worktree).splitlines()
+             if not f.startswith(".sdlc/")]
+    sources = [f for f in files if not matches_any(f, test_paths)]
+    tests = [f for f in files if matches_any(f, test_paths)]
+    parts, used = [], 0
+    for group in (sources, tests):
+        if not group:
+            continue
+        text = _git("diff", f"{base}..HEAD", "--", *group, cwd=worktree)
+        room = budget - used
+        if room < 200:
+            parts.append(f"(diff of {', '.join(group)} left out: context budget)")
+            break
+        if len(text) > room:
+            text = text[: room - 60] + "\n… diff truncated by the context budget …\n"
+        parts.append(text)
+        used += len(text)
+    return "".join(parts)
+
+
 def head(worktree: Path) -> str:
     return _git("rev-parse", "HEAD", cwd=worktree).strip()

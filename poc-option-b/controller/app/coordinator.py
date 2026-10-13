@@ -191,6 +191,18 @@ def build_context(session: Session, run: Run, *, kind: str = "", feedback: list[
                       run_id=str(run.id), worktree=run.worktree_path or "", base_commit=run.base_commit or "")
 
 
+def validation_summary(session: Session, run: Run) -> str:
+    """The last validation result of each current task, for the Code Reviewer."""
+    lines = []
+    for task in current_tasks(session, run):
+        execution = session.scalar(select(Execution).where(Execution.task_id == task.id, Execution.kind == "code_task")
+                                   .order_by(Execution.created_at.desc()).limit(1))
+        steps = [s for s in ((execution.result or {}).get("steps", []) if execution else [])
+                 if s["state"] == TaskStatus.VALIDATING]
+        lines.append(f"{task.external_task_id}: {steps[-1]['detail'] if steps else 'not validated'}")
+    return "\n".join(lines)
+
+
 def load(session: Session, execution: Execution) -> Loaded:
     run = session.get(Run, execution.run_id)
     loaded = Loaded(execution.id, execution.kind, run.id, run.version)
@@ -206,6 +218,10 @@ def load(session: Session, execution: Execution) -> Loaded:
     if plan:
         loaded.plan = PlanPayload.model_validate(plan.payload)
         loaded.tests = TestPlan.model_validate(plan.test_plan)
+    if execution.kind == "review" and not get_settings().coding_is_mocked and run.worktree_path:
+        loaded.extra["diff"] = changes.run_diff(Path(run.worktree_path), run.base_commit, loaded.context.policy.test_paths,
+                                                get_settings().context_char_budget * 2 // 3)  # spec and plan need room too
+        loaded.extra["validation"] = validation_summary(session, run)
     if execution.task_id:
         task = session.get(Task, execution.task_id)
         loaded.task_payload, loaded.task_attempt = task.payload, task.attempt_count
@@ -243,7 +259,8 @@ def compute(team: Team, loaded: Loaded) -> dict:
         executors = sorted({s["evidence"]["executor"] for s in steps if s["evidence"].get("executor")})
         result = {"steps": steps, "_engine": ",".join(executors) or None}
     elif loaded.kind == "review":
-        result = {"review": team.review(context, loaded.plan, loaded.tests).model_dump()}
+        result = {"review": team.review(context, loaded.plan, loaded.tests, diff=loaded.extra.get("diff", ""),
+                                        validation=loaded.extra.get("validation", "")).model_dump()}
         record()
     if context is not None:
         result["_context"] = {"selected": [f["path"] for f in context.repository.get("selected_files", [])],

@@ -146,9 +146,10 @@ class LangflowTeam(MockTeam):
                    "agents_md": context.agents_md, "repository": repository, "policy": self._policy(context)}
         return self._ask("test-design", payload, TestPlan, normalize.test_plan, context.session_id)
 
-    def review(self, context: RunContext, plan: PlanPayload, tests: TestPlan) -> Review:
+    def review(self, context: RunContext, plan: PlanPayload, tests: TestPlan, diff: str = "",
+               validation: str = "") -> Review:
         payload = {"spec": context.spec_md, "plan": plan.model_dump(), "test_plan": tests.model_dump(),
-                   "diff": "", "validation": "coding was simulated; no validation ran",
+                   "diff": diff, "validation": validation or "coding was simulated; no validation ran",
                    "agents_md": context.agents_md, "review_md": context.review_md}
         return self._ask("review", payload, Review, normalize.review, context.session_id)
 
