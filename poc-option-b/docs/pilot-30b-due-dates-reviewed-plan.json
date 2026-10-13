@@ -1,0 +1,50 @@
+{
+  "tasks": [
+    {
+      "id": "due-date-model",
+      "description": "Extend the pure task model and persistence boundary with dueDate as a YYYY-MM-DD string or null. Strictly validate real calendar dates, including leap years. Missing dueDate on legacy stored tasks becomes null when loaded; malformed stored values raise a useful error without changing storage. createTask accepts an optional due date; updateTask preserves it unless changes explicitly include dueDate. Empty input means null; nonempty malformed input throws. Never store Date objects.",
+      "dependencies": [],
+      "allowed_paths": ["src/tasks.js", "tests/tasks.test.js"],
+      "acceptance_criteria": [
+        "New tasks have dueDate null by default and store a valid nonempty dueDate exactly as YYYY-MM-DD.",
+        "createTask and updateTask reject malformed dates such as 2025-13-01, 2025-02-29, or arbitrary text; failed changes do not mutate input arrays or saved storage.",
+        "parseTasks and loadTasks add dueDate null to legacy records missing the field; invalid stored dueDate is reported without erasing the saved value.",
+        "Unrelated task fields and dates are preserved by updateTask; model tests cover valid leap day, invalid dates, empty input, and legacy loading."
+      ]
+    },
+    {
+      "id": "overdue-model",
+      "description": "Add a pure overdue predicate in src/tasks.js that accepts an injected current Date, compares the dueDate string with today's local calendar date, and returns true only for unfinished tasks due before today. Keep it independent of the browser DOM and system clock in tests.",
+      "dependencies": ["due-date-model"],
+      "allowed_paths": ["src/tasks.js", "tests/tasks.test.js"],
+      "acceptance_criteria": [
+        "A todo or doing task due before the injected local date is overdue; a task due today or in the future is not.",
+        "A done task with a past date and a task with dueDate null are not overdue.",
+        "Tests inject fixed Date values and cover a local-calendar boundary without depending on the actual system date."
+      ]
+    },
+    {
+      "id": "due-date-forms",
+      "description": "Add optional type=date inputs to both the create and edit forms in index.html. Wire src/app.js to pass their values to the model, prefill the edit input from the task, and show model validation errors in the existing status message. Preserve the form input and localStorage on failure; allow clearing a date by submitting an empty input.",
+      "dependencies": ["overdue-model"],
+      "allowed_paths": ["index.html", "src/app.js"],
+      "acceptance_criteria": [
+        "Create and edit forms each have a distinct labeled optional due-date input and submit YYYY-MM-DD or null through the model.",
+        "Edit preloads the current due date; clearing it saves null; status-only updates keep the existing due date.",
+        "A malformed date is rejected with a useful visible error; the form remains open with user input intact and saved tasks remain unchanged.",
+        "No user-provided value is rendered through innerHTML."
+      ]
+    },
+    {
+      "id": "due-date-cards",
+      "description": "Show each task's due date on its card in src/app.js, using textContent. Apply a clearly visible overdue label or style only when the pure model predicate returns true; keep status controls and existing behavior intact. Update styles.css only as needed for the label.",
+      "dependencies": ["due-date-forms"],
+      "allowed_paths": ["src/app.js", "styles.css", "tests/tasks.test.js"],
+      "acceptance_criteria": [
+        "Cards display a valid due date and a clear no-due-date state for null; overdue cards are labeled or styled accessibly.",
+        "The overdue state uses the pure predicate and updates after status changes; due today and done tasks are not marked overdue.",
+        "Run npm test, node --check src/app.js, and node --check src/tasks.js successfully."
+      ]
+    }
+  ]
+}
