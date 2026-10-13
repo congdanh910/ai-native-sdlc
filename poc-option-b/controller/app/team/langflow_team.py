@@ -24,6 +24,7 @@ from controller.app.team.mock import MockTeam
 from controller.app.tunnel import ensure_tunnel, tunnel_status
 
 MAX_FORMAT_RETRIES = 2
+UI_SUFFIXES = (".html", ".htm", ".css", ".scss", ".sass", ".less", ".vue", ".svelte")
 CAPACITY_CACHE_SECONDS = 120
 Model = TypeVar("Model", bound=BaseModel)
 
@@ -120,7 +121,15 @@ class LangflowTeam(MockTeam):
 
     def plan(self, context: RunContext) -> PlanPayload:
         validations = [command.name for command in context.policy.validation]
-        payload = {"spec": context.spec_md, "agents_md": context.agents_md, "repository": context.repository,
+        # Tests are the QA Engineer's work: without their contents the Tech Lead stops planning test tasks
+        # (eval 3). Markup and stylesheets are named separately because Qwen3 kept leaving them out.
+        policy = context.policy
+        files = context.repository.get("files", [])
+        repository = {**context.repository,
+                      "selected_files": [f for f in context.repository.get("selected_files", [])
+                                         if not matches_any(f["path"], policy.test_paths)],
+                      "ui_files": [p for p in files if p.endswith(UI_SUFFIXES) and matches_any(p, policy.allowed_paths)]}
+        payload = {"spec": context.spec_md, "agents_md": context.agents_md, "repository": repository,
                    "policy": self._policy(context), "feedback": context.feedback}
         return self._ask("plan", payload, PlanPayload, lambda data: normalize.plan(data, validations),
                          context.session_id)

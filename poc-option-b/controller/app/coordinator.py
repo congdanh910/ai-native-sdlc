@@ -32,6 +32,7 @@ from controller.app.schemas import (PlanPayload, PlanTask, Review, Spec, TestPla
 from controller.app.state_machine import transition_run, transition_task
 from controller.app.states import RunStatus, TaskStatus, TeamRole
 from controller.app.team.base import RunContext, StepResult, Team
+from controller.app.team.tidy import tidy_plan, tidy_tests
 
 MAX_REMEDIATIONS = 2
 
@@ -222,11 +223,11 @@ def compute(team: Team, loaded: Loaded) -> dict:
         result = {"spec": team.specify(context).model_dump()}
         record()
     elif loaded.kind == "plan":
-        plan = team.plan(context)
+        plan, tidied = tidy_plan(team.plan(context), context.policy)
         record()
-        tests = team.design_tests(context, plan)
+        tests, tidied_tests = tidy_tests(team.design_tests(context, plan), plan)
         record()
-        result = {"plan": plan.model_dump(), "tests": tests.model_dump(),
+        result = {"plan": plan.model_dump(), "tests": tests.model_dump(), "tidied": tidied + tidied_tests,
                   "regenerated_from": loaded.extra.get("regenerated_from"), "feedback": context.feedback}
     elif loaded.kind == "code_task":
         result = {"steps": _work_task(team, loaded)}
@@ -357,7 +358,8 @@ def _apply_plan(session: Session, run: Run, execution: Execution, result: dict, 
         plan.regenerated_from = uuid.UUID(result["regenerated_from"])
     record_event(session, "plan.proposed", actor=TeamRole.TECH_LEAD.value, run_id=run.id,
                  payload={"plan": str(plan.id), "version": plan.version,
-                          "test_cases": len(result["tests"]["cases"]), "qa_analyst": team.engine})
+                          "test_cases": len(result["tests"]["cases"]), "qa_analyst": team.engine,
+                          "tidied": result.get("tidied", [])})
     transition_run(session, run, RunStatus.GROUNDING, actor=TeamRole.TECH_LEAD.value)
     queue(session, run, "ground")
 

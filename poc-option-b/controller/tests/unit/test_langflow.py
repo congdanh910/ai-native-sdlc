@@ -127,3 +127,18 @@ def test_unreachable_ollama_postpones_instead_of_failing(settings, monkeypatch):
     monkeypatch.setattr(team, "_ollama_reachable", lambda: False)
     with pytest.raises(CapacityBusy, match="does not answer"):
         team.specify(context())
+
+
+def test_tech_lead_sees_ui_files_but_not_test_contents(settings):
+    plan = {"summary": "s", "tasks": [{"id": "T1", "title": "Add due date", "modify": ["src/tasks.js"],
+                                       "acceptance_criteria": ["AC-1"]}]}
+    client = FakeClient([json.dumps(plan)])
+    team = LangflowTeam(settings, client=client, check_capacity=lambda: [], check_ollama=lambda: None)
+    base = context()
+    files = ["src/tasks.js", "src/index.html", "src/styles.css", "docs/page.html", "test/tasks.test.js"]
+    selected = [{"path": "src/tasks.js", "content": "x", "truncated": False},
+                {"path": "test/tasks.test.js", "content": "y", "truncated": False}]
+    team.plan(RunContext(**{**base.__dict__, "repository": {"files": files, "symbols": {}, "selected_files": selected}}))
+    repository = client.calls[0][1]["repository"]
+    assert [f["path"] for f in repository["selected_files"]] == ["src/tasks.js"]
+    assert repository["ui_files"] == ["src/index.html", "src/styles.css"]
