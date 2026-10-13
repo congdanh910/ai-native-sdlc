@@ -10,6 +10,7 @@ while a role works:
 
 from dataclasses import dataclass, field
 import json
+import logging
 from pathlib import Path
 import uuid
 
@@ -19,6 +20,8 @@ from sqlalchemy.orm import Session
 from controller.app.config import DATA_DIR, get_settings
 from controller.app.context.builder import build_context as build_code_context
 from controller.app.context.grounding import check_with_bundle
+from controller.app.doing import changes, github
+from controller.app.doing.github import repo_slug
 from controller.app.documents import (add_document, add_plan, latest_document, latest_plan, sha256_text,
                                       thread_path)
 from controller.app.events import record_event
@@ -31,9 +34,10 @@ from controller.app.schemas import (PlanPayload, PlanTask, Review, Spec, TestPla
                                     render_review, render_spec)
 from controller.app.state_machine import transition_run, transition_task
 from controller.app.states import RunStatus, TaskStatus, TeamRole
-from controller.app.team.base import RunContext, StepResult, Team
+from controller.app.team.base import ReleaseResult, RunContext, StepResult, Team
 from controller.app.team.tidy import tidy_plan, tidy_spec, tidy_tests
 
+log = logging.getLogger("sdlc.coordinator")
 MAX_REMEDIATIONS = 2
 
 # kind -> (role, has side effects, run status the job belongs to)
@@ -183,7 +187,8 @@ def build_context(session: Session, run: Run, *, kind: str = "", feedback: list[
                          get_settings().context_char_budget)
     return RunContext(title=run.title, policy=policy, agents_md=agents, review_md=artifact(session, run.id, "review_md"),
                       intent_md=intent, files=bundle.files, spec_md=spec.content if spec else None, answers=answers,
-                      repository=bundle.as_input(), feedback=feedback or [], session_id=f"{run.id}:{kind}")
+                      repository=bundle.as_input(), feedback=feedback or [], session_id=f"{run.id}:{kind}",
+                      run_id=str(run.id), worktree=run.worktree_path or "")
 
 
 def load(session: Session, execution: Execution) -> Loaded:
@@ -231,7 +236,9 @@ def compute(team: Team, loaded: Loaded) -> dict:
         result = {"plan": plan.model_dump(), "tests": tests.model_dump(), "tidied": tidied + tidied_tests,
                   "regenerated_from": loaded.extra.get("regenerated_from"), "feedback": context.feedback}
     elif loaded.kind == "code_task":
-        result = {"steps": _work_task(team, loaded)}
+        steps = _work_task(team, loaded)
+        executors = sorted({s["evidence"]["executor"] for s in steps if s["evidence"].get("executor")})
+        result = {"steps": steps, "_engine": ",".join(executors) or None}
     elif loaded.kind == "review":
         result = {"review": team.review(context, loaded.plan, loaded.tests).model_dump()}
         record()
@@ -243,29 +250,41 @@ def compute(team: Team, loaded: Loaded) -> dict:
 
 
 def _work_task(team: Team, loaded: Loaded) -> list[dict]:
-    """QA Engineer writes tests, Validation Gate red-checks, Developer implements, Validation Gate validates."""
+    """QA Engineer writes tests, Validation Gate red-checks, Developer implements, Validation Gate validates.
+
+    A failed red check goes back to the QA Engineer once with the result. Validation failures go back to the
+    Developer with the failing output, at most MAX_REMEDIATIONS times.
+    """
     task = PlanTask.model_validate(loaded.task_payload)
-    context = loaded.context
+    context, tests = loaded.context, loaded.tests
 
     def step(state: TaskStatus, role: TeamRole, result: StepResult) -> dict:
         return {"state": state.value, "role": role.value, "ok": result.ok, "detail": result.detail,
-                "dispute": result.dispute, "changed_files": result.changed_files}
+                "dispute": result.dispute, "changed_files": result.changed_files, "evidence": result.evidence}
 
-    steps = [step(TaskStatus.WRITING_TESTS, TeamRole.QA_ENGINEER, team.write_tests(context, task, loaded.tests))]
+    steps = [step(TaskStatus.WRITING_TESTS, TeamRole.QA_ENGINEER, team.write_tests(context, task, tests))]
     if not steps[-1]["ok"]:
         return steps
-    steps.append(step(TaskStatus.RED_CHECK, TeamRole.VALIDATION_GATE, team.red_check(context, task)))
+    steps.append(step(TaskStatus.RED_CHECK, TeamRole.VALIDATION_GATE, team.red_check(context, task, tests)))
     if not steps[-1]["ok"]:
-        return steps
-    steps.append(step(TaskStatus.CODING, TeamRole.DEVELOPER, team.implement(context, task, attempt=1)))
+        steps.append(step(TaskStatus.WRITING_TESTS, TeamRole.QA_ENGINEER,
+                          team.write_tests(context, task, tests, feedback=steps[-1]["detail"])))
+        if not steps[-1]["ok"]:
+            return steps
+        steps.append(step(TaskStatus.RED_CHECK, TeamRole.VALIDATION_GATE, team.red_check(context, task, tests)))
+        if not steps[-1]["ok"]:
+            return steps
+    steps.append(step(TaskStatus.CODING, TeamRole.DEVELOPER, team.implement(context, task, 1, tests)))
     for remediation in range(MAX_REMEDIATIONS + 1):
         if not steps[-1]["ok"] or steps[-1]["dispute"]:
             return steps
-        steps.append(step(TaskStatus.VALIDATING, TeamRole.VALIDATION_GATE, team.validate(context, task)))
+        steps.append(step(TaskStatus.VALIDATING, TeamRole.VALIDATION_GATE,
+                          team.validate(context, task, attempt=remediation + 1)))
         if steps[-1]["ok"] or remediation == MAX_REMEDIATIONS:
             return steps
+        failure = steps[-1]["evidence"].get("failures") or steps[-1]["detail"]
         steps.append(step(TaskStatus.REMEDIATING, TeamRole.DEVELOPER,
-                          team.implement(context, task, attempt=remediation + 2)))
+                          team.implement(context, task, remediation + 2, tests, feedback=failure)))
     return steps
 
 
@@ -280,7 +299,7 @@ def apply(session: Session, loaded: Loaded, result: dict, team: Team) -> None:
         record_event(session, "job.discarded", actor=COORDINATOR, run_id=run.id,
                      payload={"kind": loaded.kind, "execution": str(execution.id)})
         return
-    execution.engine = team.engine
+    execution.engine = result.get("_engine") or team.engine
     calls = result.get("_calls") or []
     if calls:
         execution.prompt_version = ",".join(sorted({c["prompt_version"] for c in calls if c["prompt_version"]}))
@@ -402,7 +421,8 @@ def _apply_code_task(session: Session, run: Run, execution: Execution, result: d
     if task.status != TaskStatus.WRITING_TESTS:
         finish(session, execution, "discarded", error=f"task is {task.status}")
         return
-    for step in result["steps"]:
+    for index, step in enumerate(result["steps"]):
+        final = index == len(result["steps"]) - 1
         state = TaskStatus(step["state"])
         if state != task.status:
             transition_task(session, task, state, actor=step["role"], reason=step["detail"])
@@ -413,8 +433,8 @@ def _apply_code_task(session: Session, run: Run, execution: Execution, result: d
             transition_task(session, task, TaskStatus.DISPUTED, actor=step["role"], reason=step["detail"])
             to_needs_human(session, run, f"{task.external_task_id}: the Developer disputes a test: {step['detail']}")
             return
-        if not step["ok"] and state in (TaskStatus.WRITING_TESTS, TaskStatus.RED_CHECK, TaskStatus.CODING,
-                                        TaskStatus.REMEDIATING):
+        if not step["ok"] and final and state in (TaskStatus.WRITING_TESTS, TaskStatus.RED_CHECK, TaskStatus.CODING,
+                                                  TaskStatus.REMEDIATING):
             transition_task(session, task, TaskStatus.FAILED, actor=step["role"], reason=step["detail"])
             to_needs_human(session, run, f"{task.external_task_id} failed at {state.value}: {step['detail']}")
             return
@@ -464,7 +484,16 @@ def _apply_release(session: Session, run: Run, execution: Execution, result: dic
                           author=TeamRole.RELEASE_ENGINEER.value)
     head = commit_thread(session, run, "report", report.content, "sdlc: execution report")
     report.commit_sha = head
-    release = team.open_pull_request(build_context(session, run), run.branch)
+    project = session.get(Project, run.project_id)
+    slug = None if get_settings().coding_is_mocked else repo_slug(project.repo_url)
+    if slug:
+        worktree = worktree_for(project, run)
+        head = changes.head(worktree.path)
+        github.push(worktree.path, run.branch)
+        number, url = github.open_draft(slug, project.default_branch, run.branch, f"[SDLC] {run.title}", report.content)
+        release = ReleaseResult(url=url, number=number, simulated=False)
+    else:
+        release = team.open_pull_request(build_context(session, run), run.branch)
     pull = session.scalar(select(PullRequest).where(PullRequest.run_id == run.id))
     if pull is None:  # after requested changes the same pull request gets a new head
         pull = PullRequest(run_id=run.id)
@@ -472,5 +501,40 @@ def _apply_release(session: Session, run: Run, execution: Execution, result: dic
     pull.number, pull.url, pull.head_sha, pull.simulated = release.number, release.url, head, release.simulated
     pull.ci_status, pull.review_status = ("simulated" if release.simulated else "pending"), "pending"
     transition_run(session, run, RunStatus.WAITING_PR_APPROVAL, actor=TeamRole.RELEASE_ENGINEER.value,
-                   reason="simulated pull request (B2): the branch exists only in the local mirror"
+                   reason="simulated pull request: the branch exists only in the local mirror"
                    if release.simulated else f"draft PR {release.url}")
+
+
+def poll_pull_requests(session: Session) -> None:
+    """Read CI, review and merge state of open draft PRs; a merge of the exact pushed head completes the run."""
+    rows = session.execute(select(Run, PullRequest, Project).join(PullRequest, PullRequest.run_id == Run.id)
+                           .join(Project, Project.id == Run.project_id)
+                           .where(Run.status == RunStatus.WAITING_PR_APPROVAL, PullRequest.simulated.is_(False),
+                                  PullRequest.number.is_not(None))).all()
+    for run, pull, project in rows:
+        slug = repo_slug(project.repo_url)
+        if not slug:
+            continue
+        try:
+            state = github.pull_state(slug, pull.number)
+        except github.GitHubError as exc:
+            log.warning("cannot read PR %s#%s: %s", slug, pull.number, exc)
+            continue
+        session.refresh(run, with_for_update=True)
+        if run.status != RunStatus.WAITING_PR_APPROVAL:
+            continue
+        if (state.ci_status, state.review_status) != (pull.ci_status, pull.review_status):
+            record_event(session, "pr.updated", actor=TeamRole.RELEASE_ENGINEER.value, run_id=run.id,
+                         payload={"number": pull.number, "ci": state.ci_status, "review": state.review_status})
+            pull.ci_status, pull.review_status = state.ci_status, state.review_status
+        if state.state == "MERGED" and state.head_sha == pull.head_sha:
+            pull.merged_sha = state.merged_sha
+            transition_run(session, run, RunStatus.COMPLETED, actor="github", acting_role="code_owner",
+                           reason=f"PR #{pull.number} merged as {state.merged_sha} (head {state.head_sha[:12]})")
+        elif state.state == "MERGED":
+            to_needs_human(session, run, f"PR #{pull.number} was merged with head {state.head_sha[:12]}, "
+                                         f"not the head the team pushed ({(pull.head_sha or '')[:12]})")
+        elif state.state == "CLOSED":
+            pull.review_status = "closed"
+            transition_run(session, run, RunStatus.CLOSED_UNMERGED, actor="github", acting_role="code_owner",
+                           reason=f"PR #{pull.number} closed without merge")

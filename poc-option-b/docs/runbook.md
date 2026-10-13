@@ -20,6 +20,8 @@ The compose project is `ai-native-sdlc-v3`. It does not share containers or volu
 | `.data/projects/<key>/mirror.git` | Bare mirror of each project; fetched before every run |
 | `.data/worktrees/<run-id>` | Working tree of each run on branch `sdlc/run-<id>` |
 | `.data/log/`, `.data/run/` | Logs and PID files of the API, worker and tunnel |
+| `.data/logs/<run-id>/` | B4 session logs (`Tn-tests-1.log`, `Tn-code-1.log`) and validation logs per command |
+| `.data/logs/checks/<project>/` | Validation logs of the readiness check |
 
 Removing a project's mirror while runs exist breaks those runs; there is no project removal in B2.
 
@@ -31,6 +33,14 @@ Work is queued in the `executions` table and claimed with `FOR UPDATE SKIP LOCKE
 - jobs with side effects (coding, release) are never replayed: the execution becomes `unknown`, the task `UNKNOWN`, and the run `NEEDS_HUMAN`. Inspect the run worktree, then decide in the inbox.
 
 A job that finds its run in another state (for example cancelled) is recorded as `discarded`.
+
+## Doing roles (B4)
+
+- A code task is one job: tests, red check, code, validation and remediation run inside it, one CLI session at a time. Sessions time out after 20 minutes and their process group is killed; validation commands use their `timeout_seconds`, and a timed-out container is removed.
+- Each session starts by discarding uncommitted leftovers in the worktree, so a crashed session cannot leak into the next one. Committed work stays; inspect `git log` in the worktree before resuming an `UNKNOWN` task.
+- Codex has no per-path write rule in its sandbox; Claude Code has the guard hook. In both cases the controller's diff check after the session decides what is kept.
+- The release job pushes with `gh auth git-credential` as a one-off credential helper; no token is written to disk or to a command line by the platform.
+- Polling: every 60 seconds the worker reads open draft PRs (`gh pr view`) for CI, review and merge state. A merge with a head other than the one the team pushed sends the run to `NEEDS_HUMAN`.
 
 ## Security of the control room
 

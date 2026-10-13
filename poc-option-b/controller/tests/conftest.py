@@ -9,6 +9,7 @@ from controller.app.config import PROJECT_ROOT, Settings
 
 # Tests never call a model, whatever the operator's .env says.
 os.environ["SDLC_TEAM_MODE"] = "mock"
+os.environ["SDLC_DOING_MODE"] = "mock"
 
 TEST_DB = os.environ.get("SDLC_TEST_DATABASE_URL")
 if TEST_DB:

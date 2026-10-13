@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
+import json
 from pathlib import Path
 import subprocess
 
@@ -181,6 +182,39 @@ def check_worker() -> Check:
     return Check("worker", OK, f"pid {pid}")
 
 
+def _run(args: list[str]) -> subprocess.CompletedProcess:
+    return subprocess.run(args, capture_output=True, text=True, timeout=30, check=False)
+
+
+def check_executors(settings: Settings) -> list[Check]:
+    """Doing roles: Codex and Claude Code logged in with a subscription, gh logged in for draft PRs."""
+    if settings.coding_is_mocked:
+        return [Check("doing roles", OK, "mocked (SDLC_DOING_MODE=mock); no CLI, container or GitHub is used")]
+
+    def codex() -> Check:
+        login = _run(["codex", "login", "status"])
+        text = (login.stdout + login.stderr).strip()
+        if login.returncode or "ChatGPT" not in text:
+            return Check("codex", FAIL, text or "not logged in", "Run codex login (ChatGPT subscription, not an API key)")
+        return Check("codex", OK, f"{_run(['codex', '--version']).stdout.strip()}, {text}")
+
+    def claude() -> Check:
+        data = json.loads(_run(["claude", "auth", "status"]).stdout or "{}")
+        if not data.get("loggedIn") or data.get("authMethod") != "claude.ai":
+            return Check("claude", FAIL, f"auth {data.get('authMethod') or 'none'}",
+                         "Run claude and log in with your claude.ai subscription")
+        return Check("claude", OK, f"{_run(['claude', '--version']).stdout.strip()}, claude.ai subscription")
+
+    def gh() -> Check:
+        status = _run(["gh", "auth", "status"])
+        if status.returncode:
+            return Check("gh", FAIL, "not logged in", "Run gh auth login")
+        return Check("gh", OK, "logged in; draft PRs use this login")
+
+    return [_guard("codex", "Install the Codex CLI", codex), _guard("claude", "Install Claude Code", claude),
+            _guard("gh", "Install the GitHub CLI", gh)]
+
+
 def readiness_checks(settings: Settings, engine: Engine) -> list[Check]:
     """Fast checks for /health/ready."""
     return [check_postgres(engine), check_migrations(engine), check_langflow(settings), check_flows(settings),
@@ -192,7 +226,8 @@ def doctor_checks(settings: Settings, engine: Engine) -> list[Check]:
     if config.status == FAIL:
         return [config]
     return [config, check_docker(), *readiness_checks(settings, engine),
-            check_langflow_to_ollama(settings), check_gx10_capacity(settings), check_api(settings)]
+            check_langflow_to_ollama(settings), check_gx10_capacity(settings), check_api(settings),
+            *check_executors(settings)]
 
 
 def overall(checks: list[Check]) -> str:

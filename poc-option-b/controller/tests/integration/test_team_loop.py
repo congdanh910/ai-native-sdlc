@@ -247,12 +247,12 @@ def test_expired_reasoning_lease_is_requeued(db, sample_repo):
 
 
 class FailingValidation(MockTeam):
-    def validate(self, context, task):
+    def validate(self, context, task, attempt=1):
         return StepResult(False, "unit-tests failed")
 
 
 class DisputingDeveloper(MockTeam):
-    def implement(self, context, task, attempt):
+    def implement(self, context, task, attempt, tests=None, feedback=""):
         return StepResult(False, "test TC-T1-1 asserts the wrong date format", dispute=True)
 
 

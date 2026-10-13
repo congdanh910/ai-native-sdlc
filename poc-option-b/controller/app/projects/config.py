@@ -126,6 +126,11 @@ class PlatformDefaults(Strict):
     max_tasks: int = 8
     max_changed_files: int = 30
     enabled_executors: tuple[str, ...] = EXECUTORS
+    # Toolchain names a project may use in validation_image, and the container image each one runs in.
+    validation_images: tuple[tuple[str, str], ...] = (
+        ("node-20", "node:20-alpine"), ("node-22", "node:22-alpine"),
+        ("python-3.12", "python:3.12-slim"), ("python-3.13", "python:3.13-slim"),
+    )
 
 
 class EffectivePolicy(Strict):
@@ -141,6 +146,9 @@ class EffectivePolicy(Strict):
     validation: list[ValidationCommand]
     stages: Stages
     commit_artifacts: bool
+    validation_image: str = ""  # container image; empty when the platform does not provide the toolchain
+    setup: list[str] = []
+    red_check: bool = True
 
 
 def effective_policy(config: ProjectConfig, defaults: PlatformDefaults = PlatformDefaults()) -> EffectivePolicy:
@@ -159,6 +167,9 @@ def effective_policy(config: ProjectConfig, defaults: PlatformDefaults = Platfor
         validation=list(config.validation),
         stages=config.stages,
         commit_artifacts=config.artifacts.commit_to_repo,
+        validation_image=dict(defaults.validation_images).get(config.validation_image, ""),
+        setup=list(config.setup),
+        red_check=config.testing.red_check,
     )
 
 

@@ -74,17 +74,17 @@ class MockTeam:
                  for task in plan.tasks for n, criterion in enumerate(task.acceptance_criteria, start=1)]
         return TestPlan(cases=cases)
 
-    def write_tests(self, context, task, tests) -> StepResult:
+    def write_tests(self, context, task, tests, feedback="") -> StepResult:
         count = sum(1 for case in tests.cases if case.task_id == task.id)
         return StepResult(True, f"mock: {count} test cases noted, no files written")
 
-    def red_check(self, context, task) -> StepResult:
+    def red_check(self, context, task, tests) -> StepResult:
         return StepResult(True, "mock: red check skipped (no tests were written)")
 
-    def implement(self, context, task, attempt) -> StepResult:
+    def implement(self, context, task, attempt, tests=None, feedback="") -> StepResult:
         return StepResult(True, f"mock: implementation skipped (attempt {attempt})")
 
-    def validate(self, context, task) -> StepResult:
+    def validate(self, context, task, attempt=1) -> StepResult:
         names = ", ".join(command.name for command in context.policy.validation)
         return StepResult(True, f"mock: validation not run ({names})")
 

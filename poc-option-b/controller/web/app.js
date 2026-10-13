@@ -113,7 +113,8 @@ async function act(button, work) {
 function pill(status) {
   const cls = { ok: "ok", ready: "ok", COMPLETED: "ok", PASSED: "ok", warn: "warn", plan_only: "warn",
     pending: "warn", fail: "fail", not_ready: "fail", FAILED: "fail", NEEDS_HUMAN: "fail", CANCELLED: "muted",
-    DISPUTED: "fail", UNKNOWN: "fail" }[status] || "";
+    DISPUTED: "fail", UNKNOWN: "fail", passed: "ok", failed: "fail", success: "ok", failure: "fail",
+    approved: "ok", changes_requested: "warn" }[status] || "";
   return h("span", { class: `pill ${cls}` }, status);
 }
 
@@ -333,9 +334,12 @@ function decisionPanel(run, reload) {
     const pr = run.pull_request;
     const reason = reasonBox("Requested changes or reason");
     return card("pull request",
-      pr.simulated ? h("p", {}, "Simulated pull request (B2): branch ", h("code", {}, run.branch),
-        " exists only in the local mirror, at ", h("code", {}, (pr.head_sha || "").slice(0, 10)), ". Real draft PRs arrive in B4.")
-        : h("p", {}, h("a", { href: pr.url, target: "_blank", rel: "noopener" }, pr.url)),
+      pr.simulated ? h("p", {}, "Simulated pull request: branch ", h("code", {}, run.branch),
+        " exists only in the local mirror, at ", h("code", {}, (pr.head_sha || "").slice(0, 10)),
+        ". GitHub projects get a real draft PR when SDLC_DOING_MODE=cli.")
+        : h("div", {}, h("p", {}, "Draft PR ", h("a", { href: pr.url, target: "_blank", rel: "noopener" }, `#${pr.number}`),
+            " · CI ", pill(pr.ci_status), " · review ", pill(pr.review_status), " · head ", h("code", {}, (pr.head_sha || "").slice(0, 10))),
+          h("p", { class: "small muted" }, "Merge it in GitHub; the platform never merges. The run completes when GitHub reports a merge of this exact head (checked every minute).")),
       reason,
       h("div", { class: "actions" },
         pr.simulated ? button("Record simulated merge", "primary", () => post("pr-decision", { decision: "approve" })) : null,
@@ -376,6 +380,15 @@ async function runView(id) {
       h("tbody", {}, ...run.tasks.map((t) => h("tr", {}, h("td", {}, h("strong", {}, t.id), " ", t.title),
         h("td", {}, pill(t.status)), h("td", {}, t.attempts), h("td", {}, t.depends_on.join(", ")))))))
       : h("p", { class: "muted" }, "Tasks appear after plan approval."),
+    Steps: () => run.task_steps.length ? h("div", {}, ...run.task_steps.map((x) => h("div", { class: "card" },
+      h("h3", { style: "margin-top: 0" }, x.task || "task"),
+      h("div", { class: "table-wrap" }, h("table", {},
+        h("thead", {}, h("tr", {}, ...["Step", "Role", "Result", "Executor", "Commit", "Seconds", "Detail"].map((t) => h("th", {}, t)))),
+        h("tbody", {}, ...x.steps.map((s) => h("tr", {}, h("td", {}, s.state), h("td", {}, ROLE_LABEL[s.role] || s.role),
+          h("td", {}, pill(s.ok ? "passed" : "failed")), h("td", {}, s.executor || ""),
+          h("td", {}, s.commit ? h("code", {}, s.commit.slice(0, 10)) : ""), h("td", {}, s.seconds ? Math.round(s.seconds) : ""),
+          h("td", { class: "small" }, s.detail)))))))))
+      : h("p", { class: "muted" }, "Steps appear when the QA Engineer starts the first task."),
     Work: () => h("div", { class: "table-wrap" }, h("table", {},
       h("thead", {}, h("tr", {}, ...["Job", "Role", "Engine", "Status", "Attempts", "Error"].map((t) => h("th", {}, t)))),
       h("tbody", {}, ...run.executions.map((e) => h("tr", {}, h("td", {}, e.kind), h("td", {}, e.role), h("td", {}, e.engine || ""),
@@ -582,7 +595,7 @@ async function route() {
 window.addEventListener("hashchange", () => { clearTimeout(timer); route(); });
 api("/api/meta").then((meta) => {
   META = meta;
-  document.getElementById("who").textContent = `${meta.operator} · team: ${meta.team_mode}`;
+  document.getElementById("who").textContent = `${meta.operator} · thinking: ${meta.team_mode} · doing: ${meta.doing_mode}`;
 }).catch(() => {});
 setInterval(refreshInboxCount, 5000);
 refreshInboxCount();

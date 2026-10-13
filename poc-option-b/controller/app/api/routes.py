@@ -117,6 +117,7 @@ def _decide(run_id: uuid.UUID, action) -> dict:
 @router.get("/meta")
 def meta() -> dict:
     return {"operator": operator(), "team_mode": get_settings().sdlc_team_mode,
+            "doing_mode": get_settings().sdlc_doing_mode,
             "roles": [role.value for role in HumanRole], "failure_categories": services.FAILURE_CATEGORIES,
             "failure_stages": services.FAILURE_STAGES, "failure_roles": services.FAILURE_ROLES}
 

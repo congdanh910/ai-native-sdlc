@@ -9,11 +9,14 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from controller.app.config import DATA_DIR
+from controller.app.config import DATA_DIR, get_settings
+from controller.app.doing import github
+from controller.app.doing.github import repo_slug
+from controller.app.doing.validation import ValidationGate
 from controller.app.events import record_event
 from controller.app.models import Project
 from controller.app.projects.config import ProjectConfig, effective_policy, parse_project_config
-from controller.app.projects.repo import GitError, Mirror, validate_repo_url
+from controller.app.projects.repo import GitError, Mirror, _git, validate_repo_url
 
 KEY = re.compile(r"[a-z][a-z0-9-]{1,39}")
 CONFIG_PATH = ".sdlc/project.yaml"
@@ -115,6 +118,43 @@ def _first_error(exc: Exception) -> str:
     return str(exc).splitlines()[0]
 
 
+def doing_checks(project: Project, mirror: Mirror, commit: str | None, snapshot: Snapshot | None) -> list[Item]:
+    """What coding needs: validation passing on the default branch in its container, and GitHub access."""
+    if get_settings().coding_is_mocked:
+        return [Item("validation commands", "pending", "checked when SDLC_DOING_MODE=cli"),
+                Item("GitHub access", "pending", "checked when SDLC_DOING_MODE=cli")]
+    if snapshot is None:
+        return []
+    items: list[Item] = []
+    policy = effective_policy(snapshot.config)
+    if not policy.validation_image:
+        items.append(Item("validation image", "fail",
+                          f"{snapshot.config.validation_image!r} is not a toolchain this platform provides"))
+    else:
+        checkout = DATA_DIR / "checks" / project.key / commit[:12]
+        if checkout.exists():
+            _git("--git-dir", str(mirror.path), "worktree", "remove", "--force", str(checkout))
+        _git("--git-dir", str(mirror.path), "worktree", "add", "--quiet", "--detach", str(checkout), commit)
+        try:
+            gate = ValidationGate(policy, checkout, DATA_DIR / "logs" / "checks" / project.key / commit[:12])
+            for report in gate.run([c.name for c in policy.validation], "check"):
+                items.append(Item(f"validation: {report.name}", "ok" if report.ok else "fail",
+                                  f"passed in {report.seconds}s ({policy.validation_image})" if report.ok else
+                                  f"exit {report.exit_code}{' (timed out)' if report.timed_out else ''}; "
+                                  f"log {report.log_path}"))
+        finally:
+            _git("--git-dir", str(mirror.path), "worktree", "remove", "--force", str(checkout))
+    slug = repo_slug(project.repo_url)
+    if slug is None:
+        items.append(Item("GitHub access", "warn", "local repository: pull requests stay simulated in the mirror"))
+    else:
+        try:
+            items.append(Item("GitHub access", "ok", github.check_access(slug)))
+        except github.GitHubError as exc:
+            items.append(Item("GitHub access", "fail", str(exc)))
+    return items
+
+
 def check_project(session: Session, project: Project, actor: str) -> list[Item]:
     mirror = mirror_for(project)
     try:
@@ -129,10 +169,7 @@ def check_project(session: Session, project: Project, actor: str) -> list[Item]:
         if snapshot and snapshot.config.project != project.key:
             items.append(Item("project key", "fail",
                               f"project.yaml says {snapshot.config.project!r}, registered as {project.key!r}"))
-    items += [
-        Item("validation commands", "pending", "run on the default branch in the toolchain container (B4)"),
-        Item("GitHub access", "pending", "draft PR creation is checked in B4"),
-    ]
+    items += doing_checks(project, mirror, commit, snapshot if commit else None)
     statuses = {item.status for item in items}
     readiness = "not_ready" if "fail" in statuses else "plan_only" if "pending" in statuses else "ready"
     project.readiness = readiness

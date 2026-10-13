@@ -27,6 +27,7 @@ log = logging.getLogger("sdlc.worker")
 WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
 CAPACITY_WAIT_SECONDS = 120
 RETRY_BASE_SECONDS = 10
+PR_POLL_SECONDS = 60  # without a public webhook, GitHub is polled for CI, review and merge
 
 
 def _heartbeat(execution_id, stop: threading.Event) -> None:
@@ -126,6 +127,7 @@ def run_forever(poll_seconds: float = 1.0) -> None:
     signal.signal(signal.SIGTERM, lambda *_: stopping.set())
     awake = StayAwake()
     log.info("worker %s started with team %s", WORKER_ID, team.engine)
+    next_pr_poll = 0.0
     while not stopping.is_set():
         try:
             busy = run_once(team)
@@ -141,6 +143,13 @@ def run_forever(poll_seconds: float = 1.0) -> None:
                 advance_evals()
             except Exception:
                 log.exception("eval scoring failed")
+            if time.monotonic() >= next_pr_poll:
+                next_pr_poll = time.monotonic() + PR_POLL_SECONDS
+                try:
+                    with session_scope() as session:
+                        coordinator.poll_pull_requests(session)
+                except Exception:
+                    log.exception("pull request polling failed")
             stopping.wait(poll_seconds)
     awake.release()
     log.info("worker stopped")

@@ -58,6 +58,7 @@ def run_detail(session: Session, run: Run) -> dict:
     pull = session.scalar(select(PullRequest).where(PullRequest.run_id == run.id))
     executions = session.scalars(select(Execution).where(Execution.run_id == run.id)
                                  .order_by(Execution.created_at)).all()
+    task_ids = {t.id: t.external_task_id for t in session.scalars(select(Task).where(Task.run_id == run.id))}
     detail = run_summary(run, project.key)
     detail.update({
         "base_commit": run.base_commit, "branch": run.branch, "stage_modes": run.stage_modes,
@@ -80,8 +81,22 @@ def run_detail(session: Session, run: Run) -> dict:
             "review_status": pull.review_status, "merged_sha": pull.merged_sha, "simulated": pull.simulated},
         "executions": [{"kind": e.kind, "role": e.role, "status": e.status, "attempts": e.attempts,
                         "engine": e.engine, "error": e.error} for e in executions],
+        "task_steps": [{"task": task_ids.get(e.task_id), "steps": _steps(e.result)} for e in executions
+                       if e.kind == "code_task" and e.result],
     })
     return detail
+
+
+def _steps(result: dict) -> list[dict]:
+    """What each doing role did in one task execution, without logs or prompts."""
+    out = []
+    for step in result.get("steps", []):
+        evidence = step.get("evidence") or {}
+        out.append({"state": step["state"], "role": step["role"], "ok": step["ok"], "detail": step["detail"][:500],
+                    "executor": evidence.get("executor"), "commit": evidence.get("commit"),
+                    "seconds": evidence.get("seconds") or sum(r.get("seconds") or 0 for r in evidence.get("reports", [])),
+                    "files": step.get("changed_files", [])})
+    return out
 
 
 def events_view(session: Session, run_id) -> list[dict]:

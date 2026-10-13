@@ -113,7 +113,7 @@ git --git-dir .data/projects/<key>/mirror.git log --oneline sdlc/run-<id>
 
 ## Real thinking roles (B3)
 
-Set `SDLC_TEAM_MODE=qwen3` in `.env` and run `./sdlc up` again. The Business Analyst, Tech Lead, QA Analyst and Code Reviewer then run on Qwen3 on GX10 through Langflow. The QA Engineer, Developer and Validation Gate stay mocked until B4, so runs still change no code. With `mock`, no model is called.
+Set `SDLC_TEAM_MODE=qwen3` in `.env` and run `./sdlc up` again. The Business Analyst, Tech Lead, QA Analyst and Code Reviewer then run on Qwen3 on GX10 through Langflow. The doing roles follow `SDLC_DOING_MODE` (next section). With `mock`, no model is called.
 
 What changes for you:
 
@@ -144,3 +144,31 @@ The `task-board` suite contains the five features of the v1 pilot. Each plan is 
 Each eval records a fingerprint (team mode, model, context budget, prompt versions) and compares itself with the previous completed eval of the suite. Run an eval after you change a prompt, the model or the context budget.
 
 To use the suite, register the project once: Projects → Add, key `task-board`, repository `https://github.com/congdanh910/ai-native-product-demo`, branch `sdlc-v3/onboarding`.
+
+## Real doing roles (B4)
+
+Set `SDLC_DOING_MODE=cli` in `.env` and run `./sdlc up` again. After you approve a plan, the team writes tests and code in the run's worktree, task by task in dependency order:
+
+1. **QA Engineer** (Codex or Claude Code, see routing below) writes the task's test cases from the approved test plan. It may only add tests under `paths.tests`: changing a source file, deleting or editing existing test lines, or adding `.skip`/`.only` rejects the session and nothing is kept. The controller commits accepted tests as `test(Tn): …`.
+2. **Validation Gate red check**: the task's validation commands run in the project's toolchain container. At least one must fail (the feature does not exist yet), unless every case of the task is marked `expected_pass`. If the tests already pass, they go back to the QA Engineer once with the result; a second failure stops the run in `NEEDS_HUMAN`.
+3. **Developer** implements the task in a separate CLI session. It may only change the task's `modify`/`create` files and never tests. If it thinks a test is wrong it answers `DISPUTE: …` and the run waits for you. Accepted code is committed as `feat(Tn): …`.
+4. **Validation Gate** runs every validation command. A failure goes back to the Developer with the failing output, at most twice; then the run stops in `NEEDS_HUMAN`.
+
+After all tasks pass, the Code Reviewer (Qwen3) writes `review.md`, and the **Release Engineer** pushes `sdlc/run-<id>` to GitHub and opens a **draft PR** against the project's default branch, with `report.md` as its body. Merge it in GitHub yourself: the platform never merges. The worker checks the PR every minute; the run completes only when GitHub reports a merge of the exact head the team pushed. Closing the PR closes the run. A project registered from a local path keeps a simulated PR.
+
+The run page has a **Steps** tab with each step's role, executor, commit, duration and result, and the PR card shows CI and review status.
+
+### Routing and sessions
+
+- The Developer uses `default_executor` and the QA Engineer `testing.qa_executor` (default: the same) from `.sdlc/project.yaml`. Set them to different CLIs for stronger independence.
+- Both CLIs run non-interactively under your subscription logins (`codex login` with ChatGPT, `claude` with claude.ai). API key variables are removed from their environment, so no paid API is used by accident.
+- Each session is new and sees only its inputs: AGENTS.md, the task, the criteria and its test cases.
+- **Claude Code** runs with `--permission-mode dontAsk` and file tools only (no shell), plus a hook that blocks edits outside the role's paths. **Codex** runs in its `workspace-write` sandbox with network off. Neither may commit or push; the controller's checks after each session are authoritative.
+
+### Validation container
+
+`validation_image` in `.sdlc/project.yaml` names a toolchain the platform provides (`node-20`, `node-22`, `python-3.12`, `python-3.13`). Validation runs with `docker run --network none`, the worktree mounted read-only, 2 CPUs, 2 GB memory and dropped capabilities. `setup` commands (for example `npm ci`) run once per run worktree with network and a writable mount. Logs are kept in `.data/logs/<run-id>/`.
+
+### Readiness
+
+With `SDLC_DOING_MODE=cli`, **Projects → Check** runs every validation command on the default branch in the container and checks that your `gh` login can push to the repository. Only a `ready` project can reach coding. `./sdlc doctor` also checks the Codex, Claude Code and `gh` logins.

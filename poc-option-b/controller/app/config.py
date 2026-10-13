@@ -28,7 +28,8 @@ class Settings(BaseSettings):
     langflow_port: int = 7870
 
     sdlc_api_port: int = 8770
-    sdlc_team_mode: str = "mock"
+    sdlc_team_mode: str = "mock"  # thinking roles: mock or qwen3
+    sdlc_doing_mode: str = "mock"  # QA Engineer, Developer, Validation Gate: mock or cli (B4)
 
     ollama_tunnel_port: int = 11435
     ollama_remote_port: int = 11437
@@ -52,8 +53,8 @@ class Settings(BaseSettings):
 
     @property
     def coding_is_mocked(self) -> bool:
-        """The QA Engineer, Developer and Validation Gate are mocked in every team mode before B4."""
-        return self.sdlc_team_mode in ("mock", "qwen3")
+        """The QA Engineer, Developer and Validation Gate are mocked unless SDLC_DOING_MODE=cli."""
+        return self.sdlc_doing_mode != "cli"
 
     @property
     def database_url(self) -> str:
