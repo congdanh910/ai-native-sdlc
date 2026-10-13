@@ -145,3 +145,68 @@ def test_a_merge_of_another_head_needs_a_human(db, sample_repo, tmp_path, monkey
     with session_scope() as session:
         coordinator.poll_pull_requests(session)
     assert status(run_id) == "NEEDS_HUMAN"
+
+
+class DisputingCli(FakeCli):
+    """The first Developer session disputes; QA sessions in amend mode edit an existing test line."""
+
+    def __init__(self):
+        super().__init__()
+        self.disputed = False
+
+    def run(self, session: Session) -> SessionResult:
+        if session.role == "developer" and not self.disputed:
+            self.disputed = True
+            self.sessions.append(session)
+            return SessionResult(self.name, True, "DISPUTE: an existing test asserts the old task shape", 0.5, 0, False)
+        if session.role == "qa_engineer" and "Decision on the dispute" in session.prompt:
+            self.sessions.append(session)
+            (session.worktree / "test" / "tasks.test.js").write_text("// existing tests, updated for priority\n")
+            return SessionResult(self.name, True, "updated", 0.5, 0, False)
+        return super().run(session)
+
+
+def _decide(run_id, decision, reason="the existing test pins the old shape"):
+    from controller.app import services
+    with session_scope() as session:
+        services.resume(session, services.get_run(session, run_id), actor="tester", decision=decision, reason=reason)
+
+
+def _subjects(run_id) -> list[str]:
+    with session_scope() as session:
+        worktree = Path(session.get(Run, run_id).worktree_path)
+    log = subprocess.run(["git", "log", "--format=%s", "main.."], cwd=worktree, capture_output=True, text=True).stdout
+    return [line for line in log.splitlines()[::-1] if not line.startswith("sdlc:")]
+
+
+def test_a_ruled_dispute_lets_the_qa_engineer_update_existing_tests(db, sample_repo, tmp_path):
+    run_id = _to_coding(sample_repo)
+    cli = DisputingCli()
+    drain(team(cli, FakeContainer(), tmp_path))
+    assert status(run_id) == "NEEDS_HUMAN"
+    _decide(run_id, "amend_tests")
+    drain(team(cli, FakeContainer(), tmp_path))
+    assert status(run_id) == "WAITING_PR_APPROVAL"
+    subjects = _subjects(run_id)
+    assert subjects[:3] == [subjects[0], "test(T1): update tests after a ruled dispute", subjects[2]]
+    assert subjects[2].startswith("feat(T1)") and sum(s.startswith("test(T1)") for s in subjects) == 2
+    with session_scope() as session:
+        report = coordinator_report(session, run_id)
+    assert "QA Engineer updated the tests" in report and "test/tasks.test.js (-1 line(s))" in report
+
+
+def test_kept_tests_send_the_developer_back_with_the_decision(db, sample_repo, tmp_path):
+    run_id = _to_coding(sample_repo)
+    cli = DisputingCli()
+    drain(team(cli, FakeContainer(), tmp_path))
+    _decide(run_id, "keep_tests", reason="the old shape is still required")
+    drain(team(cli, FakeContainer(), tmp_path))
+    assert status(run_id) == "WAITING_PR_APPROVAL"
+    developer = [s for s in cli.sessions if s.role == "developer"][1]
+    assert "The Tech Lead kept the tests: the old shape is still required" in developer.prompt
+    assert sum(s.startswith("test(T1)") for s in _subjects(run_id)) == 1  # the tests were reused, not rewritten
+
+
+def coordinator_report(session, run_id) -> str:
+    from controller.app import coordinator
+    return coordinator.execution_report(session, session.get(Run, run_id))

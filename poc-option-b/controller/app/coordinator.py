@@ -188,7 +188,7 @@ def build_context(session: Session, run: Run, *, kind: str = "", feedback: list[
     return RunContext(title=run.title, policy=policy, agents_md=agents, review_md=artifact(session, run.id, "review_md"),
                       intent_md=intent, files=bundle.files, spec_md=spec.content if spec else None, answers=answers,
                       repository=bundle.as_input(), feedback=feedback or [], session_id=f"{run.id}:{kind}",
-                      run_id=str(run.id), worktree=run.worktree_path or "")
+                      run_id=str(run.id), worktree=run.worktree_path or "", base_commit=run.base_commit or "")
 
 
 def load(session: Session, execution: Execution) -> Loaded:
@@ -209,6 +209,9 @@ def load(session: Session, execution: Execution) -> Loaded:
     if execution.task_id:
         task = session.get(Task, execution.task_id)
         loaded.task_payload, loaded.task_attempt = task.payload, task.attempt_count
+        ruling = artifact(session, run.id, f"ruling:{task.external_task_id}")
+        if ruling and json.loads(ruling)["attempt"] == task.attempt_count:
+            loaded.extra["ruling"] = json.loads(ruling)
     return loaded
 
 
@@ -262,7 +265,14 @@ def _work_task(team: Team, loaded: Loaded) -> list[dict]:
         return {"state": state.value, "role": role.value, "ok": result.ok, "detail": result.detail,
                 "dispute": result.dispute, "changed_files": result.changed_files, "evidence": result.evidence}
 
-    steps = [step(TaskStatus.WRITING_TESTS, TeamRole.QA_ENGINEER, team.write_tests(context, task, tests))]
+    ruling = loaded.extra.get("ruling")
+    if ruling and ruling["decision"] == "amend_tests":
+        feedback = (f"The Developer disputed your tests: {ruling['dispute']}\nThe Tech Lead decided that you update "
+                    f"the tests: {ruling['reason']}")
+        first = team.write_tests(context, task, tests, feedback=feedback, amend=True)
+    else:
+        first = team.write_tests(context, task, tests)  # reuses tests already committed for the task
+    steps = [step(TaskStatus.WRITING_TESTS, TeamRole.QA_ENGINEER, first)]
     if not steps[-1]["ok"]:
         return steps
     steps.append(step(TaskStatus.RED_CHECK, TeamRole.VALIDATION_GATE, team.red_check(context, task, tests)))
@@ -274,7 +284,9 @@ def _work_task(team: Team, loaded: Loaded) -> list[dict]:
         steps.append(step(TaskStatus.RED_CHECK, TeamRole.VALIDATION_GATE, team.red_check(context, task, tests)))
         if not steps[-1]["ok"]:
             return steps
-    steps.append(step(TaskStatus.CODING, TeamRole.DEVELOPER, team.implement(context, task, 1, tests)))
+    upheld = (f"You disputed a test earlier: {ruling['dispute']}\nThe Tech Lead kept the tests: {ruling['reason']}\n"
+              f"Make the code pass them.") if ruling and ruling["decision"] == "keep_tests" else ""
+    steps.append(step(TaskStatus.CODING, TeamRole.DEVELOPER, team.implement(context, task, 1, tests, feedback=upheld)))
     for remediation in range(MAX_REMEDIATIONS + 1):
         if not steps[-1]["ok"] or steps[-1]["dispute"]:
             return steps
@@ -474,6 +486,19 @@ def execution_report(session: Session, run: Run) -> str:
     lines += ["", "## Tasks", "", "| Task | Status | Attempts |", "|---|---|---|"]
     for task in current_tasks(session, run):
         lines.append(f"| {task.external_task_id} {task.payload['title']} | {task.status} | {task.attempt_count} |")
+    rulings = [json.loads(a) for a in session.scalars(select(Artifact.content).where(
+        Artifact.run_id == run.id, Artifact.kind.startswith("ruling:")).order_by(Artifact.created_at))]
+    if rulings:
+        lines += ["", "## Test disputes decided by a human", ""]
+        for r in rulings:
+            verdict = "QA Engineer updated the tests" if r["decision"] == "amend_tests" else "tests kept"
+            lines.append(f"- {r['task']}: {verdict} ({r['actor']}): {r['reason']}. Dispute: {r['dispute']}")
+    amended = [f"{session.get(Task, e.task_id).external_task_id}: {', '.join(step['evidence']['amended'])}"
+               for e in session.scalars(select(Execution).where(Execution.run_id == run.id,
+                                                                Execution.kind == "code_task"))
+               for step in (e.result or {}).get("steps", []) if (step.get("evidence") or {}).get("amended")]
+    if amended:
+        lines += ["", "Existing test lines changed (review these):", "", *[f"- {a}" for a in amended]]
     engines = sorted({e for e in session.scalars(select(Execution.engine).where(Execution.run_id == run.id)) if e})
     lines += ["", f"Team engine(s): {', '.join(engines) or 'none'}", ""]
     return "\n".join(lines)

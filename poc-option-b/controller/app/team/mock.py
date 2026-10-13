@@ -74,7 +74,7 @@ class MockTeam:
                  for task in plan.tasks for n, criterion in enumerate(task.acceptance_criteria, start=1)]
         return TestPlan(cases=cases)
 
-    def write_tests(self, context, task, tests, feedback="") -> StepResult:
+    def write_tests(self, context, task, tests, feedback="", amend=False) -> StepResult:
         count = sum(1 for case in tests.cases if case.task_id == task.id)
         return StepResult(True, f"mock: {count} test cases noted, no files written")
 

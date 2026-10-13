@@ -72,18 +72,31 @@ class CliDoing:
 
     # ------------------------------------------------------------ roles
 
-    def write_tests(self, context: RunContext, task: PlanTask, tests: TestPlan, feedback: str = "") -> StepResult:
+    def write_tests(self, context: RunContext, task: PlanTask, tests: TestPlan, feedback: str = "",
+                    amend: bool = False) -> StepResult:
         worktree = self._worktree(context)
         changes.discard(worktree)  # a crashed earlier session must not leak into this one
-        if feedback:  # the red check rejected the previous tests: rewrite them instead of adding a second copy
+        if not feedback and not amend and context.base_commit:
+            existing = changes.find_commit(worktree, context.base_commit, f"test({task.id}):")
+            if existing:  # a resumed task keeps the tests it already has
+                return StepResult(True, f"tests already committed in {existing[:10]}; reused",
+                                  evidence={"commit": existing, "reused": True})
+        if feedback and not amend:  # the red check rejected the previous tests: rewrite, do not add a second copy
             changes.drop_commit(worktree, f"test({task.id}):")
         cases = self._cases(tests, task)
+        edit_rule = ("A human decided that existing tests must change for this task (see below). You may edit "
+                     "existing test lines where the decision requires it; never delete test files, and never skip "
+                     "or focus tests (no .skip, .only, todo)." if amend else
+                     "Add new test files or add new tests to existing files. Never change, remove, skip or focus "
+                     "existing tests (no .skip, .only, todo).")
         prompt = _prompt("qa-engineer", agents_md=context.agents_md, task_id=task.id, task_title=task.title,
                          task_files=", ".join(task.modify + task.create), criteria=self._criteria(context, task),
                          cases=json.dumps(cases, indent=2), test_paths=", ".join(context.policy.test_paths),
                          commands="; ".join(" ".join(c) for c in self._commands(context, task)),
-                         feedback=f"\n# Previous attempt\n\n{feedback}\n" if feedback else "")
-        label = f"{task.id}-tests-{2 if feedback else 1}"
+                         edit_rule=edit_rule,
+                         feedback=f"\n# {'Decision on the dispute' if amend else 'Previous attempt'}\n\n{feedback}\n"
+                         if feedback else "")
+        label = f"{task.id}-tests-{'amend' if amend else 2 if feedback else 1}"
         result = self._session(context.policy.qa_executor, "qa_engineer", prompt, context, task,
                                list(context.policy.test_paths), label)
         if not result.ok:
@@ -91,17 +104,27 @@ class CliDoing:
             return StepResult(False, f"QA Engineer session failed ({result.executor}): {result.message[-300:]}",
                               evidence=self._evidence(result, label))
         staged = changes.stage_changes(worktree)
-        problems = changes.check_tests(worktree, staged, context.policy)
+        problems = changes.check_tests(worktree, staged, context.policy, allow_edits=amend)
         if problems:
             changes.discard(worktree)
             return StepResult(False, "test changes rejected: " + "; ".join(problems),
                               evidence=self._evidence(result, label, problems=problems))
-        sha = changes.commit(worktree, f"test({task.id}): {task.title}", "qa_engineer")
+        amended = [f"{c.path} (-{c.deleted} line(s))" for c in staged if c.deleted]
+        subject = f"test({task.id}): {'update tests after a ruled dispute' if amend else task.title}"
+        sha = changes.commit(worktree, subject, "qa_engineer")
         files = [c.path for c in staged]
-        return StepResult(True, f"{len(cases)} case(s) written in {', '.join(files)} ({result.executor})",
-                          changed_files=files, evidence=self._evidence(result, label, commit=sha))
+        detail = f"{len(cases)} case(s) written in {', '.join(files)} ({result.executor})"
+        if amended:
+            detail += "; existing tests changed by human decision: " + ", ".join(amended)
+        return StepResult(True, detail, changed_files=files,
+                          evidence=self._evidence(result, label, commit=sha, amended=amended))
 
     def red_check(self, context: RunContext, task: PlanTask, tests: TestPlan) -> StepResult:
+        if context.base_commit:
+            earlier = changes.find_commit(self._worktree(context), context.base_commit, f"feat({task.id}):")
+            if earlier:  # code is only committed after a passing red check, so these tests were red before it
+                return StepResult(True, f"red check passed before the earlier implementation {earlier[:10]}",
+                                  evidence={"reused": True})
         cases = self._cases(tests, task)
         expect_pass = bool(cases) and all(case["expected_pass"] for case in cases)
         ok, detail, reports = red_check(self._gate(context), task.validation, expect_pass, f"{task.id}-red")
@@ -119,8 +142,10 @@ class CliDoing:
                          test_files=", ".join(sorted({c["target_file"] for c in cases})) or "the test paths",
                          cases=json.dumps(cases, indent=2),
                          commands="; ".join(" ".join(c) for c in self._commands(context, task)),
-                         feedback=(f"\n# Validation failed after your previous attempt ({attempt - 1})\n\n"
-                                   f"Fix the code, not the tests.\n\n{feedback}\n") if feedback else "")
+                         feedback="" if not feedback else
+                         f"\n# Note from the Tech Lead\n\n{feedback}\n" if attempt == 1 else
+                         (f"\n# Validation failed after your previous attempt ({attempt - 1})\n\n"
+                          f"Fix the code, not the tests.\n\n{feedback}\n"))
         label = f"{task.id}-code-{attempt}"
         result = self._session(context.policy.default_executor, "developer", prompt, context, task,
                                task.modify + task.create, label)

@@ -19,7 +19,7 @@ Each case names its target file, the criterion it proves, the scenario and the e
 
 # Rules
 - Change only test files: {test_paths}. Never change source, markup, styles or configuration.
-- Add new test files or add new tests to existing files. Never change, remove, skip or focus existing tests (no .skip, .only, todo).
+- {edit_rule}
 - Test behaviour through the functions and modules the task names, in the style of the existing tests. The code for this task does not exist yet, so your new tests are expected to fail now; do not create stubs or fake the implementation.
 - Write one test for each case above. Use fixed values for ids, dates and times.
 - The project validates with: {commands}.

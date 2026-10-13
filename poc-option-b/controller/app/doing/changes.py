@@ -57,8 +57,11 @@ def _common(worktree: Path, change: Change, policy: EffectivePolicy) -> list[str
     return problems
 
 
-def check_tests(worktree: Path, changes: list[Change], policy: EffectivePolicy) -> list[str]:
-    """QA Engineer: only add test files or add cases; never change sources or weaken existing tests."""
+def check_tests(worktree: Path, changes: list[Change], policy: EffectivePolicy, *, allow_edits: bool = False) -> list[str]:
+    """QA Engineer: only add test files or add cases; never change sources or weaken existing tests.
+
+    allow_edits: a human ruled on a test dispute, so existing lines may change (still no deletions or skips).
+    """
     problems = []
     for change in changes:
         problems += _common(worktree, change, policy)
@@ -67,7 +70,7 @@ def check_tests(worktree: Path, changes: list[Change], policy: EffectivePolicy) 
             continue
         if change.status == "D":
             problems.append(f"deletes test file {change.path}")
-        elif change.deleted:
+        elif change.deleted and not allow_edits:
             problems.append(f"changes or removes {change.deleted} existing line(s) in {change.path}; tests may only be added")
         if change.status != "D" and any(SKIP_MARKER.search(line) for line in _added_lines(worktree, change.path)):
             problems.append(f"adds a skipped or focused test in {change.path}")
@@ -113,6 +116,15 @@ def drop_commit(worktree: Path, subject_prefix: str) -> bool:
         return False
     _git("reset", "--quiet", "--hard", "HEAD~1", cwd=worktree)
     return True
+
+
+def find_commit(worktree: Path, base: str, subject_prefix: str) -> str | None:
+    """The newest commit since base whose subject starts with the prefix."""
+    for line in _git("log", "--format=%H %s", f"{base}..HEAD", cwd=worktree).splitlines():
+        sha, _, subject = line.partition(" ")
+        if subject.startswith(subject_prefix):
+            return sha
+    return None
 
 
 def head(worktree: Path) -> str:

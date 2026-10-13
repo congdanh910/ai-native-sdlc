@@ -1,6 +1,7 @@
 """Decisions the operator makes in a human role. Each one is recorded with the acting role."""
 
 from datetime import datetime, timezone
+import json
 import uuid
 
 from pydantic import ValidationError
@@ -14,7 +15,7 @@ from controller.app.models import Approval, Clarification, Project, PullRequest,
 from controller.app.schemas import Intent, PlanPayload, TestPlan, parse_criteria, render_intent
 from controller.app.state_machine import transition_run, transition_task
 from controller.app.config import get_settings
-from controller.app.states import TASK_TRANSITIONS, TERMINAL, HumanRole, RunStatus, TaskStatus
+from controller.app.states import TASK_TRANSITIONS, TERMINAL, HumanRole, RunStatus, TaskStatus, TeamRole
 
 PO, TL, CO = HumanRole.PRODUCT_OWNER.value, HumanRole.TECH_LEAD.value, HumanRole.CODE_OWNER.value
 
@@ -224,6 +225,9 @@ def resume(session: Session, run: Run, *, actor: str, decision: str, reason: str
         _corrected(run)
         coordinator_replan(session, run, actor=actor, reason=reason)
         return
+    if decision in ("amend_tests", "keep_tests"):
+        _rule_on_dispute(session, run, actor=actor, decision=decision, reason=reason)
+        return
     target = RunStatus(run.resume_status or RunStatus.PREFLIGHT)
     kinds = {RunStatus.PREFLIGHT: "preflight", RunStatus.SPECIFYING: "specify", RunStatus.PLANNING: "plan",
              RunStatus.REVIEWING: "review", RunStatus.PR_OPEN: "release"}
@@ -240,6 +244,26 @@ def resume(session: Session, run: Run, *, actor: str, decision: str, reason: str
         raise DecisionError(f"cannot resume at {target}; replan or cancel instead")
     transition_run(session, run, target, actor=actor, acting_role=TL, reason=reason)
     coordinator.queue(session, run, kinds[target])
+
+
+def _rule_on_dispute(session: Session, run: Run, *, actor: str, decision: str, reason: str) -> None:
+    """The Tech Lead decides a test dispute: the QA Engineer updates the tests, or the tests stand.
+
+    The ruling is stored for the task's next attempt only; the task continues from its committed tests.
+    """
+    disputed = [t for t in coordinator.current_tasks(session, run) if t.status == TaskStatus.DISPUTED]
+    if not disputed:
+        raise DecisionError("no task is disputed; resume, replan or cancel instead")
+    task = disputed[0]
+    if decision == "amend_tests":
+        _corrected(run)
+    ruling = {"task": task.external_task_id, "decision": decision, "reason": reason, "actor": actor,
+              "attempt": task.attempt_count + 1, "dispute": run.status_reason}
+    coordinator.store_artifact(session, run, f"ruling:{task.external_task_id}", TeamRole.COORDINATOR, json.dumps(ruling))
+    record_event(session, "dispute.ruled", actor=actor, acting_role=TL, run_id=run.id, payload=ruling)
+    transition_run(session, run, RunStatus.CODING, actor=actor, acting_role=TL, reason=reason)
+    transition_task(session, task, TaskStatus.READY, actor=actor, reason=f"{decision}: {reason}")
+    coordinator.schedule_tasks(session, run)
 
 
 # ---------------------------------------------------------------- Code Owner

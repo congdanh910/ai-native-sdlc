@@ -151,12 +151,21 @@ Set `SDLC_DOING_MODE=cli` in `.env` and run `./sdlc up` again. After you approve
 
 1. **QA Engineer** (Codex or Claude Code, see routing below) writes the task's test cases from the approved test plan. It may only add tests under `paths.tests`: changing a source file, deleting or editing existing test lines, or adding `.skip`/`.only` rejects the session and nothing is kept. The controller commits accepted tests as `test(Tn): …`.
 2. **Validation Gate red check**: the task's validation commands run in the project's toolchain container. At least one must fail (the feature does not exist yet), unless every case of the task is marked `expected_pass`. If the tests already pass, they go back to the QA Engineer once with the result; a second failure stops the run in `NEEDS_HUMAN`.
-3. **Developer** implements the task in a separate CLI session. It may only change the task's `modify`/`create` files and never tests. If it thinks a test is wrong it answers `DISPUTE: …` and the run waits for you. Accepted code is committed as `feat(Tn): …`.
+3. **Developer** implements the task in a separate CLI session. It may only change the task's `modify`/`create` files and never tests. If it thinks a test is wrong it answers `DISPUTE: …` and the run waits for you (see *Test disputes*). Accepted code is committed as `feat(Tn): …`.
 4. **Validation Gate** runs every validation command. A failure goes back to the Developer with the failing output, at most twice; then the run stops in `NEEDS_HUMAN`.
 
 After all tasks pass, the Code Reviewer (Qwen3) writes `review.md`, and the **Release Engineer** pushes `sdlc/run-<id>` to GitHub and opens a **draft PR** against the project's default branch, with `report.md` as its body. Merge it in GitHub yourself: the platform never merges. The worker checks the PR every minute; the run completes only when GitHub reports a merge of the exact head the team pushed. Closing the PR closes the run. A project registered from a local path keeps a simulated PR.
 
 The run page has a **Steps** tab with each step's role, executor, commit, duration and result, and the PR card shows CI and review status.
+
+### Test disputes
+
+A feature that changes existing behaviour sometimes needs an existing test to change, which neither the QA Engineer nor the Developer may do on their own. The Developer then disputes, and the run card shows two decisions for you as Tech Lead (a reason is required):
+
+- **Let QA update the tests**: the QA Engineer gets one session in which it may edit existing test lines (still no deleted files and no skipped tests), with the dispute and your reason. The red check runs again, then the Developer continues. The changed test files are listed in `report.md` and the PR body for the Code Owner.
+- **Keep the tests**: the Developer gets your reason and must make the code pass the tests as they are.
+
+Either way the task continues from its committed tests; nothing is written twice. A plain **Resume** also reuses the task's committed tests.
 
 ### Routing and sessions
 

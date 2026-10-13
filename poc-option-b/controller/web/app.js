@@ -348,7 +348,12 @@ function decisionPanel(run, reload) {
   }
   if (need.action === "needs_human") {
     const reason = reasonBox("What you checked and why you decide this (required)");
+    const disputed = run.tasks.some((t) => t.status === "DISPUTED");
     return card("the team stopped", h("p", {}, run.reason), reason,
+      disputed ? h("p", { class: "small muted" }, "The Developer disputes a test. As Tech Lead, decide who is right: let the QA Engineer update the tests (existing test lines may change; this is shown in the PR), or keep the tests and send the Developer back.") : null,
+      disputed ? h("div", { class: "actions" },
+        button("Let QA update the tests", "primary", () => post("resume", { decision: "amend_tests", reason: reason.value })),
+        button("Keep the tests", "", () => post("resume", { decision: "keep_tests", reason: reason.value }))) : null,
       h("div", { class: "actions" },
         button("Resume", "primary", () => post("resume", { decision: "resume", reason: reason.value })),
         button("Replan", "", () => post("resume", { decision: "replan", reason: reason.value })),
