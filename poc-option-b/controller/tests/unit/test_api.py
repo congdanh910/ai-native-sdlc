@@ -40,3 +40,8 @@ def test_foreign_host_is_refused():
 
 def test_static_assets_are_served():
     assert client.get("/static/app.js").status_code == 200
+
+
+def test_tests_run_with_the_mock_team():
+    from controller.app.team import get_team
+    assert get_team().engine == "mock"

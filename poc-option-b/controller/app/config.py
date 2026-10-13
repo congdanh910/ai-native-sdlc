@@ -51,6 +51,11 @@ class Settings(BaseSettings):
         return value
 
     @property
+    def coding_is_mocked(self) -> bool:
+        """The QA Engineer, Developer and Validation Gate are mocked in every team mode before B4."""
+        return self.sdlc_team_mode in ("mock", "qwen3")
+
+    @property
     def database_url(self) -> str:
         if self.database_url_override:
             return self.database_url_override

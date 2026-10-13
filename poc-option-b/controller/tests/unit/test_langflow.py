@@ -109,3 +109,10 @@ def test_busy_gx10_stops_before_any_model_call(settings):
 def test_doing_roles_remain_mocked(settings):
     team = LangflowTeam(settings, client=FakeClient([]), check_capacity=lambda: [])
     assert team.validate(context(), None).detail.startswith("mock:")
+
+
+def test_normalize_joins_list_sentences_in_test_cases():
+    data = normalize.test_plan({"cases": [{"task_id": "T1", "criterion": "AC-1", "description": ["given", "when"],
+                                           "expected": ["a", "b"], "target_file": "tests/x.test.js"}]})
+    case = data["cases"][0]
+    assert case["expected"] == "a; b" and case["description"] == "given; when" and case["id"] == "TC-1"

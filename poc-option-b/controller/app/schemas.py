@@ -82,6 +82,7 @@ class PlanTask(Contract):
     depends_on: list[str] = []
     modify: list[str] = []
     create: list[str] = []
+    provides: list[str] = []
     references: list[Reference] = []
     acceptance_criteria: list[str] = Field(min_length=1)
     validation: list[str] = Field(min_length=1)
@@ -161,6 +162,8 @@ def render_plan(title: str, version: int, plan: PlanPayload, tests: TestPlan, gr
             lines.append(f"- Modify: {', '.join(f'`{p}`' for p in task.modify)}")
         if task.create:
             lines.append(f"- Create: {', '.join(f'`{p}`' for p in task.create)}")
+        if task.provides:
+            lines.append(f"- Provides: {', '.join(f'`{name}`' for name in task.provides)}")
         lines.append(f"- Acceptance criteria: {', '.join(task.acceptance_criteria)}")
         lines.append(f"- Validation: {', '.join(task.validation)}")
         lines.append("")

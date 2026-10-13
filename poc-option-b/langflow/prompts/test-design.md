@@ -8,11 +8,11 @@ Output keys:
   - task_id: the plan task whose code the case tests.
   - criterion: the AC id it proves.
   - description: the scenario: given, when, then, with concrete values.
-  - expected: the observable result.
-  - target_file: the test file to add the case to. Prefer an existing test file from repository.files that matches policy.test_paths.
+  - expected: the observable result, as one sentence (a string, not a list).
+  - target_file: the test file to add the case to. It must match policy.test_paths, never a source or HTML file. Prefer an existing test file from repository.files.
   - expected_pass: false, unless the case guards behaviour that already works and must keep working.
 
 Rules:
-- Every acceptance criterion needs at least one case; cover the edge cases and errors it names.
+- Every acceptance criterion needs at least one case; cover the edge cases and errors it names. For behaviour that lives in the user interface, test the functions that the interface calls.
 - Test behaviour through the functions the plan builds, as agents_md describes the test style.
 - Use fixed values for ids, timestamps and dates.

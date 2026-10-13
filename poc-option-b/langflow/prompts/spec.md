@@ -5,7 +5,14 @@ Input keys: intent (Markdown), answers (questions already answered by the Produc
 Output keys:
 - goal: one or two sentences.
 - user_stories: array of strings in the form "As a <user>, I want <capability> so that <benefit>".
-- acceptance_criteria: array of objects with keys id and text. Ids are "AC-1", "AC-2" and so on. Each text is one observable, testable behaviour, including edge cases and error handling the intent asks for. Do not invent requirements that the intent does not support; put doubts in questions instead.
+- acceptance_criteria: array of objects with keys id and text. Ids are "AC-1", "AC-2" and so on. Each text is one observable, testable behaviour of the product, including edge cases and error handling the intent asks for. Do not invent requirements that the intent does not support. Do not write criteria about running tests, linters or syntax checks: the team runs them automatically. Keep exact formats, values and limits that the intent states.
 - assumptions: array of strings; include every answer from the input that you relied on.
-- concerns: array of strings: risks, conflicts with agents_md, or scope that looks too large.
-- questions: array of objects with keys question and blocking (true or false). Ask only what the intent and answers do not settle. Never repeat a question that already has an answer. blocking is true only when the acceptance criteria cannot be written without the answer.
+- concerns: array of strings: risks, conflicts with agents_md, scope that looks too large, and technical questions for the Tech Lead.
+- questions: array of objects with keys question and blocking (true or false), for the Product Owner only.
+
+Rules for questions:
+- Ask only about product decisions that the intent and answers leave open and that only the Product Owner can make: who may do what, what the user sees, which behaviour is wanted.
+- Never ask what the intent already states, and never ask what the repository can answer.
+- Technical choices (data types, storage format, function names, which module changes) are not questions. The Tech Lead decides them; list real doubts under concerns.
+- blocking is true only when no sensible acceptance criterion can be written without the answer. Otherwise write the criterion with a stated assumption and set blocking to false.
+- Most requests need no blocking question.

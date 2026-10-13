@@ -10,7 +10,8 @@ Output keys:
   - depends_on: ids of earlier tasks it needs.
   - modify: existing files to change. Use only paths from repository.files that match policy.allowed_paths.
   - create: new files to add, inside policy.allowed_paths. Use an empty array when nothing new is needed.
-  - references: objects with keys file and symbol naming existing functions or constants the task builds on. Use only names listed in repository.symbols or visible in selected_files. Use null for symbol when you reference a whole file.
+  - provides: names of the new functions or constants this task adds, so that later tasks can reference them. Empty array if none.
+  - references: objects with keys file and symbol naming functions or constants the task builds on. Use names listed in repository.symbols, or names in provides of a task this task depends on. Use null for symbol when you reference a whole file.
   - acceptance_criteria: the AC ids this task delivers.
   - validation: names from policy.validation that prove the task.
 
@@ -18,6 +19,6 @@ Rules:
 - Follow agents_md: put rules where its architecture says they belong.
 - Every acceptance criterion must be delivered by at least one task.
 - Never reference a file, function or storage key that is not in the input. If something you need is missing, say so in the summary.
-- Never include protected paths, test files, CI configuration or tasks that only run checks or review.
+- Every task changes at least one source file. Never include protected paths, test files (the QA Engineer writes tests), CI configuration, or tasks that only run checks, tests or reviews.
 - Use at most policy.max_tasks tasks; prefer fewer, cohesive tasks.
 - If feedback is present, fix every problem it lists.

@@ -63,7 +63,7 @@ def plan(data: dict, validations: list[str]) -> dict:
             tasks.append(task)
             continue
         task = dict(task)
-        for key in ("depends_on", "modify", "create", "references", "acceptance_criteria", "validation"):
+        for key in ("depends_on", "modify", "create", "provides", "references", "acceptance_criteria", "validation"):
             if task.get(key) is None:
                 task[key] = []
             elif isinstance(task[key], str):
@@ -83,6 +83,8 @@ def test_plan(data: dict) -> dict:
     for index, case in enumerate(data.get("cases") or [], start=1):
         if isinstance(case, dict):
             case = {"id": f"TC-{index}", "expected_pass": False, **case}
+            for key in ("description", "expected"):
+                case[key] = _sentence(case.get(key))
             if case.get("expected_pass") is None:
                 case["expected_pass"] = False
         cases.append(case)
@@ -105,3 +107,12 @@ def review(data: dict) -> dict:
         data["verdict"] = "concerns" if any(f.get("severity") == "important" for f in findings if isinstance(f, dict)) else "pass"
     data.pop("markdown", None)
     return data
+
+
+def _sentence(value):
+    """A list or mapping where one sentence is expected: join its parts instead of failing."""
+    if isinstance(value, list):
+        return "; ".join(_sentence(item) for item in value if item not in (None, ""))
+    if isinstance(value, dict):
+        return "; ".join(f"{key}: {_sentence(item)}" for key, item in value.items())
+    return value if value is None or isinstance(value, str) else str(value)

@@ -152,7 +152,7 @@ def approve_plan(session: Session, run: Run, plan_id: uuid.UUID, sha256: str, *,
     session.flush()
     transition_run(session, run, RunStatus.READY, actor=actor, acting_role=TL)
     project = session.get(Project, run.project_id)
-    if project.readiness != "ready" and get_settings().sdlc_team_mode != "mock":
+    if project.readiness != "ready" and not get_settings().coding_is_mocked:
         coordinator.to_needs_human(session, run, f"project {project.key} is {project.readiness}; coding needs ready")
         return
     coordinator.enter_stage(session, run, "coding", actor=actor, acting_role=TL)

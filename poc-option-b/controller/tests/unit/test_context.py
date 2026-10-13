@@ -89,3 +89,18 @@ def test_grounding_checks_paths_and_coverage():
                      "unknown acceptance criterion AC-9", "no task delivers AC-2", "unknown task T7",
                      "outside the test paths", "no test case proves AC-2"):
         assert expected in text, expected
+
+
+def test_references_to_symbols_added_by_a_dependency_are_grounded():
+    tasks = [
+        {"id": "T1", "title": "Add filter model", "modify": ["src/tasks.js"], "provides": ["filterTasks"],
+         "acceptance_criteria": ["AC-1"], "validation": ["unit-tests"]},
+        {"id": "T2", "title": "Wire the filter", "depends_on": ["T1"], "modify": ["src/app.js"],
+         "references": [{"file": "src/tasks.js", "symbol": "filterTasks"}], "acceptance_criteria": ["AC-2"],
+         "validation": ["unit-tests"]},
+        {"id": "T3", "title": "Unrelated", "modify": ["src/app.js"],
+         "references": [{"file": "src/tasks.js", "symbol": "filterTasks"}], "acceptance_criteria": ["AC-2"],
+         "validation": ["unit-tests"]},
+    ]
+    report = check_plan(PlanPayload(summary="s", tasks=tasks), tests(), CRITERIA, policy(), FILES, SYMBOLS)
+    assert report["findings"] == ["T3 references filterTasks in src/tasks.js, which is not defined there"]
