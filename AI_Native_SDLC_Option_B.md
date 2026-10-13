@@ -163,26 +163,20 @@ Web → Inbox → "Due dates" → spec, 4 tasks, 11 test cases, grounding: pass 
 ```
 
 ### Interfaces
-- The **local web control room** on loopback is the primary interface for all human touchpoints. The **CLI `sdlc`** covers environment operation, onboarding and scripting. Both use the same API and contain no business logic of their own.
+- The **local web control room** on loopback is the only interface for team work: project onboarding, intents, gates, runs, evals and reports.
+- The **CLI `sdlc`** only operates the environment, because the web control room cannot start itself and must not be needed to diagnose itself. It has no team commands, so there is one way to do each task.
 - GitHub Issues intake is out of scope for the POC.
 - Web pages: Inbox (what waits for me), New request (intent form), Runs, Run detail (artifact thread with versions and diffs, grounding report, tasks, validation and review evidence, PR, events), Projects, Evals, Reports.
 - Notifications tell a human that the team is waiting for them (clarification, plan, PR, `NEEDS_HUMAN`). In the POC they are the web inbox plus a browser notification while the control room is open. A chat or email channel is deferred until people other than the operator use the team.
-- Approving an exact plan version stays mandatory, but the CLI and web send the plan ID and SHA-256 of the version the human is viewing. Humans do not copy hashes.
+- Approving an exact plan version stays mandatory, but the web sends the plan ID and SHA-256 of the version the human is viewing. Humans do not copy hashes.
 - The POC has one operator, configured as `SDLC_OPERATOR`. Every decision records the operator and the acting role. User accounts and authentication are out of scope.
 
 ### CLI summary
 ```text
-sdlc up | down | doctor                       # start, stop and health-check DB, Langflow, tunnel, worker
-sdlc project add | check | list               # onboarding
-sdlc request <project> --title … [--file …]   # Product Owner
-sdlc answer <run>                             # answer Business Analyst questions
-sdlc inbox                                    # items waiting for me
-sdlc show <run> | sdlc plan show <run>
-sdlc plan approve | revise | reject <run>     # Tech Lead
-sdlc resume | cancel <run>                    # decisions on NEEDS_HUMAN or running work
-sdlc classify <run>                           # failure classification
-sdlc eval run [--suite …] | sdlc eval report  # evals for configuration changes
-sdlc report [<project>]                       # team metrics
+sdlc init                     # create .env with generated secrets
+sdlc up | down                # start or stop DB, Langflow, tunnel, API and worker; data is kept
+sdlc doctor [--json]          # check every component, with fix hints
+sdlc logs <component>         # recent log of one component
 ```
 
 ## Project onboarding
@@ -237,9 +231,9 @@ artifacts:
 - An invalid or loosening configuration rejects the run at preflight with a clear message.
 
 ### Onboarding steps
-1. Platform Admin: `sdlc project add --key task-board --repo git@github.com:org/task-board.git`. This registers the project and creates a local mirror.
+1. Platform Admin: web → Projects → Add, with key and repository URL. This registers the project and creates a local mirror.
 2. Tech Lead: commit `AGENTS.md` and `.sdlc/project.yaml` through a normal PR.
-3. `sdlc project check task-board` verifies:
+3. Web → Projects → Check verifies:
    - `AGENTS.md` and `.sdlc/project.yaml` exist, `CLAUDE.md` imports `AGENTS.md`, and the configuration is schema-valid;
    - the validation image exists;
    - every validation command passes on the default branch head;
@@ -250,7 +244,7 @@ artifacts:
 ## Fixed environment
 - ASUS Ascent GX10: Ollama + Qwen3 (`qwen3:30b` initially), remote inference only. The GX10 may be shared with other workloads; the worker checks capacity before loading a model and reschedules if the check fails.
 - MacBook Pro M3 Pro / 18 GB: orchestration, Codex CLI, Claude Code CLI, Git worktrees, tests.
-- Secure SSH tunnel to GX10: `ssh -N -L 11434:127.0.0.1:11434 USER@GX10_HOST`. `sdlc up` starts and supervises it; `sdlc doctor` reports its state.
+- Secure SSH tunnel to GX10: `ssh -N -L 11434:127.0.0.1:11434 USER@GX10_HOST`. `sdlc up` opens it (or reuses one that already listens on the tunnel port); `sdlc doctor` reports its state.
 - Ollama health: `curl http://127.0.0.1:11434/api/tags`.
 - Codex and Claude Code use eligible interactive subscriptions. Verify current noninteractive CLI support, usage policies and billing behavior; do not silently use paid inference API keys.
 - Never expose Ollama or local execution services publicly.
@@ -329,7 +323,8 @@ The playbook treats agent configuration as code that needs regression tests. The
 ## Architecture
 ```mermaid
 flowchart TD
-  U[Humans: web control room / CLI] --> A[FastAPI SDLC Controller]
+  U[Operator: web control room] --> A[FastAPI SDLC Controller]
+  CLI[sdlc CLI: operate environment] -.-> A
   A <--> P[(PostgreSQL: projects, runs, artifacts, events)]
   A --> W[Python job worker: Delivery Coordinator]
   W --> X[Context builder + grounding check]
@@ -360,7 +355,7 @@ Additional states: `NEEDS_CLARIFICATION`, `NEEDS_HUMAN`, `FAILED`, `CANCELLED`, 
 
 - `SPECIFYING -> NEEDS_CLARIFICATION -> SPECIFYING` when the Product Owner answers.
 - `WAITING_SPEC_APPROVAL` is skipped when the spec stage is `auto`. Revising the spec creates a new version; rejecting it returns to `SPECIFYING` with the reason, or cancels.
-- A stage in `manual` mode waits in its preceding state until the operator starts it.
+- A stage in `manual` mode is entered but does no work (`awaiting_start` is set) until the operator starts it from the inbox.
 - `GROUNDING -> PLANNING` once on failure, then `-> WAITING_PLAN_APPROVAL` with the errors attached.
 - Revising a plan creates a new immutable plan version, re-runs the grounding check and stays in `WAITING_PLAN_APPROVAL`.
 - Rejecting a plan goes to `PLANNING` (replan with the reason) or `CANCELLED`, as the Tech Lead chooses.
@@ -386,6 +381,7 @@ State transitions must be explicit, transactional and version checked.
 | `GET /api/runs/{id}` | Status, spec, plans, tasks and artifacts |
 | `GET /api/runs/{id}/events` | Audit trail |
 | `GET /api/inbox` | Items waiting for the operator, grouped by human role |
+| `GET /api/meta` | Operator, team mode and the failure classification vocabularies |
 | `POST /api/runs/{id}/answers` | Product Owner answers clarification questions |
 | `POST /api/runs/{id}/revise-spec`, `approve-spec`, `reject-spec` | Product Owner spec gate, by exact version and SHA-256 |
 | `POST /api/runs/{id}/start-stage` | Start a stage that is in `manual` mode |
@@ -394,7 +390,7 @@ State transitions must be explicit, transactional and version checked.
 | `POST /api/runs/{id}/reject-plan` | Human rejection with reason and next step (replan or cancel) |
 | `POST /api/runs/{id}/resume` | Human decision on a `NEEDS_HUMAN` run |
 | `POST /api/runs/{id}/cancel` | Cancel and signal running worker |
-| `POST /api/runs/{id}/approve-pr` | Fallback record of a human PR decision; never auto-merge |
+| `POST /api/runs/{id}/pr-decision` | Code Owner decision: `approve` (records a simulated merge until B4; afterwards only a verified GitHub merge completes a run), `request_changes` or `close`; never auto-merge |
 | `POST /api/runs/{id}/classify-failure` | Human records root cause category, stage, role and note |
 | `GET /api/reports` | Team metrics per project, role, executor and stage |
 | `POST /api/evals`, `GET /api/evals/{id}` | Start an eval run; results and delta from baseline |
@@ -415,7 +411,7 @@ Use SQLAlchemy + Alembic migrations. Required tables:
 - `pull_requests(id, run_id, number, head_sha, ci_status, review_status, merged_sha)`
 - `events(id, run_id, project_id, actor, acting_role, event_type, payload_jsonb, created_at)`
 - `eval_runs(id, suite, trigger, config_fingerprint, scope (plan, full), status, results_jsonb, baseline_id, created_at)`
-- `artifacts(id, run_id, kind, role, storage_path, checksum, created_at)`
+- `artifacts(id, run_id, kind, role, content, checksum, created_at)` (small snapshots such as the project configuration and `AGENTS.md`; large logs move to files in B4)
 
 Every AI role's work is one `executions` row, linked to the artifacts it produced. Use foreign keys, transaction boundaries, status indices and uniqueness constraints.
 
@@ -515,7 +511,7 @@ Each phase ends with tests, documentation and a demo a new user can follow from 
 
 **B1 — Foundation:** PostgreSQL + Langflow Compose, FastAPI skeleton, migrations, tunnel connectivity and health checks. `sdlc up`, `sdlc down`, `sdlc doctor`.
 
-**B2 — Durable controller and team skeleton:** projects and configuration loading, state transitions, autonomy modes, audit events, spec and plan gates, task DAG, job leasing, worker restart recovery, automatic progression, artifact thread, inbox, intent form, CLI and web basics. All team roles mocked for deterministic tests.
+**B2 — Durable controller and team skeleton:** projects and configuration loading, state transitions, autonomy modes, audit events, spec and plan gates, task DAG, job leasing, worker restart recovery, automatic progression, artifact thread, web control room (projects, intent form, inbox, run detail), worker started by `sdlc up`. All team roles mocked for deterministic tests.
 
 **B3 — Thinking roles:** Business Analyst (intent draft and `spec.md`), Tech Lead, QA Analyst and Code Reviewer (`REVIEW.md`) flows in Langflow, plan-only evals with the Task Board golden plans, Ollama Qwen3 connection, code context, grounding check, schema validation, clarification loop, error handling.
 

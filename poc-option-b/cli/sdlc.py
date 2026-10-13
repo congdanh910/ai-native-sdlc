@@ -13,10 +13,9 @@ from controller.app import health, migrations
 from controller.app.compose import SERVICES, run_compose
 from controller.app.config import ENV_FILE, PROJECT_ROOT, Settings
 from controller.app.db import get_engine
-from controller.app.processes import ManagedProcess, port_listening
+from controller.app.processes import API, WORKER, port_listening
 from controller.app.tunnel import TUNNEL, ensure_tunnel, stop_tunnel
 
-API = ManagedProcess("api")
 SYMBOLS = {health.OK: "✓", health.WARN: "!", health.FAIL: "✗"}
 
 
@@ -80,6 +79,16 @@ def _ensure_api(settings: Settings, wait_seconds: float = 20) -> str:
     raise CliError(f"API did not start. Log:\n{API.log_tail()}")
 
 
+def _ensure_worker() -> str:
+    if WORKER.pid() is not None:
+        return "already running"
+    WORKER.start([sys.executable, "-m", "controller.app.worker"], cwd=PROJECT_ROOT)
+    time.sleep(1)
+    if WORKER.pid() is None:
+        raise CliError(f"worker did not start. Log:\n{WORKER.log_tail()}")
+    return "started"
+
+
 def cmd_up(args: argparse.Namespace) -> int:
     settings = Settings()
     _require_config(settings)
@@ -102,8 +111,9 @@ def cmd_up(args: argparse.Namespace) -> int:
         raise CliError(str(exc)) from exc
     say(f"    tunnel {tunnel.state}")
 
-    say("4/4 Starting the controller API…")
+    say("4/4 Starting the controller API and the team worker…")
     say(f"    API {_ensure_api(settings)}")
+    say(f"    worker {_ensure_worker()}")
 
     say("\nHealth:")
     checks = health.doctor_checks(settings, get_engine())
@@ -113,6 +123,7 @@ def cmd_up(args: argparse.Namespace) -> int:
 
 
 def cmd_down(args: argparse.Namespace) -> int:
+    say("worker " + ("stopped" if WORKER.stop() else "was not running"))
     say("API " + ("stopped" if API.stop() else "was not running"))
     say("SSH tunnel " + ("stopped" if stop_tunnel() else "not started by sdlc; left as is"))
     if ENV_FILE.is_file():
@@ -136,7 +147,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
 
 
 def cmd_logs(args: argparse.Namespace) -> int:
-    managed = {"api": API, "gx10-tunnel": TUNNEL}
+    managed = {"api": API, "worker": WORKER, "gx10-tunnel": TUNNEL}
     if args.service in managed:
         say(managed[args.service].log_tail(args.lines) or "(no log yet)")
         return 0
@@ -156,15 +167,15 @@ def build_parser() -> argparse.ArgumentParser:
     init.add_argument("--ollama-remote-port", type=int, help="Ollama port on GX10 loopback")
     init.set_defaults(func=cmd_init)
 
-    commands.add_parser("up", help="start services, tunnel and API").set_defaults(func=cmd_up)
-    commands.add_parser("down", help="stop API, tunnel and services; keep data").set_defaults(func=cmd_down)
+    commands.add_parser("up", help="start services, tunnel, API and worker").set_defaults(func=cmd_up)
+    commands.add_parser("down", help="stop worker, API, tunnel and services; keep data").set_defaults(func=cmd_down)
 
     doctor = commands.add_parser("doctor", help="check every component")
     doctor.add_argument("--json", action="store_true")
     doctor.set_defaults(func=cmd_doctor)
 
     logs = commands.add_parser("logs", help="show recent logs of one component")
-    logs.add_argument("service", choices=["api", "gx10-tunnel", *SERVICES])
+    logs.add_argument("service", choices=["api", "worker", "gx10-tunnel", *SERVICES])
     logs.add_argument("--lines", type=int, default=100)
     logs.set_defaults(func=cmd_logs)
     return parser

@@ -5,7 +5,7 @@ from cli import sdlc
 
 def test_parser_knows_b1_commands():
     parser = sdlc.build_parser()
-    for command in (["init"], ["up"], ["down"], ["doctor", "--json"], ["logs", "api"]):
+    for command in (["init"], ["up"], ["down"], ["doctor", "--json"], ["logs", "api"], ["logs", "worker"]):
         assert parser.parse_args(command).func
 
 

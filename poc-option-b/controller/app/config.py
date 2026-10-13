@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     langflow_port: int = 7870
 
     sdlc_api_port: int = 8770
+    sdlc_team_mode: str = "mock"
 
     ollama_tunnel_port: int = 11435
     ollama_remote_port: int = 11437

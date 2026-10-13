@@ -3,13 +3,13 @@ from logging.config import fileConfig
 from alembic import context
 
 from controller.app.db import get_engine
+from controller.app.models import Base
 
 config = context.config
 if config.config_file_name is not None and config.attributes.get("configure_logger", True):
     fileConfig(config.config_file_name)
 
-# Models arrive in B2; until then migrations are written by hand.
-target_metadata = None
+target_metadata = Base.metadata
 
 
 def run_migrations_online() -> None:

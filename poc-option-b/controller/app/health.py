@@ -11,6 +11,7 @@ from sqlalchemy import Engine, text
 from controller.app import capacity, migrations
 from controller.app.compose import run_compose
 from controller.app.config import ENV_FILE, PLACEHOLDER, Settings
+from controller.app.processes import WORKER
 from controller.app.tunnel import tunnel_status
 
 OK, WARN, FAIL = "ok", "warn", "fail"
@@ -161,10 +162,17 @@ def check_api(settings: Settings) -> Check:
     return _guard("api", "Run ./sdlc up", run)
 
 
+def check_worker() -> Check:
+    pid = WORKER.pid()
+    if pid is None:
+        return Check("worker", FAIL, "the team worker is not running; runs will not move", "Run ./sdlc up")
+    return Check("worker", OK, f"pid {pid}")
+
+
 def readiness_checks(settings: Settings, engine: Engine) -> list[Check]:
     """Fast checks for /health/ready."""
     return [check_postgres(engine), check_migrations(engine), check_langflow(settings),
-            check_tunnel(settings), check_ollama(settings)]
+            check_tunnel(settings), check_ollama(settings), check_worker()]
 
 
 def doctor_checks(settings: Settings, engine: Engine) -> list[Check]:

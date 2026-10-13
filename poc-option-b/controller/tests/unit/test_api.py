@@ -26,3 +26,17 @@ def test_status_page_is_served():
     response = client.get("/")
     assert response.status_code == 200
     assert "SDLC Control Room" in response.text
+
+
+def test_writes_need_the_client_header():
+    response = client.post("/api/projects", json={"key": "x", "repo_url": "y"})
+    assert response.status_code == 403 and "X-SDLC-Client" in response.json()["detail"]
+
+
+def test_foreign_host_is_refused():
+    response = client.get("/api/meta", headers={"Host": "evil.example:8770"})
+    assert response.status_code == 403
+
+
+def test_static_assets_are_served():
+    assert client.get("/static/app.js").status_code == 200

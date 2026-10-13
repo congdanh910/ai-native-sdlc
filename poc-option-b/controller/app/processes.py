@@ -91,3 +91,7 @@ class ManagedProcess:
             return "\n".join(self.log_file.read_text(errors="replace").splitlines()[-lines:])
         except OSError:
             return ""
+
+
+API = ManagedProcess("api")
+WORKER = ManagedProcess("worker")
