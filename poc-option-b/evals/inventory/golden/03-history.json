@@ -1,0 +1,31 @@
+{
+  "tasks": [
+    {
+      "id": "history-model",
+      "description": "Record movements with reason in adjust_stock and expose item_history in items.py",
+      "dependencies": [],
+      "allowed_paths": [
+        "inventory/items.py"
+      ],
+      "acceptance_criteria": []
+    },
+    {
+      "id": "history-store",
+      "description": "Persist movements; load files without history as empty",
+      "dependencies": [],
+      "allowed_paths": [
+        "inventory/store.py"
+      ],
+      "acceptance_criteria": []
+    },
+    {
+      "id": "history-cli",
+      "description": "Require --reason on adjust and add the history command",
+      "dependencies": [],
+      "allowed_paths": [
+        "inventory/cli.py"
+      ],
+      "acceptance_criteria": []
+    }
+  ]
+}
