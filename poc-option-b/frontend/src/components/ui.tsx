@@ -94,19 +94,23 @@ export function Mono({ children, className }: { children: ReactNode; className?:
   return <span className={cn("font-mono text-[12.5px]", className)}>{children}</span>;
 }
 
-export function Field({ label, hint, htmlFor, children }: { label: string; hint?: string; htmlFor: string; children: ReactNode }) {
+export function Field({ label, hint, htmlFor, children, required, error }: {
+  label: string; hint?: string; htmlFor: string; children: ReactNode; required?: boolean; error?: string;
+}) {
   return (
     <div className="flex flex-col gap-1.5">
       <label htmlFor={htmlFor} className="text-sm font-semibold text-ink-2">
         {label}
+        {required ? <span className="text-bad" aria-hidden> *</span> : null}
         {hint ? <span className="font-normal text-muted"> — {hint}</span> : null}
       </label>
       {children}
+      {error ? <p id={`${htmlFor}-error`} role="alert" className="m-0 text-sm font-medium text-bad">{error}</p> : null}
     </div>
   );
 }
 
-const inputBase = "w-full rounded-lg border border-line-strong bg-panel px-3 text-sm text-ink placeholder:text-muted focus:border-accent focus:outline-none";
+const inputBase = "w-full rounded-lg border border-line-strong bg-panel px-3 text-sm text-ink placeholder:text-muted focus:border-accent focus:outline-none aria-[invalid=true]:border-bad aria-[invalid=true]:bg-bad-soft/40";
 
 export function Input(props: InputHTMLAttributes<HTMLInputElement>) {
   return <input {...props} className={cn(inputBase, "h-10", props.className)} />;

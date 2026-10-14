@@ -4,17 +4,33 @@ import { useQuery } from "@tanstack/react-query";
 import { Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { ActionButton, Card, Empty, ErrorBox, Field, Input, Loading, PageHeader, Select, Textarea } from "../components/ui";
-import { api, type Project, type RunSummary } from "../lib/api";
+import { api, ApiError, type Project, type RunSummary } from "../lib/api";
 
 const FIELDS = [
-  ["title", "Title", ""],
-  ["problem", "Problem", "what is wrong or missing today"],
-  ["outcome", "Desired outcome", "one line per outcome; each becomes an acceptance criterion"],
-  ["users_and_systems", "Affected users and systems", ""],
-  ["constraints", "Constraints", ""],
-  ["open_questions", "Open questions", "start a line with [blocking] if work must wait for an answer"],
+  ["title", "Title", "", true],
+  ["problem", "Problem", "what is wrong or missing today", true],
+  ["outcome", "Desired outcome", "one line per outcome; each becomes an acceptance criterion", true],
+  ["users_and_systems", "Affected users and systems", "", false],
+  ["constraints", "Constraints", "", false],
+  ["open_questions", "Open questions", "start a line with [blocking] if work must wait for an answer", false],
 ] as const;
 type Key = (typeof FIELDS)[number][0];
+type Errors = Partial<Record<Key | "project", string>>;
+
+/** The same rules as the controller's Intent contract, checked before sending. */
+function validate(intent: Record<Key, string>): Errors {
+  const errors: Errors = {};
+  if (intent.title.trim().length < 3) errors.title = intent.title.trim() ? "Title needs at least 3 characters" : "Title is required";
+  if (intent.title.length > 200) errors.title = "Title is too long (at most 200 characters)";
+  if (!intent.problem.trim()) errors.problem = "Problem is required: say what is wrong or missing today";
+  if (!intent.outcome.trim()) errors.outcome = "Desired outcome is required: write at least one line; each line becomes an acceptance criterion";
+  return errors;
+}
+
+function focusFirst(errors: Errors) {
+  const first = FIELDS.map(([key]) => key).find((key) => errors[key]);
+  if (first) document.getElementById(first)?.focus();
+}
 
 export function NewRequestView() {
   const [, navigate] = useLocation();
@@ -23,6 +39,8 @@ export function NewRequestView() {
   const [project, setProject] = useState("");
   const [free, setFree] = useState("");
   const [intent, setIntent] = useState<Record<Key, string>>({ title: "", problem: "", outcome: "", users_and_systems: "", constraints: "", open_questions: "" });
+  const [errors, setErrors] = useState<Errors>({});
+  const [tried, setTried] = useState(false);
   if (projects.isLoading) return <Loading />;
   if (projects.error) return <ErrorBox error={projects.error} />;
   const ready = (projects.data ?? []).filter((p) => p.readiness !== "not_ready");
@@ -30,31 +48,60 @@ export function NewRequestView() {
     return (<><PageHeader title="New request" /><Empty>No project is ready yet. <Link href="/projects">Add a project</Link> first.</Empty></>);
   }
   const chosen = project || ready[0].key;
+  const update = (key: Key, value: string) => {
+    const next = { ...intent, [key]: value };
+    setIntent(next);
+    if (tried) setErrors(validate(next));  // after a first attempt, errors clear as the user types
+  };
+  const missing = Object.keys(validate(intent)).length;
   return (
     <>
       <PageHeader title="New request" subtitle="You act as Product Owner. This form is intent.md; the Business Analyst turns it into spec.md." />
       <div className="flex flex-wrap items-start gap-5">
         <div className="flex min-w-0 flex-[999_1_560px] flex-col gap-5">
           <Card className="flex flex-col gap-4 p-5">
-            <Field label="Project" htmlFor="project">
+            <p className="m-0 text-sm text-muted"><span className="text-bad">*</span> required</p>
+            <Field label="Project" htmlFor="project" required error={errors.project}>
               <Select id="project" value={chosen} onChange={(e) => setProject(e.target.value)}>
                 {ready.map((p) => <option key={p.key} value={p.key}>{p.key} ({p.readiness})</option>)}
               </Select>
             </Field>
-            {FIELDS.map(([key, label, hint]) => (
-              <Field key={key} label={label} hint={hint || undefined} htmlFor={key}>
-                {key === "title" ? (
-                  <Input id={key} value={intent[key]} onChange={(e) => setIntent({ ...intent, [key]: e.target.value })} />
-                ) : (
-                  <Textarea id={key} value={intent[key]} onChange={(e) => setIntent({ ...intent, [key]: e.target.value })} />
-                )}
-              </Field>
-            ))}
-            <div>
+            {FIELDS.map(([key, label, hint, required]) => {
+              const props = {
+                id: key,
+                value: intent[key],
+                required,
+                "aria-invalid": errors[key] ? true : undefined,
+                "aria-describedby": errors[key] ? `${key}-error` : undefined,
+                onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => update(key, e.target.value),
+              };
+              return (
+                <Field key={key} label={label} hint={hint || undefined} htmlFor={key} required={required} error={errors[key]}>
+                  {key === "title" ? <Input {...props} maxLength={200} /> : (
+                    <Textarea {...props} placeholder={key === "outcome" ? "Example (replace it):\n- Employees can see their total working hours per week\n- A week without check-ins shows 0 hours" : undefined} />
+                  )}
+                </Field>
+              );
+            })}
+            <div className="flex flex-wrap items-center gap-3">
               <ActionButton variant="primary" action={async () => {
-                const run = await api<RunSummary>("/api/runs", { method: "POST", body: { project: chosen, intent, idempotency_key: idempotencyKey } });
-                navigate(`/runs/${run.id}`);
+                setTried(true);
+                const local = validate(intent);
+                setErrors(local);
+                if (Object.keys(local).length) {
+                  focusFirst(local);
+                  throw new ApiError(`Fill in ${Object.keys(local).length} required field(s) before submitting.`);
+                }
+                try {
+                  const run = await api<RunSummary>("/api/runs", { method: "POST", body: { project: chosen, intent, idempotency_key: idempotencyKey } });
+                  navigate(`/runs/${run.id}`);
+                } catch (error) {
+                  const fields = error instanceof ApiError ? error.fields : {};
+                  if (Object.keys(fields).length) { setErrors(fields as Errors); focusFirst(fields as Errors); }
+                  throw error;
+                }
               }}>Submit intent.md</ActionButton>
+              {tried && missing ? <span className="text-sm text-bad">{missing} required field(s) missing</span> : null}
             </div>
           </Card>
         </div>
@@ -62,12 +109,15 @@ export function NewRequestView() {
           <h2 className="m-0 flex items-center gap-2 text-base font-semibold"><Sparkles className="size-4 text-accent" aria-hidden />Draft with AI</h2>
           <p className="m-0 text-sm text-muted">Describe what you want in your own words. The Business Analyst fills the form; correct it before you submit.</p>
           <Field label="Your words" htmlFor="free">
-            <Textarea id="free" className="min-h-40" value={free} onChange={(e) => setFree(e.target.value)} placeholder="e.g. let store keepers search items by part of the SKU or name" />
+            <Textarea id="free" className="min-h-40" value={free} onChange={(e) => setFree(e.target.value)} placeholder="Example: employees should see how many hours they worked this week, and managers want the late days per person" />
           </Field>
           <div>
             <ActionButton action={async () => {
-              const draft = await api<Record<Key, string>>("/api/intents/draft", { method: "POST", body: { title: intent.title || "Untitled request", text: free } });
-              setIntent(Object.fromEntries(FIELDS.map(([k]) => [k, draft[k] ?? ""])) as Record<Key, string>);
+              if (!free.trim()) throw new ApiError("Write a few words first; the Business Analyst drafts from them.");
+              const draft = await api<Record<Key, string>>("/api/intents/draft", { method: "POST", body: { title: intent.title.trim().length >= 3 ? intent.title : "Untitled request", text: free } });
+              const next = Object.fromEntries(FIELDS.map(([k]) => [k, draft[k] ?? ""])) as Record<Key, string>;
+              setIntent(next);
+              if (tried) setErrors(validate(next));
               toast.success("Draft filled in. Submitting accepts it as the Product Owner.");
             }}>Draft intent.md</ActionButton>
           </div>

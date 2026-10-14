@@ -1,18 +1,56 @@
 // Typed access to the controller API. Every write carries X-SDLC-Client: web (the API refuses writes without it).
 
-export class ApiError extends Error {}
+/** An API error with a readable message and, for invalid input, one message per field (keyed by field name). */
+export class ApiError extends Error {
+  constructor(message: string, readonly fields: Record<string, string> = {}) {
+    super(message);
+  }
+}
+
+const FIELD_LABEL: Record<string, string> = {
+  title: "Title", problem: "Problem", outcome: "Desired outcome", users_and_systems: "Affected users and systems",
+  constraints: "Constraints", open_questions: "Open questions", project: "Project", key: "Key", repo_url: "Repository",
+  branch: "Branch", reason: "Reason", content: "Content", note: "Note", idempotency_key: "Request key",
+};
+
+interface PydanticIssue { type: string; loc: (string | number)[]; msg: string; ctx?: Record<string, unknown> }
+
+function describeIssue(issue: PydanticIssue): [string, string] {
+  const field = String(issue.loc[issue.loc.length - 1] ?? "");
+  const label = FIELD_LABEL[field] ?? field.replace(/_/g, " ");
+  const min = issue.ctx?.min_length as number | undefined;
+  let text: string;
+  if (issue.type === "string_too_short" && min === 1) text = `${label} is required`;
+  else if (issue.type === "string_too_short") text = `${label} needs at least ${min} characters`;
+  else if (issue.type === "string_too_long") text = `${label} is too long (at most ${issue.ctx?.max_length} characters)`;
+  else if (issue.type === "missing") text = `${label} is required`;
+  else text = `${label}: ${issue.msg.charAt(0).toLowerCase()}${issue.msg.slice(1)}`;
+  return [field, text];
+}
+
+/** FastAPI returns either a string detail or a list of Pydantic issues; both become readable text. */
+export function describeError(detail: unknown, fallback: string): ApiError {
+  if (typeof detail === "string") return new ApiError(detail);
+  if (Array.isArray(detail) && detail.every((d) => d && typeof d === "object" && "loc" in d)) {
+    const pairs = (detail as PydanticIssue[]).map(describeIssue);
+    return new ApiError(pairs.map(([, text]) => text).join(". "), Object.fromEntries(pairs));
+  }
+  return new ApiError(detail ? JSON.stringify(detail) : fallback);
+}
 
 export async function api<T = unknown>(path: string, options: { method?: string; body?: unknown } = {}): Promise<T> {
-  const response = await fetch(path, {
-    method: options.method ?? "GET",
-    headers: { "Content-Type": "application/json", "X-SDLC-Client": "web" },
-    body: options.body === undefined ? undefined : JSON.stringify(options.body),
-  });
-  const data = response.status === 204 ? null : await response.json().catch(() => null);
-  if (!response.ok) {
-    const detail = data && (data as { detail?: unknown }).detail;
-    throw new ApiError(typeof detail === "string" ? detail : JSON.stringify(detail ?? response.statusText));
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      method: options.method ?? "GET",
+      headers: { "Content-Type": "application/json", "X-SDLC-Client": "web" },
+      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+    });
+  } catch {
+    throw new ApiError("The control room cannot reach the controller. Is ./sdlc up running?");
   }
+  const data = response.status === 204 ? null : await response.json().catch(() => null);
+  if (!response.ok) throw describeError(data && (data as { detail?: unknown }).detail, response.statusText);
   return data as T;
 }
 

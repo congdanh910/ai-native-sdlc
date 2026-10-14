@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, CircleAlert, CircleDashed, XCircle } from "lucide-react";
 import { ActionButton, Card, ErrorBox, Field, Input, Loading, Mono, PageHeader, StatusBadge } from "../components/ui";
-import { api, type Project } from "../lib/api";
+import { api, ApiError, type Project } from "../lib/api";
 import { short } from "../lib/utils";
 
 const ICON = { ok: CheckCircle2, warn: CircleAlert, fail: XCircle, pending: CircleDashed } as const;
@@ -12,6 +12,7 @@ export function ProjectsView() {
   const client = useQueryClient();
   const projects = useQuery({ queryKey: ["projects"], queryFn: () => api<Project[]>("/api/projects") });
   const [form, setForm] = useState({ key: "", repo_url: "", branch: "" });
+  const [errors, setErrors] = useState<Record<string, string>>({});
   if (projects.isLoading) return <Loading />;
   if (projects.error) return <ErrorBox error={projects.error} />;
   const refresh = () => client.invalidateQueries({ queryKey: ["projects"] });
@@ -48,11 +49,13 @@ export function ProjectsView() {
       <Card className="flex flex-col gap-4 p-5">
         <h2 className="m-0 text-lg font-semibold">Add a project</h2>
         <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          <Field label="Key" hint="equals project: in .sdlc/project.yaml" htmlFor="p-key">
-            <Input id="p-key" placeholder="inventory" value={form.key} onChange={(e) => setForm({ ...form, key: e.target.value })} />
+          <Field label="Key" hint="equals project: in .sdlc/project.yaml" htmlFor="p-key" required error={errors.key}>
+            <Input id="p-key" placeholder="inventory" value={form.key} aria-invalid={errors.key ? true : undefined}
+              onChange={(e) => setForm({ ...form, key: e.target.value })} />
           </Field>
-          <Field label="Repository" htmlFor="p-url">
-            <Input id="p-url" placeholder="https://github.com/owner/repo" value={form.repo_url} onChange={(e) => setForm({ ...form, repo_url: e.target.value })} />
+          <Field label="Repository" htmlFor="p-url" required error={errors.repo_url}>
+            <Input id="p-url" placeholder="https://github.com/owner/repo" value={form.repo_url} aria-invalid={errors.repo_url ? true : undefined}
+              onChange={(e) => setForm({ ...form, repo_url: e.target.value })} />
           </Field>
           <Field label="Branch" hint="empty = default branch" htmlFor="p-branch">
             <Input id="p-branch" placeholder="main" value={form.branch} onChange={(e) => setForm({ ...form, branch: e.target.value })} />
@@ -60,7 +63,19 @@ export function ProjectsView() {
         </div>
         <div>
           <ActionButton variant="primary" success="Project added and checked" action={async () => {
-            await api("/api/projects", { method: "POST", body: { key: form.key.trim(), repo_url: form.repo_url.trim(), branch: form.branch.trim() || null } });
+            const local: Record<string, string> = {};
+            const key = form.key.trim(), repo = form.repo_url.trim();
+            if (!key) local.key = "Key is required";
+            else if (!/^[a-z][a-z0-9-]{1,39}$/.test(key)) local.key = "Use 2-40 lowercase letters, digits or '-', starting with a letter";
+            if (!repo) local.repo_url = "Repository is required: a GitHub URL or an absolute local path";
+            setErrors(local);
+            if (Object.keys(local).length) throw new ApiError("Fix the highlighted fields first.");
+            try {
+              await api("/api/projects", { method: "POST", body: { key, repo_url: repo, branch: form.branch.trim() || null } });
+            } catch (error) {
+              if (error instanceof ApiError && Object.keys(error.fields).length) setErrors(error.fields);
+              throw error;
+            }
             setForm({ key: "", repo_url: "", branch: "" });
             refresh();
           }}>Add project</ActionButton>
