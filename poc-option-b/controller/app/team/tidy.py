@@ -13,8 +13,11 @@ import re
 from controller.app.projects.config import EffectivePolicy, matches_any
 from controller.app.schemas import PlanPayload, Spec, TestPlan
 
+# A dot inside a file name (tests/tasks.test.js) must not end the sentence (eval of 2026-10-14).
 PROCESS_CRITERION = re.compile(
-    r"\b(?:(?:all|existing|unit|the)\s+)?tests?\b[^.;]*\bpass(?:es|ed)?\b|\btest suite\b|\bsyntax checks?\b|\blint(?:er|ing)?\b",
+    r"\b(?:(?:all|existing|unit|the)\s+)?tests?\b(?:[^.;]|\.(?=\S))*\bpass(?:es|ed)?\b|\btest suite\b|"
+    r"\bsyntax checks?\b|\blint(?:er|ing)?\b|\bno regressions?\b|"
+    r"\bexisting (?:functionality|behaviou?r|features?)\b[^.;]*\b(?:continues?|keeps?) (?:to )?work",
     re.I)
 
 

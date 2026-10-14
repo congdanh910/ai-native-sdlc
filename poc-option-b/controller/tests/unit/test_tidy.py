@@ -85,3 +85,13 @@ def test_all_expected_pass_cases_are_reset():
     assert [c.expected_pass for c in tidied.cases] == [False, False] and "reset to false" in notes[0]
     one_guard = TestPlan(cases=[{**case("TC-1", "T1", "AC-1"), "expected_pass": True}, case("TC-2", "T2", "AC-2")])
     assert tidy_tests(one_guard, plan) == (one_guard, [])
+
+
+def test_process_criteria_with_file_names_and_regressions_are_caught():
+    tidied, notes = tidy_spec(spec(
+        "Archived tasks are hidden from the board.",
+        "All tests in `tests/tasks.test.js` pass, including deterministic tests for archive eligibility.",
+        "All existing functionality (create, edit, move, delete) continues to work as before, with no regressions.",
+        "The search box filters cards by title."), policy())
+    assert [c.text[:12] for c in tidied.acceptance_criteria] == ["Archived tas", "The search b"]
+    assert len(tidied.concerns) == 2
