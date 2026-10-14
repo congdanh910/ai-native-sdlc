@@ -151,18 +151,143 @@ Control room là ứng dụng React (sáng/tối, ⌘K) theo [mockup đã duyệ
 
 ## Cách dùng thử
 
-Một tính năng 3 task mất khoảng 10–15 phút: 3–5 phút cho spec và plan, 5–8 phút cho phần code.
+Từ máy trống tới draft PR đầu tiên mất khoảng 30–45 phút, phần lớn là chuẩn bị repo; sau đó mỗi tính năng 3 task mất khoảng 10–15 phút. Ví dụ dưới đây dùng repo Python nhỏ giống [`ai-native-inventory-demo`](https://github.com/congdanh910/ai-native-inventory-demo).
 
-1. Khởi động: trong `poc-option-b/` chạy `./sdlc up`, rồi `./sdlc doctor` (mọi dòng phải ✓), mở http://127.0.0.1:8770.
-2. **New request** (nút đen ở góc trên bên phải): chọn project `inventory`, điền Title, Problem, Desired outcome (mỗi dòng một tiêu chí), hoặc viết tự do ở khung **Draft with AI** bên phải. Ví dụ: `list --search TEXT` tìm theo SKU hoặc tên, không phân biệt hoa thường.
-3. **Inbox**: mỗi việc là một thẻ theo vai (Code Owner, Tech Lead, Product Owner) kèm chỉ số — CI, review, số task pass, grounding, số tiêu chí; bấm **Open and decide**.
-4. **Duyệt spec**: khối quyết định ở đầu trang run hiện spec.md; bấm **Accept**, **Edit** (lưu phiên bản mới) hoặc **Reject**; trả lời nếu có câu hỏi chặn.
-5. **Duyệt plan**: xem ma trận tiêu chí × task × test case; dòng vàng là case `expected pass`, nhãn đỏ là tiêu chí thiếu task hoặc test; đọc cảnh báo grounding, rồi **Approve plan**.
-6. Theo dõi run: thanh pipeline 8 chặng ở đầu trang; tab **Tasks** là dòng thời gian từng bước (vai, CLI, commit, thời gian, lý do bị từ chối); tab **Plan**, **Thread** (tài liệu theo phiên bản), **Diff** (code thay đổi), **Events**, **Jobs & decisions**.
-7. Nếu run dừng ở `NEEDS_HUMAN`: đọc lý do trong khung đỏ. Tranh chấp test → **Let QA update the tests** hoặc **Keep the tests**; các trường hợp khác → **Resume**, **Replan** hoặc **Cancel run**.
-8. Khi có draft PR: khối quyết định có nút **Open PR**, trạng thái CI và review; merge trên GitHub, hoặc **Request changes**, **Review again**, **Close without merge**. Worker thấy merge thì đóng run thành `COMPLETED`.
-9. Xem thêm: ⌘K để nhảy tới run hoặc trang bất kỳ; nút mặt trăng để đổi sáng/tối; **Evals** (chọn engine theo vai, xu hướng grounding), **Reports** (số liệu theo vai), **Projects** (onboard repo bằng `AGENTS.md`, `CLAUDE.md`, `.sdlc/project.yaml`), **Health**.
-10. Tắt: `./sdlc down` (dữ liệu vẫn giữ).
+### Bước 0 — Chuẩn bị máy (một lần)
+
+| Cần | Kiểm tra bằng |
+| --- | --- |
+| Docker Desktop đang chạy | `docker info` |
+| uv (Python 3.12 được cài tự động) | `uv --version` |
+| GitHub CLI đã đăng nhập, có quyền push repo của project | `gh auth status` |
+| Codex CLI đăng nhập bằng ChatGPT (không dùng API key) | `codex login status` |
+| Claude Code đăng nhập bằng claude.ai | `claude auth status` |
+| SSH key tới GX10, Ollama có `qwen3:30b-instruct` | `ssh <user@gx10> ollama list` |
+
+```bash
+cd poc-option-b
+./sdlc init --gx10-host user@gx10-host --gx10-port 22 --gx10-identity ~/.ssh/gx10
+```
+
+`init` tạo `.env`. Bật đội thật bằng ba dòng sau trong `.env`:
+
+```bash
+SDLC_TEAM_MODE=qwen3
+SDLC_DOING_MODE=cli
+SDLC_ENGINES=business_analyst=claude-readonly,tech_lead=claude-readonly,qa_analyst=claude-readonly
+```
+
+Rồi `./sdlc up` và `./sdlc doctor` (mọi dòng phải ✓, kể cả codex, claude, gh), mở http://127.0.0.1:8770.
+
+### Bước 1 — Chuẩn bị repo của project
+
+Repo cần: nằm trên GitHub; test chạy được bằng một lệnh, không cần mạng (cài thư viện thì đặt ở `setup`); stack có image sẵn (`node-20`, `node-22`, `python-3.12`, `python-3.13`); nhánh mặc định đang xanh.
+
+Thêm bốn file ở gốc repo rồi commit lên nhánh mặc định:
+
+| File | Nội dung |
+| --- | --- |
+| `AGENTS.md` | Kiến thức cho mọi vai AI, ngắn gọn khoảng một trang: lệnh test, cấu trúc (luật nghiệp vụ nằm ở module nào), quy ước, những gì không được đụng |
+| `CLAUDE.md` | Chỉ một dòng `@AGENTS.md`, để Claude Code đọc cùng kiến thức |
+| `REVIEW.md` (tuỳ chọn) | Thế nào là lỗi Important, thế nào là nit, cho Code Reviewer |
+| `.sdlc/project.yaml` | Lệnh validation, đường dẫn được sửa, đường dẫn test, engine, giới hạn, chế độ từng stage |
+
+Ví dụ `AGENTS.md` (rút gọn từ repo inventory):
+
+```markdown
+# Inventory
+Command line stock keeping in Python 3.12, standard library only.
+
+## Commands
+- Test: `python -m unittest discover -s tests -t .`
+
+## Structure
+- `inventory/items.py`: pure item model. Every rule about items (validation, defaults, filtering, sorting) lives here.
+- `inventory/store.py`: JSON persistence only. Old files must still load.
+- `inventory/cli.py`: argparse wiring only.
+- `tests/`: unittest tests.
+
+## Never
+- Modify `.github/`, `.sdlc/` or anything outside `inventory/` and `tests/`.
+```
+
+Ví dụ `.sdlc/project.yaml`:
+
+```yaml
+schema_version: 1
+project: inventory                 # key khi thêm project ở bước 2
+default_branch: main
+validation_image: python-3.12      # node-20 | node-22 | python-3.12 | python-3.13
+setup: []                          # ví dụ ["npm", "ci"]: chạy một lần, có mạng
+validation:                        # chạy trong container, không mạng, repo chỉ đọc
+  - name: unit-tests
+    run: ["python", "-m", "unittest", "discover", "-s", "tests", "-t", "."]
+    timeout_seconds: 300
+  - name: compile
+    run: ["python", "-X", "pycache_prefix=/tmp/pyc", "-m", "compileall", "-q", "inventory"]
+paths:
+  allowed: ["inventory/**"]        # Developer chỉ được sửa ở đây
+  tests: ["tests/**"]              # QA Engineer chỉ được thêm test ở đây
+  protected: ["AGENTS.md", "CLAUDE.md", "REVIEW.md", "pyproject.toml"]
+testing:
+  red_check: true                  # test mới phải trượt trước khi có code
+context:
+  include: ["inventory/**", "tests/**", "README.md", "pyproject.toml"]
+executors: [codex, claude]
+default_executor: codex            # Developer; thêm testing.qa_executor để QA dùng CLI khác
+limits:
+  max_tasks: 5
+  max_changed_files: 8
+stages:
+  spec: gated                      # manual | gated | auto
+  plan: gated                      # luôn có cổng duyệt
+  coding: auto
+  review: auto
+```
+
+### Bước 2 — Thêm project (vai Platform Admin)
+
+Vào **Projects → Add a project**: **Key** bằng `project:` trong `project.yaml`, **Repository** là URL GitHub, **Branch** để trống nếu dùng nhánh mặc định. Nền tảng clone một mirror chỉ đọc rồi kiểm tra: đủ file onboarding, từng lệnh validation pass trong container trên đầu nhánh, và `gh` có quyền push. Project phải ở trạng thái **ready** thì mới gửi được request có viết code.
+
+| Check báo lỗi | Cách sửa |
+| --- | --- |
+| `AGENTS.md` / `.sdlc/project.yaml` missing hoặc invalid | Commit file lên đúng nhánh, sửa theo dòng lỗi được báo |
+| `project key` khác nhau | Key khi thêm project phải bằng `project:` |
+| `validation image` không được hỗ trợ | Đổi `validation_image` sang một giá trị trong danh sách |
+| `validation: <tên>` fail | Mở log được báo (trong `.data/logs/checks/`); thường do lệnh cần mạng, ghi file vào repo (repo chỉ đọc) hoặc test đang đỏ |
+| `GitHub access` fail | `gh auth login` bằng tài khoản có quyền push repo |
+
+Sửa xong thì push và bấm **Check again**.
+
+### Bước 3 — Gửi request (vai Product Owner)
+
+**New request** (nút đen ở góc trên bên phải): chọn project, điền Title, Problem, Desired outcome (mỗi dòng một tiêu chí), hoặc viết tự do ở khung **Draft with AI** bên phải rồi sửa lại. Ví dụ: `list --search TEXT` tìm theo SKU hoặc tên, không phân biệt hoa thường. Bấm **Submit intent.md**.
+
+### Bước 4 — Duyệt spec (Cổng 1)
+
+**Inbox** hiện thẻ "Review spec.md" sau khoảng 1 phút; bấm **Open and decide**. Khối quyết định ở đầu trang run hiện spec.md: kiểm tra các AC, rồi **Accept**, **Edit** (lưu phiên bản mới) hoặc **Reject**. Nếu Business Analyst có câu hỏi chặn, trả lời ở đây trước.
+
+### Bước 5 — Duyệt plan (Cổng 2)
+
+Sau 1–3 phút có thẻ "Review the plan". Xem ma trận tiêu chí × task × test case: mỗi AC phải có ít nhất một task và một test; dòng vàng là case `expected pass` (chỉ hợp lệ khi test đó pass trên code hiện tại); đọc cảnh báo grounding (ví dụ sửa markup mà không sửa stylesheet), rồi **Approve plan**.
+
+### Bước 6 — Theo dõi phần code
+
+Không cần làm gì. Thanh pipeline 8 chặng ở đầu trang; tab **Tasks** là dòng thời gian từng task: QA viết test → red check (test phải trượt) → Developer viết code → validation (phải xanh), kèm CLI, commit, thời gian và lý do nếu bị từ chối. Tab **Diff** cho xem code thay đổi; **Thread**, **Events**, **Jobs & decisions** cho xem chi tiết.
+
+### Bước 7 — Khi run dừng ở NEEDS_HUMAN
+
+Đọc lý do trong khung đỏ. Developer báo tranh chấp test → **Let QA update the tests** (QA được sửa test cũ, có ghi trong PR) hoặc **Keep the tests**; trường hợp khác → **Resume**, **Replan** hoặc **Cancel run**, kèm lý do.
+
+### Bước 8 — Merge (Cổng 3)
+
+Khi có thẻ "Review the pull request": bấm **Open PR**, xem code và CI trên GitHub, rồi merge. Worker thấy merge trong vòng 1 phút và đóng run thành `COMPLETED`. Muốn đội sửa tiếp → **Request changes**; review lại → **Review again**; bỏ → **Close without merge**.
+
+### Bước 9 (tuỳ chọn) — Eval cho project
+
+Để đo khi đổi prompt hay engine: tạo `evals/<suite>/` với `suite.yaml` (project, commit ghim), các file tính năng trong `features/` và plan mẫu trong `golden/` (xem `evals/inventory/`), rồi chạy ở **Evals**, chọn engine cho từng vai. Kết quả và mức dùng theo vai xem ở **Reports**.
+
+Tắt: `./sdlc down` (dữ liệu vẫn giữ). Mẹo: ⌘K để nhảy tới run hoặc trang bất kỳ; nút mặt trăng đổi sáng/tối.
 
 ## Lưu ý và giới hạn
 
