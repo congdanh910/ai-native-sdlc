@@ -150,7 +150,11 @@ class LangflowTeam(MockTeam):
 
     def review(self, context: RunContext, plan: PlanPayload, tests: TestPlan, diff: str = "",
                validation: str = "") -> Review:
-        payload = {"spec": context.spec_md, "plan": plan.model_dump(), "test_plan": tests.model_dump(),
+        # The reviewer needs which case proves which criterion, not every scenario text: with a real diff the full
+        # test plan overflowed Qwen3's 8192-token window (inventory run, 2026-10-14).
+        cases = [{"id": c.id, "task_id": c.task_id, "criterion": c.criterion, "target_file": c.target_file}
+                 for c in tests.cases]
+        payload = {"spec": context.spec_md, "plan": plan.model_dump(), "test_plan": {"cases": cases},
                    "diff": diff, "validation": validation or "coding was simulated; no validation ran",
                    "agents_md": context.agents_md, "review_md": context.review_md}
         return self._ask("review", payload, Review, normalize.review, context.session_id)

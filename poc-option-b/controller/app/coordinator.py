@@ -221,7 +221,7 @@ def load(session: Session, execution: Execution) -> Loaded:
         loaded.tests = TestPlan.model_validate(plan.test_plan)
     if execution.kind == "review" and not get_settings().coding_is_mocked and run.worktree_path:
         loaded.extra["diff"] = changes.run_diff(Path(run.worktree_path), run.base_commit, loaded.context.policy.test_paths,
-                                                get_settings().context_char_budget * 2 // 3)  # spec and plan need room too
+                                                get_settings().context_char_budget // 2)  # spec, plan and test plan need room too
         loaded.extra["validation"] = validation_summary(session, run)
     if execution.task_id:
         task = session.get(Task, execution.task_id)
