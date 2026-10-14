@@ -44,6 +44,12 @@ class ReleaseResult:
 
 class CapacityBusy(RuntimeError):
     """The model host has no capacity now; the job should wait and run later."""
+    wait_seconds: int | None = None  # None: the worker's default wait
+
+
+class SubscriptionLimit(CapacityBusy):
+    """A CLI's subscription usage window is exhausted; committed work is kept and the job runs later."""
+    wait_seconds = 900
 
 
 @dataclass(frozen=True)

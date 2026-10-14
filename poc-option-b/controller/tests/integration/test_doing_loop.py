@@ -224,3 +224,55 @@ def test_the_code_owner_can_ask_for_a_new_review(db, sample_repo, tmp_path):
     drain(team(FakeCli(), FakeContainer(), tmp_path))
     with session_scope() as session:
         assert status(run_id) == "WAITING_PR_APPROVAL" and latest_document(session, run_id, "review").version == 2
+
+
+def test_signed_github_deliveries_are_handled_once(db, monkeypatch):
+    import hashlib
+    import hmac
+    from fastapi.testclient import TestClient
+    from controller.app import coordinator
+    from controller.app.config import get_settings
+    from controller.app.main import app
+
+    monkeypatch.setattr(get_settings(), "github_webhook_secret", "s3cret")
+    polls = []
+    monkeypatch.setattr(coordinator, "poll_pull_requests", lambda session: polls.append(1))
+    body = b'{"action": "closed"}'
+    headers = {"X-Hub-Signature-256": "sha256=" + hmac.new(b"s3cret", body, hashlib.sha256).hexdigest(),
+               "X-GitHub-Delivery": "d-1", "X-GitHub-Event": "pull_request", "Content-Type": "application/json"}
+    client = TestClient(app)
+    assert client.post("/api/webhooks/github", content=body, headers=headers).json() == {"status": "processed"}
+    assert client.post("/api/webhooks/github", content=body, headers=headers).json() == {"status": "duplicate"}
+    assert client.post("/api/webhooks/github", content=body,
+                       headers={**headers, "X-Hub-Signature-256": "sha256=0"}).status_code == 401
+    assert polls == [1]
+
+
+class LimitedOnceCli(FakeCli):
+    """The first Developer session hits the subscription limit after the tests were committed."""
+
+    def __init__(self):
+        super().__init__()
+        self.limited = False
+
+    def run(self, session: Session) -> SessionResult:
+        if session.role == "developer" and not self.limited:
+            self.limited = True
+            return SessionResult(self.name, False, "You've hit your usage limit.", 1.0, 1, False)
+        return super().run(session)
+
+
+def test_a_subscription_limit_postpones_the_task_and_keeps_its_tests(db, sample_repo, tmp_path):
+    from controller.app import jobs
+    run_id = _to_coding(sample_repo)
+    cli = LimitedOnceCli()
+    drain(team(cli, FakeContainer(), tmp_path))
+    with session_scope() as session:
+        execution = session.scalar(select(Execution).where(Execution.run_id == run_id, Execution.kind == "code_task"))
+        assert execution.status == "queued" and "usage limit" in execution.error
+        assert execution.available_at > jobs.now()
+        execution.available_at = jobs.now()  # the window reopened
+    assert status(run_id) == "CODING"
+    drain(team(cli, FakeContainer(), tmp_path))
+    assert status(run_id) == "WAITING_PR_APPROVAL"
+    assert sum(s.startswith("test(T1)") for s in _subjects(run_id)) == 1

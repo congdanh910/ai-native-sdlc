@@ -13,6 +13,7 @@ from controller.app.db import get_engine
 
 WEB_DIR = Path(__file__).resolve().parents[1] / "web"
 CLIENT_HEADER = "X-SDLC-Client"
+WEBHOOK_PATH = "/api/webhooks/github"
 
 app = FastAPI(title="AI-native SDLC controller", version="0.3.0")
 
@@ -29,7 +30,9 @@ async def local_only(request: Request, call_next):
     allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}", "testserver"}
     if request.headers.get("host") not in allowed_hosts:
         return JSONResponse({"detail": "unexpected Host header"}, status_code=403)
-    if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get(CLIENT_HEADER) != "web":
+    signed_webhook = request.url.path == WEBHOOK_PATH  # authenticated by its HMAC signature instead
+    if request.method not in ("GET", "HEAD", "OPTIONS") and request.headers.get(CLIENT_HEADER) != "web" \
+            and not signed_webhook:
         return JSONResponse({"detail": f"missing {CLIENT_HEADER} header"}, status_code=403)
     return await call_next(request)
 

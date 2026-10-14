@@ -308,3 +308,60 @@ def test_review_diff_puts_sources_first_and_leaves_out_the_thread(worktree):
     diff = changes.run_diff(worktree, base, ["test/**"], budget=1500)
     assert diff.index("src/tasks.js") < diff.index("test/tasks.test.js") and ".sdlc" not in diff
     assert "truncated by the context budget" in diff and len(diff) < 1600
+
+
+# ------------------------------------------------------------------ B5: limits, timeouts, cancellation
+
+def test_a_subscription_limit_postpones_instead_of_failing(worktree, tmp_path):
+    from controller.app.team.base import SubscriptionLimit
+    team, _ = doing(tmp_path, dev=FakeExecutor("codex", message="You've hit your usage limit. Try again at 3pm.",
+                                               ok=False))
+    with pytest.raises(SubscriptionLimit) as raised:
+        team.implement(context(worktree), TASK, 1, TESTS)
+    assert raised.value.wait_seconds == 900
+
+
+def test_a_failing_session_is_not_mistaken_for_a_limit(worktree, tmp_path):
+    team, _ = doing(tmp_path, dev=FakeExecutor("codex", message="SyntaxError in src/tasks.js", ok=False))
+    result = team.implement(context(worktree), TASK, 1, TESTS)
+    assert not result.ok and "Developer session failed" in result.detail
+
+
+def test_a_timed_out_session_fails_the_step(tmp_path):
+    def runner(args, cwd, timeout, input_text, env):
+        return ProcessResult(args, None, "still thinking", timeout, timed_out=True)
+    result = ClaudeExecutor(runner=runner).run(Session("developer", "p", tmp_path, [], [], [], 1, tmp_path / "l"))
+    assert not result.ok and result.timed_out and not result.limited
+
+
+def test_cancellation_stops_the_running_process_and_any_later_one():
+    import threading
+    from controller.app.doing import process
+    process.begin_job()
+    threading.Timer(0.5, process.cancel_active).start()
+    result = run_bounded(["sleep", "30"], timeout=20)
+    assert result.exit_code is None and "cancelled" in result.output and result.seconds < 10
+    assert "cancelled" in run_bounded(["echo", "hi"], timeout=5).output  # nothing new starts
+    process.begin_job()
+    assert run_bounded(["echo", "hi"], timeout=5).output.strip() == "hi"
+
+
+def test_orphaned_sessions_are_stopped_at_worker_start(tmp_path, monkeypatch):
+    from controller.app.doing import process
+    monkeypatch.setattr(process, "SESSIONS_DIR", tmp_path / "sessions")
+    orphan = subprocess.Popen(["sleep", "30"], start_new_session=True)
+    (tmp_path / "sessions").mkdir()
+    (tmp_path / "sessions" / f"{orphan.pid}.json").write_text(json.dumps({"pid": orphan.pid, "program": "sleep"}))
+    stopped = process.kill_orphans()
+    assert f"sleep pid {orphan.pid}" in stopped and orphan.wait(timeout=5) is not None
+    assert not list((tmp_path / "sessions").iterdir())
+
+
+def test_webhook_signature():
+    body = b'{"action": "closed"}'
+    import hashlib
+    import hmac
+    good = "sha256=" + hmac.new(b"s3cret", body, hashlib.sha256).hexdigest()
+    assert github.verify_signature("s3cret", body, good)
+    assert not github.verify_signature("s3cret", body + b" ", good)
+    assert not github.verify_signature("", body, good)

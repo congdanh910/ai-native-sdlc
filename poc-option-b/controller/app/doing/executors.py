@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import sys
 import tempfile
@@ -24,6 +25,9 @@ from controller.app.doing.process import ProcessResult, run_bounded
 
 GUARD = Path(__file__).with_name("guard.py")
 DISPUTE_PREFIX = "DISPUTE:"
+# How the CLIs report an exhausted subscription window; the job waits instead of failing.
+LIMIT = re.compile(r"usage limit|rate limit|rate_limit|too many requests|\b429\b|quota exceeded|"
+                   r"hit your (?:usage )?limit|limit reached", re.I)
 
 
 @dataclass(frozen=True)
@@ -48,6 +52,11 @@ class SessionResult:
     exit_code: int | None
     timed_out: bool
     usage: dict = field(default_factory=dict)
+
+    @property
+    def limited(self) -> bool:
+        """The session failed because the subscription's usage window is exhausted."""
+        return not self.ok and bool(LIMIT.search(self.message))
 
     @property
     def dispute(self) -> str | None:

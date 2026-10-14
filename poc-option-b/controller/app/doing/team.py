@@ -14,7 +14,7 @@ from controller.app.doing import changes
 from controller.app.doing.executors import Session, SessionResult, executors as default_executors
 from controller.app.doing.validation import ValidationGate, failures, red_check, summary
 from controller.app.schemas import PlanTask, TestPlan, parse_criteria
-from controller.app.team.base import RunContext, StepResult
+from controller.app.team.base import RunContext, StepResult, SubscriptionLimit
 
 PROMPTS = Path(__file__).with_name("prompts")
 SESSION_TIMEOUT = 1200
@@ -62,7 +62,10 @@ class CliDoing:
         session = Session(role=role, prompt=prompt, worktree=self._worktree(context), writable=writable,
                           protected=list(context.policy.protected_paths), commands=self._commands(context, task),
                           timeout=SESSION_TIMEOUT, log_path=self._log_dir(context) / f"{label}.log")
-        return self.executors[executor].run(session)
+        result = self.executors[executor].run(session)
+        if result.limited:
+            raise SubscriptionLimit(f"{executor} subscription limit reached during {label}: {result.message[-200:]}")
+        return result
 
     @staticmethod
     def _evidence(result: SessionResult, label: str, **extra) -> dict:

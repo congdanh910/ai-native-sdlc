@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     sdlc_api_port: int = 8770
     sdlc_team_mode: str = "mock"  # thinking roles: mock or qwen3
     sdlc_doing_mode: str = "mock"  # QA Engineer, Developer, Validation Gate: mock or cli (B4)
+    github_webhook_secret: str = ""  # empty: no webhook; the worker polls GitHub every minute
 
     ollama_tunnel_port: int = 11435
     ollama_remote_port: int = 11437

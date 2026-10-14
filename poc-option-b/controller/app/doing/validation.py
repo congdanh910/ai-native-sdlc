@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 import uuid
 
-from controller.app.doing.process import ProcessResult, run_bounded
+from controller.app.doing.process import CONTAINER_PREFIX, ProcessResult, run_bounded
 from controller.app.projects.config import EffectivePolicy
 
 SETUP_TIMEOUT = 900
@@ -38,9 +38,9 @@ def container_args(image: str, worktree: Path, argv: list[str], *, name: str, ne
 
 def run_in_container(image: str, worktree: Path, argv: list[str], timeout: float, *, network: bool = False,
                      writable: bool = False) -> ProcessResult:
-    name = f"sdlc-validate-{uuid.uuid4().hex[:12]}"
+    name = f"{CONTAINER_PREFIX}{uuid.uuid4().hex[:12]}"
     result = run_bounded(container_args(image, worktree, argv, name=name, network=network, writable=writable),
-                         timeout=timeout)
+                         timeout=timeout, container=name)
     if result.timed_out:  # killing the docker client does not stop the container
         run_bounded(["docker", "rm", "-f", name], timeout=30)
     return result

@@ -16,6 +16,7 @@ import time
 from sqlalchemy import select
 
 from controller.app import coordinator, jobs
+from controller.app.doing import process
 from controller.app.db import session_scope
 from controller.app.models import Execution, Run
 from controller.app.states import RUN_TRANSITIONS, RunStatus
@@ -30,10 +31,24 @@ RETRY_BASE_SECONDS = 10
 PR_POLL_SECONDS = 60  # without a public webhook, GitHub is polled for CI, review and merge
 
 
+CANCEL_CHECK_SECONDS = 5
+
+
 def _heartbeat(execution_id, stop: threading.Event) -> None:
-    while not stop.wait(jobs.LEASE.total_seconds() / 3):
+    """Renew the lease, and stop the job's sessions and containers as soon as its run is cancelled."""
+    renew_every = max(1, int(jobs.LEASE.total_seconds() / 3 / CANCEL_CHECK_SECONDS))
+    ticks = 0
+    while not stop.wait(CANCEL_CHECK_SECONDS):
+        ticks += 1
         with session_scope() as session:
-            jobs.heartbeat(session, execution_id)
+            execution = session.get(Execution, execution_id)
+            run = session.get(Run, execution.run_id) if execution else None
+            if run is not None and run.status == RunStatus.CANCELLED:
+                stopped = process.cancel_active()
+                if stopped:
+                    log.info("run %s cancelled: stopped %d running process(es)", run.id, stopped)
+            if ticks % renew_every == 0:
+                jobs.heartbeat(session, execution_id)
 
 
 def run_once(team: Team, worker_id: str = WORKER_ID) -> bool:
@@ -47,6 +62,7 @@ def run_once(team: Team, worker_id: str = WORKER_ID) -> bool:
         coordinator.on_claim(session, execution)
         execution_id, kind = execution.id, execution.kind
     log.info("claimed %s %s", kind, execution_id)
+    process.begin_job()
     stop = threading.Event()
     beat = threading.Thread(target=_heartbeat, args=(execution_id, stop), daemon=True)
     beat.start()
@@ -70,7 +86,7 @@ def _fail(execution_id, exc: Exception) -> None:
         run = session.get(Run, execution.run_id, with_for_update=True)
         message = f"{type(exc).__name__}: {exc}"[:500]
         if isinstance(exc, CapacityBusy):
-            jobs.postpone(session, execution, CAPACITY_WAIT_SECONDS, message)
+            jobs.postpone(session, execution, exc.wait_seconds or CAPACITY_WAIT_SECONDS, message)
             return
         retryable = not execution.side_effects and not isinstance(exc, InvalidModelOutput)
         if retryable and execution.attempts < jobs.MAX_ATTEMPTS:
@@ -127,6 +143,8 @@ def run_forever(poll_seconds: float = 1.0) -> None:
     signal.signal(signal.SIGTERM, lambda *_: stopping.set())
     awake = StayAwake()
     log.info("worker %s started with team %s", WORKER_ID, team.engine)
+    for leftover in process.kill_orphans():
+        log.warning("stopped %s left behind by an earlier worker", leftover)
     next_pr_poll = 0.0
     while not stopping.is_set():
         try:

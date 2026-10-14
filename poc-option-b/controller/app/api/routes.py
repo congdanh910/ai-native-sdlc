@@ -3,7 +3,7 @@
 import uuid
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
@@ -306,3 +306,20 @@ def get_eval(eval_id: uuid.UUID) -> dict:
         if evaluation is None:
             raise HTTPException(404, "eval not found")
         return evals.eval_view(session, evaluation)
+
+
+@router.post("/webhooks/github")
+async def github_webhook(request: Request) -> dict:
+    """Signed GitHub events (pull_request, checks, reviews). Without a secret the worker polls instead."""
+    from controller.app.doing.github import verify_signature
+    secret = get_settings().github_webhook_secret
+    if not secret:
+        raise HTTPException(404, "webhook disabled: set GITHUB_WEBHOOK_SECRET in .env")
+    body = await request.body()
+    if not verify_signature(secret, body, request.headers.get("X-Hub-Signature-256", "")):
+        raise HTTPException(401, "bad signature")
+    delivery = request.headers.get("X-GitHub-Delivery", "")
+    if not delivery:
+        raise HTTPException(400, "missing X-GitHub-Delivery")
+    with session_scope() as session:
+        return {"status": services.github_event(session, delivery, request.headers.get("X-GitHub-Event", ""))}

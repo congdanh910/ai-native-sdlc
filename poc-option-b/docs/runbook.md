@@ -42,6 +42,24 @@ A job that finds its run in another state (for example cancelled) is recorded as
 - The release job pushes with `gh auth git-credential` as a one-off credential helper; no token is written to disk or to a command line by the platform.
 - Polling: every 60 seconds the worker reads open draft PRs (`gh pr view`) for CI, review and merge state. A merge with a head other than the one the team pushed sends the run to `NEEDS_HUMAN`.
 
+## Reliability (B5)
+
+| Situation | What happens |
+|---|---|
+| Worker dies during a reasoning job | Lease expires, the job is queued again (at most 3 attempts) |
+| Worker dies during a code task or release | Never replayed: execution `unknown`, task `UNKNOWN`, run `NEEDS_HUMAN`. At the next start the worker stops CLI sessions and `sdlc-validate-*` containers the dead worker left (PID files in `.data/run/sessions/`) |
+| Run cancelled while a session or container runs | The worker notices within 5 seconds, kills the process group and removes the container; nothing else starts in that job, and its result is discarded |
+| CLI session exceeds 20 minutes | Process group killed; the step fails and the run goes to `NEEDS_HUMAN` |
+| Subscription usage window exhausted | The job waits 15 minutes and runs again without counting an attempt; committed tests and code are reused, so nothing is written twice |
+| GX10 busy or tunnel down | The job waits 2 minutes (thinking roles) |
+| Same job queued twice | Refused by its idempotency key |
+| Human decisions across restarts | Stored in PostgreSQL before any job is queued; a restart changes nothing |
+| GitHub webhook delivered twice | Each `X-GitHub-Delivery` is handled once; handling only re-reads PR state, so a replay cannot change a run |
+
+### GitHub webhook (optional)
+
+Without it the worker polls open draft PRs every minute. To get events sooner, set `GITHUB_WEBHOOK_SECRET` in `.env`, run `./sdlc up`, and forward GitHub's webhook (events: pull requests, pull request reviews, check suites, statuses) to `http://127.0.0.1:8770/api/webhooks/github` with a forwarder such as smee.io. The API stays on loopback; requests without a valid `X-Hub-Signature-256` are refused.
+
 ## Security of the control room
 
 The API listens on loopback only and has no login, because the POC has one operator. Requests with a Host header other than `127.0.0.1:PORT` or `localhost:PORT` are refused (DNS rebinding), and every write must carry the header `X-SDLC-Client: web`, which other web pages cannot add without a CORS preflight that the API never grants.

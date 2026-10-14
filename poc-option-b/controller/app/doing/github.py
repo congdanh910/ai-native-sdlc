@@ -7,6 +7,8 @@ the team pushed.
 """
 
 from dataclasses import dataclass
+import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -92,3 +94,12 @@ def pull_state(slug: str, number: int, runner=run_bounded) -> PullState:
     merge = data.get("mergeCommit") or {}
     return PullState(data["state"], data["headRefOid"], merge.get("oid"), _ci(data.get("statusCheckRollup") or []),
                      (data.get("reviewDecision") or "pending").lower())
+
+
+PR_EVENTS = frozenset({"pull_request", "pull_request_review", "check_suite", "check_run", "status"})
+
+
+def verify_signature(secret: str, body: bytes, header: str) -> bool:
+    """GitHub's X-Hub-Signature-256: HMAC-SHA256 of the raw body with the webhook secret."""
+    expected = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    return bool(secret) and hmac.compare_digest(expected, header or "")

@@ -266,6 +266,21 @@ def _rule_on_dispute(session: Session, run: Run, *, actor: str, decision: str, r
     coordinator.schedule_tasks(session, run)
 
 
+def github_event(session: Session, delivery: str, event: str) -> str:
+    """A verified GitHub webhook. Each delivery is handled once; handling re-reads PR state, so it is idempotent."""
+    from controller.app.doing.github import PR_EVENTS
+    from controller.app.models import Event
+    seen = session.scalar(select(Event.id).where(Event.event_type == "github.delivery",
+                                                 Event.payload["delivery"].astext == delivery).limit(1))
+    if seen is not None:
+        return "duplicate"
+    record_event(session, "github.delivery", actor="github", payload={"delivery": delivery, "event": event})
+    if event not in PR_EVENTS:
+        return "ignored"
+    coordinator.poll_pull_requests(session)
+    return "processed"
+
+
 # ---------------------------------------------------------------- Code Owner
 
 def pr_decision(session: Session, run: Run, *, actor: str, decision: str, reason: str | None) -> None:
