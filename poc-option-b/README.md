@@ -12,7 +12,7 @@ Implementation of [AI_Native_SDLC_Option_B.md](../AI_Native_SDLC_Option_B.md), b
 | B6 — Engines per role, second project (Python), team report, new control room (React) | Done |
 | B7 | Planned |
 
-Start with the [user guide](docs/user-guide.md). Operations and troubleshooting are in the [runbook](docs/runbook.md).
+Start with the [user guide](docs/user-guide.md). Operations and troubleshooting are in the [runbook](docs/runbook.md). In Vietnamese: [hướng dẫn dùng thử](docs/huong-dan-dung-thu.md) (flow, architecture, roles, how to try) and the [control room design](docs/ui-design.md).
 
 ```bash
 ./sdlc init --gx10-host user@gx10-host --gx10-port 22 --gx10-identity ~/.ssh/gx10
