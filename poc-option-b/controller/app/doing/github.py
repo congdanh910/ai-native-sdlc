@@ -66,7 +66,9 @@ def open_draft(slug: str, base: str, branch: str, title: str, body: str, runner=
                               "--json", "number,url", runner=runner) or "[]")
     if existing:
         number, url = existing[0]["number"], existing[0]["url"]
-        _gh("pr", "edit", str(number), "--repo", slug, "--body-file", "-", input_text=body, runner=runner)
+        # REST, not `gh pr edit`: older gh versions query the retired classic Projects API there and fail.
+        _gh("api", "--method", "PATCH", f"repos/{slug}/pulls/{number}", "--input", "-",
+            input_text=json.dumps({"body": body}), runner=runner)
         return number, url
     url = _gh("pr", "create", "--repo", slug, "--draft", "--base", base, "--head", branch, "--title", title,
               "--body-file", "-", input_text=body, runner=runner).strip().splitlines()[-1]

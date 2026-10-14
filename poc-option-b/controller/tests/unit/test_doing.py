@@ -277,7 +277,7 @@ def test_draft_pr_is_created_once_and_updated_afterwards():
     assert "--draft" in create and create[create.index("--base") + 1] == "main" and gh.calls[1][1] == "report"
     gh = FakeGh(['[{"number": 12, "url": "u"}]', ""])
     assert github.open_draft("o/r", "main", "sdlc/run-1", "t", "report v2", runner=gh) == (12, "u")
-    assert gh.calls[1][0][:3] == ["gh", "pr", "edit"]
+    assert gh.calls[1][0][:4] == ["gh", "api", "--method", "PATCH"] and json.loads(gh.calls[1][1]) == {"body": "report v2"}
 
 
 def test_pull_state_summarises_ci():
