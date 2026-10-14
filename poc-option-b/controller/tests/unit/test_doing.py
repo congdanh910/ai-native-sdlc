@@ -365,3 +365,19 @@ def test_webhook_signature():
     assert github.verify_signature("s3cret", body, good)
     assert not github.verify_signature("s3cret", body + b" ", good)
     assert not github.verify_signature("", body, good)
+
+
+def test_mirror_fetch_skips_pushed_run_branches(sample_repo, tmp_path):
+    from controller.app.projects.repo import Mirror, Worktree
+    mirror = Mirror(tmp_path / "m.git")
+    mirror.clone(str(sample_repo))
+    run = Worktree(mirror, tmp_path / "wt", "sdlc/run-1")
+    run.create(mirror.resolve("main"))
+    run.commit_file("notes.md", "local work\n", "local")
+    git(sample_repo, "branch", "sdlc/run-1")  # the branch was pushed for a draft PR and differs from the worktree
+    (sample_repo / "new.txt").write_text("x")
+    git(sample_repo, "add", ".")
+    git(sample_repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "-m", "upstream")
+    mirror.fetch()  # used to fail: refusing to fetch into a branch checked out in a worktree
+    assert mirror.resolve("main") == git(sample_repo, "rev-parse", "main").strip()
+    assert (tmp_path / "wt" / "notes.md").exists()

@@ -56,8 +56,10 @@ class Mirror:
         _git("clone", "--bare", "--quiet", "--", url, str(self.path), timeout=600)
 
     def fetch(self) -> None:
+        # Run branches (sdlc/*) belong to the platform: their worktrees hold the truth, and once pushed for a
+        # draft PR git would refuse to update a branch that a run worktree has checked out.
         _git("--git-dir", str(self.path), "fetch", "--quiet", "--prune", "origin",
-             "+refs/heads/*:refs/heads/*", timeout=600)
+             "+refs/heads/*:refs/heads/*", "^refs/heads/sdlc/*", timeout=600)
 
     def default_branch(self) -> str:
         ref = _git("--git-dir", str(self.path), "symbolic-ref", "--short", "HEAD").strip()
