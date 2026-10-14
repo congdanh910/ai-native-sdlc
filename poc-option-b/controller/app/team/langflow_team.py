@@ -83,6 +83,7 @@ class LangflowTeam(MockTeam):
     def _ask(self, role: str, payload: dict, contract: type[Model], repair: Callable[[dict], dict],
              session_id: str) -> Model:
         prompt = role_prompt(role)
+        started = time.monotonic()
         problems: list[str] = []
         for attempt in range(1, MAX_FORMAT_RETRIES + 2):
             self._ensure_capacity()
@@ -92,7 +93,8 @@ class LangflowTeam(MockTeam):
             raw = self.client.run(prompt.endpoint, request, session_id=f"{session_id}:{role}:{attempt}")
             try:
                 result = contract.model_validate(repair(extract_json(raw)))
-                self.last_call = CallRecord(self.engine, prompt.version, attempt)
+                self.last_call = CallRecord(self.engine, prompt.version, attempt,
+                                            usage={"seconds": round(time.monotonic() - started, 1)})
                 return result
             except (InvalidModelOutput, ValidationError, ValueError) as exc:
                 problems = [f"Your previous answer was rejected: {_describe(exc)}",
