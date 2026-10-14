@@ -109,6 +109,8 @@ Allowed values: `qwen3` (Langflow and Ollama on GX10), `claude-readonly` and `co
 
 **Approval (operator, 2026-10-14):** after the engine comparison on the Task Board suite (Qwen3: 3/5 plans grounded on the first attempt, recall 0.9, sorting rule in the interface script; `claude-readonly` and `codex-readonly`: 5/5 first-attempt grounding, recall 1.0, rules in the model module), normal runs may put the **Tech Lead** and **QA Analyst** on `claude-readonly`. It is set with `SDLC_ENGINES` and pinned on each run when the run is created. The Business Analyst and Code Reviewer stay on `qwen3`. Repository content of those runs is sent to Anthropic through the operator's subscription.
 
+**Approval (operator, 2026-10-14, later):** the **Business Analyst** of normal runs may also use `claude-readonly`, because Qwen3 twice stopped a run on a technical question marked blocking (Task Board `backup`, Inventory `categories`) despite the prompt rule. The Code Reviewer stays on `qwen3`.
+
 ### Working agreements
 1. **Artifacts, not conversations.** Each AI role works only from the artifacts handed to it. There is no hidden memory between roles. Every artifact is versioned, checksummed, attributed to the role that produced it and, by default, committed to the run branch.
 2. **No self-approval.** No role approves its own output, and no AI role approves another AI role's output. Approval authority belongs to humans only.

@@ -32,7 +32,8 @@ class Settings(BaseSettings):
     sdlc_doing_mode: str = "mock"  # QA Engineer, Developer, Validation Gate: mock or cli (B4)
     github_webhook_secret: str = ""  # empty: no webhook; the worker polls GitHub every minute
     # Engines of normal runs per thinking role, e.g. "tech_lead=claude-readonly,qa_analyst=claude-readonly".
-    # Roles not named use qwen3. Operator approval of 2026-10-14 covers Tech Lead and QA Analyst on claude-readonly.
+    # Roles not named use qwen3. Operator approvals of 2026-10-14 cover the Business Analyst, Tech Lead and
+    # QA Analyst on claude-readonly.
     sdlc_engines: str = ""
 
     @property
