@@ -344,6 +344,7 @@ function decisionPanel(run, reload) {
       h("div", { class: "actions" },
         pr.simulated ? button("Record simulated merge", "primary", () => post("pr-decision", { decision: "approve" })) : null,
         button("Request changes", "", () => post("pr-decision", { decision: "request_changes", reason: reason.value })),
+        button("Review again", "", () => post("pr-decision", { decision: "rereview", reason: reason.value })),
         button("Close without merge", "danger", () => post("pr-decision", { decision: "close", reason: reason.value }))));
   }
   if (need.action === "needs_human") {

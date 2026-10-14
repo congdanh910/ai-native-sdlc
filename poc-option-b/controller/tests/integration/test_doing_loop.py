@@ -210,3 +210,17 @@ def test_kept_tests_send_the_developer_back_with_the_decision(db, sample_repo, t
 def coordinator_report(session, run_id) -> str:
     from controller.app import coordinator
     return coordinator.execution_report(session, session.get(Run, run_id))
+
+
+def test_the_code_owner_can_ask_for_a_new_review(db, sample_repo, tmp_path):
+    from controller.app import services
+    from controller.app.documents import latest_document
+    run_id = _to_coding(sample_repo)
+    drain(team(FakeCli(), FakeContainer(), tmp_path))
+    with session_scope() as session:
+        services.pr_decision(session, services.get_run(session, run_id), actor="tester", decision="rereview",
+                             reason="the first review saw no diff")
+    assert status(run_id) == "REVIEWING"
+    drain(team(FakeCli(), FakeContainer(), tmp_path))
+    with session_scope() as session:
+        assert status(run_id) == "WAITING_PR_APPROVAL" and latest_document(session, run_id, "review").version == 2

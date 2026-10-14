@@ -85,7 +85,7 @@ class Reason(Body):
 
 
 class PrDecision(Body):
-    decision: Literal["approve", "request_changes", "close"]
+    decision: Literal["approve", "request_changes", "close", "rereview"]
     reason: str | None = None
 
 

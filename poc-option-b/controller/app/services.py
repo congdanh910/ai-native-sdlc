@@ -287,6 +287,11 @@ def pr_decision(session: Session, run: Run, *, actor: str, decision: str, reason
         for task in coordinator.current_tasks(session, run):
             transition_task(session, task, TaskStatus.READY, actor=actor, reason=f"changes requested: {reason}")
         coordinator.schedule_tasks(session, run)
+    elif decision == "rereview":
+        # The code is unchanged; the Code Reviewer writes a new review.md and the PR body is refreshed.
+        transition_run(session, run, RunStatus.REVIEWING, actor=actor, acting_role=CO,
+                       reason=reason or "Code Owner asked for a new review")
+        coordinator.queue(session, run, "review", key=f"rereview:v{run.version}")
     elif decision == "close":
         pull.review_status = "closed"
         transition_run(session, run, RunStatus.CLOSED_UNMERGED, actor=actor, acting_role=CO, reason=reason)
