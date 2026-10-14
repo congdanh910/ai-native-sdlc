@@ -48,6 +48,34 @@ def _added_lines(worktree: Path, path: str) -> list[str]:
     return [line[1:] for line in diff.splitlines() if line.startswith("+") and not line.startswith("+++")]
 
 
+def _removed_lines(worktree: Path, path: str) -> list[str]:
+    diff = _git("diff", "--cached", "-U0", "--", path, cwd=worktree)
+    return [line[1:] for line in diff.splitlines() if line.startswith("-") and not line.startswith("---")]
+
+
+IMPORT_LINE = re.compile(r"^\s*(?:from\s+(?P<pymod>[\w.]+)\s+import\s+\(?(?P<pynames>[^)#]*)\)?|"
+                         r"import\s*\{(?P<jsnames>[^}]*)\}\s*from\s*['\"](?P<jsmod>[^'\"]+)['\"])\s*;?\s*$")
+
+
+def _import(line: str) -> tuple[str, set[str]] | None:
+    match = IMPORT_LINE.match(line)
+    if not match:
+        return None
+    module = match["pymod"] or match["jsmod"]
+    names = {n.strip() for n in (match["pynames"] or match["jsnames"] or "").split(",") if n.strip()}
+    return module, names
+
+
+def _widened_imports(worktree: Path, path: str) -> bool:
+    """Every removed line is an import that an added line imports again with at least the same names."""
+    added = [parsed for line in _added_lines(worktree, path) if (parsed := _import(line))]
+    for line in _removed_lines(worktree, path):
+        old = _import(line)
+        if old is None or not any(module == old[0] and old[1] <= names for module, names in added):
+            return False
+    return True
+
+
 def _common(worktree: Path, change: Change, policy: EffectivePolicy) -> list[str]:
     problems = []
     if matches_any(change.path, policy.protected_paths):
@@ -70,7 +98,7 @@ def check_tests(worktree: Path, changes: list[Change], policy: EffectivePolicy, 
             continue
         if change.status == "D":
             problems.append(f"deletes test file {change.path}")
-        elif change.deleted and not allow_edits:
+        elif change.deleted and not allow_edits and not _widened_imports(worktree, change.path):
             problems.append(f"changes or removes {change.deleted} existing line(s) in {change.path}; tests may only be added")
         if change.status != "D" and any(SKIP_MARKER.search(line) for line in _added_lines(worktree, change.path)):
             problems.append(f"adds a skipped or focused test in {change.path}")

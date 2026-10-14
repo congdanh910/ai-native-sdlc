@@ -381,3 +381,16 @@ def test_mirror_fetch_skips_pushed_run_branches(sample_repo, tmp_path):
     mirror.fetch()  # used to fail: refusing to fetch into a branch checked out in a worktree
     assert mirror.resolve("main") == git(sample_repo, "rev-parse", "main").strip()
     assert (tmp_path / "wt" / "notes.md").exists()
+
+
+def test_widening_an_import_is_not_an_edit_of_existing_tests(worktree):
+    (worktree / "test" / "tasks.test.js").write_text(
+        "import { addTask } from '../src/tasks.js';\n// existing tests\n")
+    git(worktree, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "imports")
+    (worktree / "test" / "tasks.test.js").write_text(
+        "import { addTask, filterTasks } from '../src/tasks.js';\n// existing tests\ntest('x', () => {});\n")
+    assert changes.check_tests(worktree, changes.stage_changes(worktree), policy()) == []
+    changes.discard(worktree)
+    (worktree / "test" / "tasks.test.js").write_text(
+        "import { filterTasks } from '../src/tasks.js';\n// existing tests\n")  # drops a name: an edit
+    assert "existing line" in changes.check_tests(worktree, changes.stage_changes(worktree), policy())[0]
