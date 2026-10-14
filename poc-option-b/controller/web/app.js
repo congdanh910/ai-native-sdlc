@@ -482,6 +482,33 @@ const METRICS = [
   ["mean_seconds_to_plan", "Mean seconds from request to plan", "s"],
 ];
 
+// ------------------------------------------------------------------ reports
+const METRIC_LABEL = (key) => key.replace(/_/g, " ");
+
+async function reportsView() {
+  const r = await api("/api/reports");
+  const show = (v) => (v === null || v === undefined ? "–" : typeof v === "object" ? JSON.stringify(v) : String(v));
+  const table = (headers, rows) => h("div", { class: "table-wrap" }, h("table", {},
+    h("thead", {}, h("tr", {}, ...headers.map((t) => h("th", {}, t)))),
+    h("tbody", {}, ...rows.map((row) => h("tr", {}, ...row.map((cell) => h("td", {}, show(cell))))))));
+  const section = (title, body) => h("div", { class: "card" }, h("h3", { style: "margin-top: 0" }, title), body);
+  const kv = (obj) => table(["Metric", "Value"], Object.entries(obj).map(([k, v]) => [METRIC_LABEL(k), v]));
+  const otherEngines = (engines) => Object.entries(engines || {}).filter(([, v]) => v !== "qwen3").map(([k, v]) => `${k}: ${v}`).join(", ") || "qwen3";
+  const pct = (v) => (v === null || v === undefined ? "–" : `${Math.round(v * 100)}%`);
+  render(
+    h("h1", {}, "Team report"),
+    h("p", { class: "sub" }, `Normal runs only (${r.runs.total}); engines are compared in the eval table below.`),
+    section("Runs", kv({ by_status: r.runs.by_status, by_project: r.runs.by_project, human_corrected: r.runs.human_corrected,
+      failure_categories: r.runs.failure_categories })),
+    ...Object.entries(r.roles).map(([role, metrics]) => section(ROLE_LABEL[role] || METRIC_LABEL(role), kv(metrics))),
+    section("Engines (normal runs)", table(["Engine", "Calls", "Seconds", "Cost (USD, CLI-reported)"],
+      Object.entries(r.engines).map(([e, u]) => [e, u.calls, Math.round(u.seconds), u.cost_usd]))),
+    section("Evals", table(["Suite", "When", "Engines", "Planned", "Grounded v1", "Recall", "Blocking"],
+      r.evals.map((e) => [e.suite, when(e.created_at), otherEngines(e.engines), e.summary ? `${e.summary.planned}/${e.summary.cases}` : null,
+        pct(e.summary && e.summary.grounding_pass_v1), pct(e.summary && e.summary.file_recall), e.summary && e.summary.asked_blocking_questions]))),
+  );
+}
+
 function engineLabel(fingerprint) {
   const base = fingerprint.team_mode === "mock" ? "mock team (no model)" : `${fingerprint.team_mode} ${fingerprint.model}`;
   const other = Object.entries(fingerprint.engines || {}).filter(([, e]) => e !== "qwen3").map(([r, e]) => `${ROLE_LABEL[r] || r}: ${e}`);
@@ -601,6 +628,7 @@ async function route() {
     else if (page === "runs") await runsView();
     else if (page === "projects") await projectsView();
     else if (page === "evals") await evalsView(id);
+    else if (page === "reports") await reportsView();
     else if (page === "health") await healthView();
     else await inboxView();
   } catch (error) {

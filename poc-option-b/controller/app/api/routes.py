@@ -324,3 +324,11 @@ async def github_webhook(request: Request) -> dict:
         raise HTTPException(400, "missing X-GitHub-Delivery")
     with session_scope() as session:
         return {"status": services.github_event(session, delivery, request.headers.get("X-GitHub-Event", ""))}
+
+
+@router.get("/reports")
+def reports() -> dict:
+    """Team metrics per role and engine, from normal runs; engine comparisons come from evals."""
+    from controller.app import reports as team_reports
+    with session_scope() as session:
+        return team_reports.team_report(session)

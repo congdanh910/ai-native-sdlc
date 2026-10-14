@@ -189,3 +189,7 @@ Each thinking role can run on `qwen3` (Langflow and GX10), `claude-readonly` or 
 - **Evals:** the Evals page has an engine selector per role, so you can compare engines on the same suite. Each case shows calls, seconds and cost per engine.
 - **Normal runs:** `SDLC_ENGINES` in `.env` sets the default per role, for example `tech_lead=claude-readonly,qa_analyst=claude-readonly`. Roles you do not name use `qwen3`. The engines are pinned on each run when you create it; the header of the control room shows the current default.
 - Engines other than `qwen3` send repository content to Anthropic or OpenAI through your subscription.
+
+## Team report (B6)
+
+**Reports** shows, for normal runs, what each role produced and where humans stepped in: Business Analyst specs and blocking questions, Tech Lead plans grounded on the first attempt and approved without edits, QA Analyst criteria without a test, QA Engineer red-check failures and ruled disputes, Developer first-time passes and path violations, Validation Gate failures, Code Reviewer findings, and the Release Engineer's draft PRs. It also totals calls, seconds and CLI-reported cost per engine, and lists every completed eval with its engines. The same data is at `GET /api/reports`.

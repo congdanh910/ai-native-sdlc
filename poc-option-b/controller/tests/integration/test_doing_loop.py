@@ -288,3 +288,17 @@ def test_normal_runs_pin_the_default_engines_at_creation(db, sample_repo, monkey
     monkeypatch.setattr(get_settings(), "sdlc_engines", "")  # a later change does not touch the run
     with session_scope() as session:
         assert json.loads(coordinator.artifact(session, run_id, "engines"))["tech_lead"] == "claude-readonly"
+
+
+def test_team_report_counts_roles_and_engines(db, sample_repo, tmp_path):
+    from controller.app.reports import team_report
+    run_id = _to_coding(sample_repo)
+    drain(team(FakeCli(), FakeContainer(), tmp_path))
+    with session_scope() as session:
+        report = team_report(session)
+        tasks = session.scalars(select(Task).where(Task.run_id == run_id)).all()
+    assert report["runs"]["total"] == 1 and report["runs"]["by_status"] == {"WAITING_PR_APPROVAL": 1}
+    assert report["roles"]["developer"]["tasks_passing_validation_first_time"] == len(tasks)
+    assert report["roles"]["qa_engineer"]["test_sessions"] == len(tasks)
+    assert report["roles"]["tech_lead"]["first_plans_grounded"] == 1.0
+    assert report["engines"]["codex"]["calls"] == 2 * len(tasks)
