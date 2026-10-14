@@ -189,7 +189,7 @@ def build_context(session: Session, run: Run, *, kind: str = "", feedback: list[
                       intent_md=intent, files=bundle.files, spec_md=spec.content if spec else None, answers=answers,
                       repository=bundle.as_input(), feedback=feedback or [], session_id=f"{run.id}:{kind}",
                       run_id=str(run.id), worktree=run.worktree_path or "", base_commit=run.base_commit or "",
-                      engines=json.loads(artifact(session, run.id, "engines") or "{}") if run.experiment else {})
+                      engines=json.loads(artifact(session, run.id, "engines") or "{}"))
 
 
 def validation_summary(session: Session, run: Run) -> str:

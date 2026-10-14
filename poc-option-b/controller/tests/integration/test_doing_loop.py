@@ -276,3 +276,15 @@ def test_a_subscription_limit_postpones_the_task_and_keeps_its_tests(db, sample_
     drain(team(cli, FakeContainer(), tmp_path))
     assert status(run_id) == "WAITING_PR_APPROVAL"
     assert sum(s.startswith("test(T1)") for s in _subjects(run_id)) == 1
+
+
+def test_normal_runs_pin_the_default_engines_at_creation(db, sample_repo, monkeypatch):
+    import json
+    from controller.app import coordinator
+    from controller.app.config import get_settings
+    from controller.tests.integration.test_team_loop import add_project, new_run
+    monkeypatch.setattr(get_settings(), "sdlc_engines", "tech_lead=claude-readonly")
+    run_id = new_run(add_project(sample_repo))
+    monkeypatch.setattr(get_settings(), "sdlc_engines", "")  # a later change does not touch the run
+    with session_scope() as session:
+        assert json.loads(coordinator.artifact(session, run_id, "engines"))["tech_lead"] == "claude-readonly"

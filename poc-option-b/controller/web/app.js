@@ -612,7 +612,8 @@ async function route() {
 window.addEventListener("hashchange", () => { clearTimeout(timer); route(); });
 api("/api/meta").then((meta) => {
   META = meta;
-  document.getElementById("who").textContent = `${meta.operator} · thinking: ${meta.team_mode} · doing: ${meta.doing_mode}`;
+  const cli = Object.entries(meta.engines || {}).filter(([, e]) => e !== "qwen3").map(([r, e]) => `${ROLE_LABEL[r] || r} on ${e}`);
+  document.getElementById("who").textContent = `${meta.operator} · thinking: ${meta.team_mode}${cli.length ? ` (${cli.join(", ")})` : ""} · doing: ${meta.doing_mode}`;
 }).catch(() => {});
 setInterval(refreshInboxCount, 5000);
 refreshInboxCount();

@@ -181,3 +181,11 @@ Either way the task continues from its committed tests; nothing is written twice
 ### Readiness
 
 With `SDLC_DOING_MODE=cli`, **Projects → Check** runs every validation command on the default branch in the container and checks that your `gh` login can push to the repository. Only a `ready` project can reach coding. `./sdlc doctor` also checks the Codex, Claude Code and `gh` logins.
+
+## Reasoning engines per role (B6)
+
+Each thinking role can run on `qwen3` (Langflow and GX10), `claude-readonly` or `codex-readonly` (your subscription CLI, reading the run's worktree and writing nothing). The CLI gets the same prompt and input as Qwen3, and its answer passes the same contract and grounding checks.
+
+- **Evals:** the Evals page has an engine selector per role, so you can compare engines on the same suite. Each case shows calls, seconds and cost per engine.
+- **Normal runs:** `SDLC_ENGINES` in `.env` sets the default per role, for example `tech_lead=claude-readonly,qa_analyst=claude-readonly`. Roles you do not name use `qwen3`. The engines are pinned on each run when you create it; the header of the control room shows the current default.
+- Engines other than `qwen3` send repository content to Anthropic or OpenAI through your subscription.

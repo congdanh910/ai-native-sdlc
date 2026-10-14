@@ -71,6 +71,9 @@ def create_run(session: Session, project: Project, intent: Intent, *, actor: str
               stage_overrides=stage_overrides or {}, eval_run_id=eval_run_id, eval_case=eval_case)
     session.add(run)
     session.flush()
+    if not experiment:  # pinned at creation, so a later .env change never alters a run in flight
+        engines = json.dumps(get_settings().default_engines)
+        coordinator.store_artifact(session, run, "engines", TeamRole.COORDINATOR, engines)
     add_document(session, run.id, "intent", render_intent(intent), author_kind="human", author=actor,
                  data=intent.model_dump())
     record_event(session, "intent.accepted", actor=actor, acting_role=PO, run_id=run.id, project_id=project.id)

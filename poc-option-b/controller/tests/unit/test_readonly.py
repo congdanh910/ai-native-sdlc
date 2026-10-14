@@ -66,3 +66,12 @@ def test_engine_choices_are_validated():
         validate_engines({"tech_lead": "gpt"})
     with pytest.raises(ValueError, match="unknown thinking role"):
         validate_engines({"developer": "qwen3"})
+
+
+def test_default_engines_come_from_settings(settings):
+    assert settings.default_engines == {r: "qwen3" for r in ("business_analyst", "tech_lead", "qa_analyst",
+                                                              "code_reviewer")}
+    custom = settings.model_copy(update={"sdlc_engines": "tech_lead=claude-readonly, qa_analyst=claude-readonly"})
+    assert custom.default_engines["tech_lead"] == "claude-readonly" and custom.default_engines["code_reviewer"] == "qwen3"
+    with pytest.raises(ValueError):
+        _ = settings.model_copy(update={"sdlc_engines": "tech_lead"}).default_engines

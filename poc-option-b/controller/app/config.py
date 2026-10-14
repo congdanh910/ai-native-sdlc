@@ -31,6 +31,17 @@ class Settings(BaseSettings):
     sdlc_team_mode: str = "mock"  # thinking roles: mock or qwen3
     sdlc_doing_mode: str = "mock"  # QA Engineer, Developer, Validation Gate: mock or cli (B4)
     github_webhook_secret: str = ""  # empty: no webhook; the worker polls GitHub every minute
+    # Engines of normal runs per thinking role, e.g. "tech_lead=claude-readonly,qa_analyst=claude-readonly".
+    # Roles not named use qwen3. Operator approval of 2026-10-14 covers Tech Lead and QA Analyst on claude-readonly.
+    sdlc_engines: str = ""
+
+    @property
+    def default_engines(self) -> dict:
+        from controller.app.team.readonly import validate_engines
+        pairs = [item.split("=", 1) for item in self.sdlc_engines.replace(" ", "").split(",") if item]
+        if any(len(pair) != 2 for pair in pairs):
+            raise ValueError("SDLC_ENGINES must look like tech_lead=claude-readonly,qa_analyst=claude-readonly")
+        return validate_engines(dict(pairs))
 
     ollama_tunnel_port: int = 11435
     ollama_remote_port: int = 11437

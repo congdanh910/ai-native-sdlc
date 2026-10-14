@@ -4,7 +4,8 @@ The CLI gets the same role prompt and the same JSON input as Qwen3, may read the
 run's worktree to check names, and writes nothing. Its answer goes through the
 same normalisation, contract validation, retries and grounding check, so engines
 can be compared on the same eval suite. Approved by the operator on 2026-10-13
-for eval runs and experiment runs only; normal runs always use qwen3.
+for eval runs and experiment runs; on 2026-10-14, after the engine comparison,
+also for the Tech Lead and QA Analyst of normal runs (SDLC_ENGINES).
 """
 
 import json
@@ -117,7 +118,7 @@ class ReadonlyTeam(LangflowTeam):
 
 
 class RoutingTeam:
-    """Picks the engine of each thinking role from the run (experiments only); everything else goes to the base."""
+    """Picks the engine of each thinking role from the run (pinned at creation); everything else goes to the base."""
 
     def __init__(self, base, settings: Settings, factory=None):
         self.base, self.settings = base, settings
