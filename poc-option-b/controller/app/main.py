@@ -12,6 +12,7 @@ from controller.app.config import get_settings
 from controller.app.db import get_engine
 
 WEB_DIR = Path(__file__).resolve().parents[1] / "web"
+DIST = WEB_DIR / "dist"  # built from frontend/ with `npm run build`; committed so `sdlc up` needs no Node
 CLIENT_HEADER = "X-SDLC-Client"
 WEBHOOK_PATH = "/api/webhooks/github"
 
@@ -38,7 +39,7 @@ async def local_only(request: Request, call_next):
 
 
 app.include_router(router)
-app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
+app.mount("/assets", StaticFiles(directory=DIST / "assets", check_dir=False), name="assets")
 
 
 @app.get("/health/live")
@@ -58,4 +59,4 @@ def ready() -> JSONResponse:
 
 @app.get("/", include_in_schema=False)
 def index() -> FileResponse:
-    return FileResponse(WEB_DIR / "index.html")
+    return FileResponse(DIST / "index.html")

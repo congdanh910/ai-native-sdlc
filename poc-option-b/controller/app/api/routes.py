@@ -332,3 +332,23 @@ def reports() -> dict:
     from controller.app import reports as team_reports
     with session_scope() as session:
         return team_reports.team_report(session)
+
+
+@router.get("/runs/{run_id}/diff")
+def run_diff(run_id: uuid.UUID) -> dict:
+    """The run's code change from its base commit (sources first, then tests, without the .sdlc thread)."""
+    from pathlib import Path
+    from controller.app.coordinator import artifact
+    from controller.app.doing import changes
+    from controller.app.projects.config import EffectivePolicy
+    with session_scope() as session:
+        run = session.get(Run, run_id)
+        if run is None:
+            raise HTTPException(404, "run not found")
+        if not run.worktree_path or not run.base_commit or not Path(run.worktree_path).exists():
+            return {"diff": "", "files": []}
+        policy = artifact(session, run.id, "effective_policy")
+        test_paths = EffectivePolicy.model_validate_json(policy).test_paths if policy else []
+        diff = changes.run_diff(Path(run.worktree_path), run.base_commit, test_paths, 400_000)
+    files = [line.split(" b/", 1)[1] for line in diff.splitlines() if line.startswith("diff --git ") and " b/" in line]
+    return {"diff": diff, "files": files}

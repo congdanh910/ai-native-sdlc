@@ -92,7 +92,8 @@ def _steps(result: dict) -> list[dict]:
     out = []
     for step in result.get("steps", []):
         evidence = step.get("evidence") or {}
-        out.append({"state": step["state"], "role": step["role"], "ok": step["ok"], "detail": step["detail"][:500],
+        out.append({"state": step["state"], "role": step["role"], "ok": step["ok"], "detail": step["detail"][:2000],
+                    "dispute": bool(step.get("dispute")),
                     "executor": evidence.get("executor"), "commit": evidence.get("commit"),
                     "seconds": evidence.get("seconds") or sum(r.get("seconds") or 0 for r in evidence.get("reports", [])),
                     "files": step.get("changed_files", [])})

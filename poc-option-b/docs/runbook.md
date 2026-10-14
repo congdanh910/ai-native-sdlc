@@ -60,6 +60,17 @@ A job that finds its run in another state (for example cancelled) is recorded as
 
 Without it the worker polls open draft PRs every minute. To get events sooner, set `GITHUB_WEBHOOK_SECRET` in `.env`, run `./sdlc up`, and forward GitHub's webhook (events: pull requests, pull request reviews, check suites, statuses) to `http://127.0.0.1:8770/api/webhooks/github` with a forwarder such as smee.io. The API stays on loopback; requests without a valid `X-Hub-Signature-256` are refused.
 
+## Web control room (frontend)
+
+The control room is a React + TypeScript app in `frontend/` (Vite, Tailwind, TanStack Query). Its build is committed in `controller/web/dist/` and served by the API, so `./sdlc up` needs no Node. After changing `frontend/src/`:
+
+```bash
+cd frontend
+npm ci            # once
+npm run dev       # http://127.0.0.1:5173 with hot reload; proxies /api to the running controller
+npm run build     # type-check, then write controller/web/dist (commit it)
+```
+
 ## Security of the control room
 
 The API listens on loopback only and has no login, because the POC has one operator. Requests with a Host header other than `127.0.0.1:PORT` or `localhost:PORT` are refused (DNS rebinding), and every write must carry the header `X-SDLC-Client: web`, which other web pages cannot add without a CORS preflight that the API never grants.

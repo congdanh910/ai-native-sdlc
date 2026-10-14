@@ -1,3 +1,4 @@
+import re
 from fastapi.testclient import TestClient
 
 from controller.app import health, main
@@ -39,7 +40,10 @@ def test_foreign_host_is_refused():
 
 
 def test_static_assets_are_served():
-    assert client.get("/static/app.js").status_code == 200
+    page = client.get("/")
+    assert page.status_code == 200 and '<div id="root">' in page.text
+    asset = re.search(r'src="(/assets/[^"]+\.js)"', page.text)[1]
+    assert client.get(asset).status_code == 200
 
 
 def test_tests_run_with_the_mock_team():
