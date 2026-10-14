@@ -19,13 +19,14 @@ import yaml
 
 from controller.app import services
 from controller.app.config import PROJECT_ROOT, get_settings
-from controller.app.documents import latest_document
+from controller.app.documents import latest_document, sha256_text
 from controller.app.events import record_event
 from controller.app.integrations.langflow import ROLES, role_prompt
-from controller.app.models import Clarification, EvalRun, Plan, Project, Run
+from controller.app.models import Artifact, Clarification, EvalRun, Execution, Plan, Project, Run
 from controller.app.projects.config import EffectivePolicy, matches_any
 from controller.app.schemas import Intent
 from controller.app.states import RunStatus
+from controller.app.team.readonly import validate_engines
 
 EVALS_DIR = PROJECT_ROOT / "evals"
 CASE_DONE = {RunStatus.WAITING_PLAN_APPROVAL, RunStatus.NEEDS_CLARIFICATION, RunStatus.NEEDS_HUMAN,
@@ -73,15 +74,21 @@ def load_suite(name: str, root: Path | None = None) -> Suite:
     return Suite(name=data["name"], project=data["project"], base_commit=data["base_commit"], cases=cases)
 
 
-def fingerprint() -> dict:
+def fingerprint(engines: dict | None = None) -> dict:
     """Everything platform-side that can change what the thinking roles produce."""
     settings = get_settings()
     return {"team_mode": settings.sdlc_team_mode, "model": settings.ollama_model,
             "num_ctx": settings.ollama_num_ctx, "context_char_budget": settings.context_char_budget,
-            "prompts": {role: role_prompt(role).version for role in ROLES}}
+            "prompts": {role: role_prompt(role).version for role in ROLES},
+            "engines": validate_engines(engines)}
 
 
-def start_eval(session: Session, suite_name: str, *, actor: str, trigger: str = "manual") -> EvalRun:
+def start_eval(session: Session, suite_name: str, *, actor: str, trigger: str = "manual",
+               engines: dict | None = None) -> EvalRun:
+    try:
+        engines = validate_engines(engines)
+    except ValueError as exc:
+        raise services.DecisionError(str(exc)) from exc
     suite = load_suite(suite_name)
     project = session.scalar(select(Project).where(Project.key == suite.project))
     if project is None:
@@ -90,21 +97,37 @@ def start_eval(session: Session, suite_name: str, *, actor: str, trigger: str = 
         raise services.DecisionError(f"an eval of {suite.name} is already running")
     baseline = session.scalar(select(EvalRun).where(EvalRun.suite == suite.name, EvalRun.status == "completed")
                               .order_by(EvalRun.created_at.desc()).limit(1))
-    evaluation = EvalRun(suite=suite.name, scope="plan", trigger=trigger, fingerprint=fingerprint(),
+    evaluation = EvalRun(suite=suite.name, scope="plan", trigger=trigger, fingerprint=fingerprint(engines),
                          status="running", actor=actor, baseline_id=baseline.id if baseline else None)
     session.add(evaluation)
     session.flush()
     for case in suite.cases:
-        services.create_run(session, project, case.intent, actor=ACTOR,
-                            idempotency_key=f"eval:{evaluation.id}:{case.id}", experiment=True,
-                            base_commit=suite.base_commit, stage_overrides={"spec": "auto"},
-                            eval_run_id=evaluation.id, eval_case=case.id)
+        run = services.create_run(session, project, case.intent, actor=ACTOR,
+                                  idempotency_key=f"eval:{evaluation.id}:{case.id}", experiment=True,
+                                  base_commit=suite.base_commit, stage_overrides={"spec": "auto"},
+                                  eval_run_id=evaluation.id, eval_case=case.id)
+        session.add(Artifact(run_id=run.id, kind="engines", role="coordinator", content=json.dumps(engines),
+                             checksum=sha256_text(json.dumps(engines))))
     record_event(session, "eval.started", actor=actor, payload={"eval": str(evaluation.id), "suite": suite.name})
     return evaluation
 
 
 def _source_files(paths, policy: EffectivePolicy) -> set[str]:
     return {p for p in paths if not matches_any(p, policy.test_paths)}
+
+
+def _usage(session: Session, run: Run) -> dict:
+    """Model calls and subscription usage of the thinking roles, per engine, for comparing engines on cost."""
+    out: dict[str, dict] = {}
+    for result in session.scalars(select(Execution.result).where(Execution.run_id == run.id)):
+        for call in (result or {}).get("_calls", []):
+            total = out.setdefault(call["engine"], {"calls": 0, "attempts": 0, "seconds": 0.0, "cost_usd": 0.0})
+            usage = call.get("usage") or {}
+            total["calls"] += 1
+            total["attempts"] += call.get("attempts") or 1
+            total["seconds"] = round(total["seconds"] + (usage.get("seconds") or 0), 1)
+            total["cost_usd"] = round(total["cost_usd"] + (usage.get("cost_usd") or 0), 4)
+    return out
 
 
 def score_case(session: Session, run: Run, golden: dict) -> dict:
@@ -115,7 +138,7 @@ def score_case(session: Session, run: Run, golden: dict) -> dict:
     result = {"case": run.eval_case, "run_id": str(run.id), "status": run.status, "reason": run.status_reason,
               "blocking_questions": [q.question for q in questions if q.blocking],
               "criteria": len(re.findall(r"^- AC-\d+:", spec.content, re.M)) if spec else 0,
-              "plans": len(plans)}
+              "plans": len(plans), "usage": _usage(session, run)}
     if not plans:
         return result
     policy = EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy"))

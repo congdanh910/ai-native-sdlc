@@ -13,6 +13,8 @@ def get_team() -> Team:
         thinking = LangflowTeam(settings)
     else:
         raise ValueError(f"unknown SDLC_TEAM_MODE {settings.sdlc_team_mode!r}; use mock or qwen3")
+    from controller.app.team.readonly import RoutingTeam
+    thinking = RoutingTeam(thinking, settings)  # experiments may put a thinking role on a read-only CLI
     if settings.sdlc_doing_mode == "mock":
         return thinking
     if settings.sdlc_doing_mode == "cli":

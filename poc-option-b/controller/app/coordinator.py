@@ -188,7 +188,8 @@ def build_context(session: Session, run: Run, *, kind: str = "", feedback: list[
     return RunContext(title=run.title, policy=policy, agents_md=agents, review_md=artifact(session, run.id, "review_md"),
                       intent_md=intent, files=bundle.files, spec_md=spec.content if spec else None, answers=answers,
                       repository=bundle.as_input(), feedback=feedback or [], session_id=f"{run.id}:{kind}",
-                      run_id=str(run.id), worktree=run.worktree_path or "", base_commit=run.base_commit or "")
+                      run_id=str(run.id), worktree=run.worktree_path or "", base_commit=run.base_commit or "",
+                      engines=json.loads(artifact(session, run.id, "engines") or "{}") if run.experiment else {})
 
 
 def validation_summary(session: Session, run: Run) -> str:
@@ -240,7 +241,8 @@ def compute(team: Team, loaded: Loaded) -> dict:
     def record() -> None:
         call = getattr(team, "last_call", None)
         if call:
-            calls.append({"engine": call.engine, "prompt_version": call.prompt_version, "attempts": call.attempts})
+            calls.append({"engine": call.engine, "prompt_version": call.prompt_version, "attempts": call.attempts,
+                          "usage": call.usage})
 
     result: dict = {}
     if loaded.kind == "specify":
@@ -266,6 +268,8 @@ def compute(team: Team, loaded: Loaded) -> dict:
         result["_context"] = {"selected": [f["path"] for f in context.repository.get("selected_files", [])],
                               "files": len(context.files)}
     result["_calls"] = calls
+    if calls and not result.get("_engine"):
+        result["_engine"] = ",".join(sorted({c["engine"] for c in calls}))
     return result
 
 

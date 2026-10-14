@@ -483,8 +483,14 @@ const METRICS = [
 ];
 
 function engineLabel(fingerprint) {
-  return fingerprint.team_mode === "mock" ? "mock team (no model)" : `${fingerprint.team_mode} ${fingerprint.model}`;
+  const base = fingerprint.team_mode === "mock" ? "mock team (no model)" : `${fingerprint.team_mode} ${fingerprint.model}`;
+  const other = Object.entries(fingerprint.engines || {}).filter(([, e]) => e !== "qwen3").map(([r, e]) => `${ROLE_LABEL[r] || r}: ${e}`);
+  return other.length ? `${base} · ${other.join(", ")}` : base;
 }
+
+// Experiments only: each thinking role can run on Qwen3 or a subscription CLI in read-only mode.
+const engineSelects = Object.fromEntries(["business_analyst", "tech_lead", "qa_analyst", "code_reviewer"].map((role) =>
+  [role, h("select", {}, ...["qwen3", "claude-readonly", "codex-readonly"].map((e) => h("option", { value: e }, e)))]));
 
 function metric(value, unit) {
   if (value === null || value === undefined) return "–";
@@ -500,11 +506,15 @@ async function evalsView(id) {
     ...suites.map((suite) => {
       const start = h("button", { class: "primary" }, `Run ${suite.name}`);
       start.addEventListener("click", () => act(start, async () => {
-        const evaluation = await api("/api/evals", { method: "POST", body: { suite: suite.name } });
+        const engines = {};
+        for (const [role, select] of Object.entries(engineSelects)) engines[role] = select.value;
+        const evaluation = await api("/api/evals", { method: "POST", body: { suite: suite.name, engines } });
         location.hash = `#/evals/${evaluation.id}`;
       }));
       return h("div", { class: "card" }, h("div", { class: "row" }, h("strong", { class: "grow" }, suite.name), start),
-        h("div", { class: "muted small" }, `project ${suite.project} · base ${suite.base_commit.slice(0, 10)} · ${suite.cases.join(", ")}`));
+        h("div", { class: "muted small" }, `project ${suite.project} · base ${suite.base_commit.slice(0, 10)} · ${suite.cases.join(", ")}`),
+        h("div", { class: "row small" }, ...Object.entries(engineSelects).map(([role, select]) => h("label", {}, `${ROLE_LABEL[role] || role} `, select))),
+        h("p", { class: "small muted" }, "claude-readonly and codex-readonly use your subscriptions and send repository content to Anthropic or OpenAI; approved for experiments only."));
     }),
     h("h2", {}, "History"),
     runs.length ? h("div", { class: "table-wrap" }, h("table", {},

@@ -268,6 +268,7 @@ def classify(run_id: uuid.UUID, body: Classification) -> dict:
 
 class NewEval(Body):
     suite: str
+    engines: dict[str, str] | None = None  # thinking role -> qwen3, claude-readonly or codex-readonly
 
 
 @router.get("/eval-suites")
@@ -291,7 +292,7 @@ def list_evals() -> list[dict]:
 def start_eval(body: NewEval) -> dict:
     try:
         with session_scope() as session:
-            evaluation = evals.start_eval(session, body.suite, actor=operator())
+            evaluation = evals.start_eval(session, body.suite, actor=operator(), engines=body.engines)
             return evals.eval_view(session, evaluation)
     except LookupError as exc:
         raise HTTPException(404, str(exc)) from exc

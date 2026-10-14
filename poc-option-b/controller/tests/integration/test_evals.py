@@ -5,7 +5,7 @@ from sqlalchemy import select
 
 from controller.app import evals
 from controller.app.db import session_scope
-from controller.app.models import EvalRun, Run
+from controller.app.models import EvalRun, Execution, Run
 from controller.app.projects import registry
 from controller.app.config import PROJECT_ROOT
 from controller.tests.conftest import git
@@ -60,3 +60,38 @@ def test_eval_needs_its_project(db, suite_dir):
     with session_scope() as session:
         with pytest.raises(evals.services.DecisionError, match="register project"):
             evals.start_eval(session, "task-board", actor=OPERATOR)
+
+
+def test_an_eval_can_put_a_thinking_role_on_a_readonly_cli(db, sample_repo, suite_dir):
+    import json
+    from controller.app import coordinator
+    from controller.app.models import Run
+    from controller.app.services import DecisionError
+    from sqlalchemy import select
+    with session_scope() as session:
+        registry.add_project(session, "task-board", str(sample_repo), actor=OPERATOR)
+    with session_scope() as session:
+        evaluation = evals.start_eval(session, "task-board", actor=OPERATOR, engines={"tech_lead": "claude-readonly"})
+        assert evaluation.fingerprint["engines"]["tech_lead"] == "claude-readonly"
+        run_id = session.scalars(select(Run.id).where(Run.eval_run_id == evaluation.id)).first()
+    from controller.app.config import get_settings
+    from controller.app.team.mock import MockTeam
+    from controller.app.team.readonly import RoutingTeam
+
+    from controller.app.team.base import CallRecord
+
+    class FakeReadonly(MockTeam):
+        engine = "claude-readonly"
+
+        def plan(self, context):
+            self.last_call = CallRecord("claude-readonly", "p", 1, usage={"seconds": 3.0, "cost_usd": 0.02})
+            return super().plan(context)
+    drain(RoutingTeam(MockTeam(), get_settings(), factory=lambda cli: FakeReadonly()))  # never calls a real CLI
+    with session_scope() as session:
+        run = session.get(Run, run_id)
+        assert json.loads(coordinator.artifact(session, run_id, "engines"))["tech_lead"] == "claude-readonly"
+        assert coordinator.build_context(session, run).engines["tech_lead"] == "claude-readonly"
+    with session_scope() as session:
+        engines = {e for e in session.scalars(select(Execution.engine).where(Execution.run_id == run_id,
+                                                                            Execution.kind == "plan"))}
+    assert engines == {"claude-readonly"}

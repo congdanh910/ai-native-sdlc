@@ -24,6 +24,7 @@ class RunContext:
     run_id: str = ""
     worktree: str = ""  # the run's git worktree, where the doing roles work
     base_commit: str = ""
+    engines: dict = field(default_factory=dict)  # thinking role -> engine, experiments only
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,7 @@ class CallRecord:
     engine: str
     prompt_version: str | None = None
     attempts: int = 1
+    usage: dict = field(default_factory=dict)  # subscription CLIs: seconds, tokens, cost
 
 
 class Team(Protocol):
