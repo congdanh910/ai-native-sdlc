@@ -4,6 +4,7 @@ import { ExternalLink, GitPullRequest } from "lucide-react";
 import { api, type Meta, type RunDetail } from "../lib/api";
 import { ACTION_LABEL, role, short } from "../lib/utils";
 import { CoverageMatrix, GroundingSummary } from "./Coverage";
+import { PlanSummary } from "./PlanSummary";
 import { ActionButton, Badge, Button, Card, Field, Markdown, Mono, Select, StatusBadge, Textarea } from "./ui";
 
 function Panel({ run, title, children }: { run: RunDetail; title: string; children: ReactNode }) {
@@ -95,7 +96,7 @@ export function DecisionPanel({ run, onDone }: { run: RunDetail; onDone: () => v
     return (
       <Panel run={run} title={`Plan v${plan.version}`}>
         <GroundingSummary plan={plan} />
-        {plan.plan.summary ? <p className="m-0 text-ink-2">{plan.plan.summary}</p> : null}
+        <PlanSummary summary={plan.plan.summary} titles={Object.fromEntries(plan.plan.tasks.map((t) => [t.id, t.title]))} />
         <div className="overflow-hidden rounded-lg border border-line"><CoverageMatrix plan={plan} specMarkdown={spec?.content} /></div>
         {editing ? (
           <Field label="Edit plan and test plan (JSON)" htmlFor="plan-edit">

@@ -7,6 +7,7 @@ import { ACTIVE_WORK, TERMINAL, ago, cn, duration, role, short, when } from "../
 import { Pipeline } from "../components/Pipeline";
 import { DecisionPanel } from "../components/Decision";
 import { CoverageMatrix, GroundingSummary } from "../components/Coverage";
+import { PlanSummary } from "../components/PlanSummary";
 import { ActionButton, Badge, Card, Empty, ErrorBox, Loading, Markdown, Mono, PageHeader, Select, StatusBadge, Tabs } from "../components/ui";
 
 type Tab = "tasks" | "plan" | "thread" | "diff" | "events" | "work";
@@ -102,7 +103,7 @@ function PlanBody({ plan, spec }: { plan: PlanVersion; spec?: Doc }) {
         {plan.commit_sha ? <span>committed <Mono>{short(plan.commit_sha)}</Mono></span> : null}
       </div>
       <GroundingSummary plan={plan} />
-      {plan.plan.summary ? <p className="m-0 text-ink-2">{plan.plan.summary}</p> : null}
+      <PlanSummary summary={plan.plan.summary} titles={Object.fromEntries(plan.plan.tasks.map((t) => [t.id, t.title]))} />
       <div className="overflow-hidden rounded-lg border border-line"><CoverageMatrix plan={plan} specMarkdown={spec?.content} /></div>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
         {plan.plan.tasks.map((t) => (
