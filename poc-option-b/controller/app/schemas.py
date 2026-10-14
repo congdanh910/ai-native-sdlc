@@ -176,6 +176,8 @@ def render_plan(title: str, version: int, plan: PlanPayload, tests: TestPlan, gr
     lines += ["", f"## Grounding check: {status}", ""]
     for finding in (grounding or {}).get("findings", []):
         lines.append(f"- {finding}")
+    for warning in (grounding or {}).get("warnings", []):
+        lines.append(f"- Warning: {warning}")
     return "\n".join(lines).rstrip() + "\n"
 
 

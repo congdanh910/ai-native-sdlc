@@ -16,7 +16,7 @@ Output keys:
   - validation: names from policy.validation that prove the task.
 
 Rules:
-- Follow agents_md: put rules where its architecture says they belong.
+- Follow agents_md: put rules where its architecture says they belong. Sorting, filtering, ordering, validation, defaults and migration of stored data are rules, not interface code: plan them as functions in the module agents_md names for rules, and let the interface script only call them. This keeps them testable without a browser.
 - Every acceptance criterion must be delivered by at least one task.
 - Never reference a file, function or storage key that is not in the input. If something you need is missing, say so in the summary.
 - Every task changes at least one source file. Never include protected paths, test files, CI configuration, or tasks that only run checks, tests or reviews.

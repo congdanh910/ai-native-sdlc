@@ -66,7 +66,16 @@ def tests(*cases):
 
 
 def test_grounded_plan_passes():
-    assert check_plan(plan(), tests(), CRITERIA, policy(), FILES, SYMBOLS) == {"status": "pass", "findings": []}
+    assert check_plan(plan(), tests(), CRITERIA, policy(), FILES, SYMBOLS) == {"status": "pass", "findings": [],
+                                                                              "warnings": []}
+
+
+def test_markup_without_stylesheet_is_a_warning_not_a_failure():
+    files = FILES | {"src/index.html", "src/styles.css"}
+    report = check_plan(plan(modify=["src/tasks.js", "src/index.html"]), tests(), CRITERIA, policy(), files, SYMBOLS)
+    assert report["status"] == "pass" and "no stylesheet (src/styles.css)" in report["warnings"][0]
+    styled = check_plan(plan(modify=["src/index.html", "src/styles.css"]), tests(), CRITERIA, policy(), files, SYMBOLS)
+    assert styled["warnings"] == []
 
 
 def test_grounding_catches_the_pilot_mistakes():

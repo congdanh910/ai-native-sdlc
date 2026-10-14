@@ -74,7 +74,23 @@ def check_plan(plan: PlanPayload, tests: TestPlan, criteria: list[Criterion], po
             findings.append(f"{case.id} targets {case.target_file}, outside the test paths {policy.test_paths}")
     for criterion in sorted(criterion_ids - tested):
         findings.append(f"no test case proves {criterion}")
-    return {"status": "fail" if findings else "pass", "findings": findings}
+    return {"status": "fail" if findings else "pass", "findings": findings,
+            "warnings": _warnings(changed, files, policy)}
+
+
+MARKUP = (".html", ".htm", ".vue", ".svelte", ".jsx", ".tsx")
+STYLES = (".css", ".scss", ".sass", ".less")
+
+
+def _warnings(changed: set[str], files: set[str], policy: EffectivePolicy) -> list[str]:
+    """Advice for the human approver; never fails the plan."""
+    warnings = []
+    stylesheets = sorted(f for f in files if f.endswith(STYLES) and matches_any(f, policy.allowed_paths))
+    markup = sorted(f for f in changed if f.endswith(MARKUP))
+    if markup and stylesheets and not any(f.endswith(STYLES) for f in changed):
+        warnings.append(f"the plan changes markup ({', '.join(markup)}) but no stylesheet "
+                        f"({', '.join(stylesheets)}); the Developer may only style new elements inline")
+    return warnings
 
 
 def check_with_bundle(plan: PlanPayload, tests: TestPlan, criteria: list[Criterion], policy: EffectivePolicy,

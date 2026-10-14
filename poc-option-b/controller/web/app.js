@@ -270,6 +270,7 @@ function planPanel(plan) {
         h("td", {}, h("code", {}, c.target_file))))))),
     h("h3", {}, "Grounding check: ", pill(plan.grounding ? plan.grounding.status : "not run")),
     ...(plan.grounding ? plan.grounding.findings : []).map((f) => h("div", { class: "small muted" }, f)),
+    ...((plan.grounding && plan.grounding.warnings) || []).map((w) => h("div", { class: "small" }, pill("warn"), " ", w)),
   );
 }
 

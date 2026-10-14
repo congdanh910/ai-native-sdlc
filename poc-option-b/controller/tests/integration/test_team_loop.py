@@ -106,7 +106,7 @@ def test_full_loop_commits_the_artifact_thread(db, sample_repo):
         plan = latest_plan(session, run_id)
         assert [t["modify"] for t in plan.payload["tasks"]][0][0].startswith("src/")
         assert len(plan.test_plan["cases"]) == 2
-        assert plan.grounding_report == {"status": "pass", "findings": []}
+        assert plan.grounding_report == {"status": "pass", "findings": [], "warnings": []}
     approve_plan(run_id)
     drain()
     assert status(run_id) == RunStatus.WAITING_PR_APPROVAL
