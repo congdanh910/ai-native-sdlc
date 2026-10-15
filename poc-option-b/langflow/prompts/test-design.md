@@ -28,3 +28,8 @@ Rules:
 - Test behaviour through the functions the plan builds, as agents_md describes the test style.
 - Use fixed values for ids, timestamps and dates.
 - If feedback is present, change the test cases as it asks and keep the cases it does not mention.
+
+Lessons from earlier reviews (check each before you answer):
+- Expected results name the exact status codes and error codes the plan and constitution use, so tests and code agree.
+- Remove redundant or out-of-scope cases; each case proves something no other case proves.
+- Every edge case in the spec has its own case; do not fold unhappy paths into a happy-path case.

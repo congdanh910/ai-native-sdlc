@@ -49,7 +49,7 @@ class CliDoing:
 
     @staticmethod
     def _criteria(context: RunContext, task: PlanTask) -> str:
-        texts = {c.id: c.text for c in parse_criteria(context.spec_md or "")}
+        texts = {c.id: c.full for c in parse_criteria(context.spec_md or "")}
         return "\n".join(f"- {cid}: {texts.get(cid, '(not in the spec)')}" for cid in task.acceptance_criteria)
 
     @staticmethod

@@ -44,3 +44,11 @@ Rules:
 - Use as few tasks as the change needs, usually one per layer: the rules and data, the interface script, the markup and styles. policy.max_tasks is a limit, not a target; never split a layer to fill it.
 - Before you answer, check: every AC id appears in some task, no task lists a test file, and every file in repository.ui_files that the change affects is in modify.
 - If feedback is present, fix every problem it lists.
+
+Lessons from earlier reviews (check each before you answer):
+- List endpoints are paginated, with a page size limit, whenever the constitution or agents_md has a pagination rule.
+- Audit and log records include the actor and the actor's role, and are stored permanently when the rules say so.
+- Responses use the response envelope and the status codes the constitution maps: validation 422, unauthenticated 401, forbidden 403, conflict 409, unless the project's rules say otherwise.
+- Every gap or open question references the AC or EC it is about.
+- Never change an existing database migration; plan a new numbered migration instead.
+- Interactive UI elements get stable ids in design.element_ids, so tests can find them.

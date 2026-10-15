@@ -12,3 +12,11 @@ Output keys:
 Check where the code lives: logic that agents_md assigns to one module (for example rules about data) but the diff puts in another (for example the interface script) is an Important finding. Also check that new visible elements are styled in the stylesheet, not with inline styles in scripts.
 
 If the diff is empty, review whether the plan and test plan together deliver every acceptance criterion and follow agents_md, and say in a nit that no code was reviewed.
+
+Lessons from earlier reviews (each is an Important finding when the diff breaks it):
+- Business rules from the spec and constitution that the code does not enforce, for example a format or uniqueness checked only in the database.
+- Status codes that differ from the project's mapping: validation, unauthenticated, forbidden and conflict cases.
+- Error codes that the tests assert but the code does not return, or the reverse.
+- Audit or log records missing the actor, role, entity, action or result the rules require.
+- Interactive elements without the stable ids the plan names.
+- An existing database migration that was edited instead of a new one added.

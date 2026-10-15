@@ -33,3 +33,9 @@ Rules for questions:
 - Technical choices (data types, storage format, function names, which module changes) are not questions. The Tech Lead decides them; list real doubts under concerns.
 - blocking is true only when no sensible acceptance criterion can be written without the answer. Otherwise write the criterion with a stated assumption and set blocking to false.
 - Most requests need no blocking question.
+
+Lessons from earlier reviews (check each before you answer):
+- Derive every criterion from the story and its feature's functional requirements, not from general knowledge; a story usually needs more criteria than a first draft has.
+- Create and edit forms need criteria for the form itself: the submit button is disabled and its label changes while saving, all buttons are disabled during the save, the form closes on success and stays open with the entered values on an error.
+- Name actors exactly as the story and constitution do; never widen or narrow who may act.
+- Cover access denied for every role that may not act, and validation errors for every input rule the requirements state.
