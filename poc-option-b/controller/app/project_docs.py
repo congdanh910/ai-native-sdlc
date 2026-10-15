@@ -393,7 +393,7 @@ def srs_stories(content: str) -> list[str]:
 FEATURE_LINE = re.compile(r"^###\s+7\.(\d+)\s+(.+?)\s+\(([A-Z]{2,4})\)", re.MULTILINE)
 STORY_HEADING = re.compile(r"^####\s+7\.(\d+)\.(\d+)\s+(?:\[[^\]]+\]\([^)]*\):\s+)?([A-Z]{2,4}-US-\d{2}(?:\.\d+)?):\s+"
                            r"(.+?)\s+\(([^)]*)\)", re.MULTILINE)
-TAGS = re.compile(r"<[^>]+>")
+TAGS = re.compile(r"</?[A-Za-z][^<>\n]*>")  # HTML tags only; text such as "< 300 ms" or "->" stays
 
 
 class SrsStory(Contract):
@@ -764,8 +764,7 @@ def sds_sync_findings(sds: Sds, srs: str) -> list[str]:
     """Where the design does not cover the requirements: SRS entities without a traced object, stories without
     a purpose. Shown at the SDS gate; they do not block it."""
     findings = []
-    entities = re.findall(r"^\|\s*`?([A-Z][A-Za-z0-9]+)`?\s*\|", _section_text(srs, "2."), re.MULTILINE)
-    entities = [e for e in entities if e not in ("Entity", "Subject", "Rule", "State")]
+    entities = srs_entities(srs)
     traced = {t.entity.strip("`") for t in sds.traceability}
     for entity in entities:
         if entity not in traced:
@@ -775,6 +774,14 @@ def sds_sync_findings(sds: Sds, srs: str) -> list[str]:
             if story.id not in sds.purposes:
                 findings.append(f"{story.id} has no Purpose in SDS §5 yet")
     return findings
+
+
+def srs_entities(srs: str) -> list[str]:
+    """Entity names from the SRS "Domain Entity" table (section 2.1 here, 2.2 in GRM), not from state tables."""
+    section = _section_text(srs, "2.")
+    match = re.search(r"^###\s+2\.\d+\s+Domain Entit\w*.*?$(.*?)(?=^###\s|\Z)", section, re.MULTILINE | re.DOTALL)
+    rows = re.findall(r"^\|\s*`?([A-Z][A-Za-z0-9]+)`?\s*\|", match[1] if match else "", re.MULTILINE)
+    return list(dict.fromkeys(r for r in rows if r != "Entity"))
 
 
 def _section_text(markdown: str, number: str) -> str:

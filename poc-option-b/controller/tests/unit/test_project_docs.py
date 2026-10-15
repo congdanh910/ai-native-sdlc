@@ -74,3 +74,18 @@ def test_edited_srs_problems_are_named():
 def test_normalize_joins_lists_given_for_text_fields():
     data = normalize.srs(answer(entities=[{"name": "Shift", "description": "A period", "attributes": ["start", "end"]}]))
     assert Srs.model_validate(data).entities[0].attributes == "start, end"
+
+
+def test_outline_check_keeps_text_with_angle_brackets():
+    from controller.app.project_docs import check_sds_markdown
+    sds = ("## 1. Introduction\n\np95 < 300 ms\n\n## 2. Technical Domain Model\n\n### 6.5 API -> User Story\n\n"
+           "## 4. Architecture Design\n\n## 5. Product Features and User Story Specification\n\n## 6. API Design\n\n"
+           "## 9. Design Decisions and Tradeoffs <a id=\"9-design\"></a>\n")
+    assert check_sds_markdown(sds) == []
+
+
+def test_entities_come_from_the_domain_entity_table_only():
+    from controller.app.project_docs import srs_entities
+    srs = render_srs(Srs.model_validate(answer(states=[{"entity": "Shift", "states": [{"term": "Open", "meaning": "m"}]}])),
+                     author="t")
+    assert srs_entities(srs) == ["Shift"]
