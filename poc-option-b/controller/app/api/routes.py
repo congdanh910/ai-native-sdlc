@@ -7,11 +7,11 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 
-from controller.app import evals, services
+from controller.app import evals, joblog, services
 from controller.app.api import views
 from controller.app.config import get_settings
 from controller.app.db import session_scope
-from controller.app.models import EvalRun, Project, Run
+from controller.app.models import EvalRun, Execution, Project, Run
 from controller.app.projects import registry
 from controller.app.project_docs import ArchitectureBrief, ProjectBrief
 from controller.app.schemas import Intent
@@ -218,6 +218,18 @@ def get_run(run_id: uuid.UUID) -> dict:
 def run_events(run_id: uuid.UUID) -> list[dict]:
     with session_scope() as session:
         return views.events_view(session, run_id)
+
+
+@router.get("/runs/{run_id}/executions/{execution_id}/log")
+def execution_log(run_id: uuid.UUID, execution_id: uuid.UUID, offset: int = 0) -> dict:
+    """The job's live log from a byte offset; poll with the returned offset while status is queued or running."""
+    with session_scope() as session:
+        execution = session.get(Execution, execution_id)
+        if execution is None or execution.run_id != run_id:
+            raise HTTPException(404, "job not found")
+        status = execution.status
+    text, next_offset = joblog.read(run_id, execution_id, offset)
+    return {"text": text, "offset": next_offset, "status": status}
 
 
 @router.get("/inbox")

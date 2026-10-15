@@ -15,7 +15,7 @@ import time
 
 from sqlalchemy import select
 
-from controller.app import coordinator, jobs
+from controller.app import coordinator, joblog, jobs
 from controller.app.doing import process
 from controller.app.db import session_scope
 from controller.app.models import Execution, Run
@@ -60,7 +60,8 @@ def run_once(team: Team, worker_id: str = WORKER_ID) -> bool:
         if execution is None:
             return False
         coordinator.on_claim(session, execution)
-        execution_id, kind = execution.id, execution.kind
+        execution_id, kind, run_id = execution.id, execution.kind, execution.run_id
+        joblog.start(run_id, execution_id, f"{kind} ({execution.role}) claimed by {worker_id}, attempt {execution.attempts + 1}")
     log.info("claimed %s %s", kind, execution_id)
     process.begin_job()
     stop = threading.Event()
@@ -72,11 +73,14 @@ def run_once(team: Team, worker_id: str = WORKER_ID) -> bool:
         result = coordinator.compute(team, loaded)
         with session_scope() as session:
             coordinator.apply(session, loaded, result, team)
+        joblog.note("job finished")
     except Exception as exc:  # the run must never be left silently stuck
         log.exception("job %s failed", execution_id)
+        joblog.note(f"job failed: {type(exc).__name__}: {str(exc)[:500]}")
         _fail(execution_id, exc)
     finally:
         stop.set()
+        joblog.stop()
     return True
 
 

@@ -7,6 +7,7 @@ import { ACTIVE_WORK, TERMINAL, ago, cn, duration, role, short, when, parseCrite
 import { Pipeline } from "../components/Pipeline";
 import { DecisionPanel } from "../components/Decision";
 import { CoverageMatrix, GroundingSummary } from "../components/Coverage";
+import { JobLog } from "../components/JobLog";
 import { PlanSummary } from "../components/PlanSummary";
 import { ActionButton, Badge, Card, Empty, ErrorBox, Loading, Markdown, Mono, PageHeader, Select, StatusBadge, Tabs } from "../components/ui";
 
@@ -209,21 +210,39 @@ function EventsTab({ run }: { run: RunDetail }) {
   );
 }
 
+function elapsed(start: string | null, end: string | null): string {
+  if (!start) return "";
+  const seconds = Math.max(0, Math.round(((end ? Date.parse(end) : Date.now()) - Date.parse(start)) / 1000));
+  return seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`;
+}
+
 function WorkTab({ run }: { run: RunDetail }) {
+  // The running job's log opens by itself; any other job's log opens from its row.
+  const running = [...run.executions].reverse().find((e) => e.status === "running");
+  const [chosen, setChosen] = useState<string | null>(null);
+  const [closed, setClosed] = useState(false);
+  const open = run.executions.find((e) => e.id === (chosen ?? (closed ? null : running?.id)));
   return (
     <div className="flex flex-col gap-3">
+      {open ? <JobLog key={open.id} runId={run.id} executionId={open.id}
+        title={`${open.kind}${open.task ? ` ${open.task}` : ""} · ${role(open.role)}`}
+        onClose={() => { setChosen(null); setClosed(true); }} /> : null}
       <Card className="overflow-x-auto">
         <table className="w-full min-w-[640px] border-collapse text-sm">
-          <thead><tr className="bg-side text-left text-xs text-muted">{["Job", "Role", "Engine", "Status", "Attempts", "Error"].map((h) => <th key={h} className="border-b border-line px-3 py-2.5 font-semibold">{h}</th>)}</tr></thead>
+          <thead><tr className="bg-side text-left text-xs text-muted">{["Job", "Role", "Engine", "Status", "Time", "Attempts", "Error", ""].map((h, i) => <th key={i} className="border-b border-line px-3 py-2.5 font-semibold">{h}</th>)}</tr></thead>
           <tbody>
             {run.executions.map((e, i) => (
-              <tr key={i}>
-                <td className="border-b border-line px-3 py-2"><Mono>{e.kind}</Mono></td>
+              <tr key={i} className={cn(open?.id === e.id && "bg-accent-soft")}>
+                <td className="border-b border-line px-3 py-2"><Mono>{e.kind}{e.task ? ` ${e.task}` : ""}</Mono></td>
                 <td className="border-b border-line px-3 py-2">{role(e.role)}</td>
                 <td className="border-b border-line px-3 py-2"><Mono className="text-muted">{e.engine}</Mono></td>
                 <td className="border-b border-line px-3 py-2"><StatusBadge status={e.status} /></td>
+                <td className="border-b border-line px-3 py-2 font-mono text-xs text-muted">{elapsed(e.started_at, e.finished_at)}</td>
                 <td className="border-b border-line px-3 py-2">{e.attempts}</td>
                 <td className="border-b border-line px-3 py-2 text-xs text-bad">{e.error}</td>
+                <td className="border-b border-line px-3 py-2 text-right">
+                  <button type="button" className="text-xs font-semibold text-accent hover:underline" onClick={() => { setChosen(e.id); setClosed(false); }}>Log</button>
+                </td>
               </tr>
             ))}
           </tbody>
@@ -346,7 +365,7 @@ export function RunView({ id }: { id: string }) {
             { id: "thread", label: "Thread" },
             ...(srs ? [] : [{ id: "diff" as Tab, label: "Diff" }]),
             { id: "events", label: "Events" },
-            { id: "work", label: "Jobs & decisions" },
+            { id: "work", label: "Jobs, logs & decisions" },
           ]} />
           {shown === "tasks" ? <TasksTab run={r} /> : null}
           {shown === "plan" ? (r.plans.length ? <Card className="p-5"><VersionPicker items={r.plans}>{(p) => <PlanBody plan={p} spec={spec} />}</VersionPicker></Card> : <Empty>No plan yet.</Empty>) : null}

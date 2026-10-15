@@ -89,8 +89,10 @@ def run_detail(session: Session, run: Run) -> dict:
         "pull_request": None if pull is None else {
             "url": pull.url, "number": pull.number, "head_sha": pull.head_sha, "ci_status": pull.ci_status,
             "review_status": pull.review_status, "merged_sha": pull.merged_sha, "simulated": pull.simulated},
-        "executions": [{"kind": e.kind, "role": e.role, "status": e.status, "attempts": e.attempts,
-                        "engine": e.engine, "error": e.error} for e in executions],
+        "executions": [{"id": str(e.id), "kind": e.kind, "role": e.role, "status": e.status, "attempts": e.attempts,
+                        "engine": e.engine, "error": e.error, "task": task_ids.get(e.task_id),
+                        "started_at": e.started_at.isoformat() if e.started_at else None,
+                        "finished_at": e.finished_at.isoformat() if e.finished_at else None} for e in executions],
         "task_steps": [{"task": task_ids.get(e.task_id), "steps": _steps(e.result)} for e in executions
                        if e.kind == "code_task" and e.result],
     })

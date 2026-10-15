@@ -12,7 +12,7 @@ from typing import TypeVar
 import httpx
 from pydantic import BaseModel, ValidationError
 
-from controller.app import capacity
+from controller.app import capacity, joblog
 from controller.app.config import Settings
 from controller.app.integrations.langflow import (InvalidModelOutput, LangflowClient, client_from_settings,
                                                   extract_json, role_prompt)
@@ -88,6 +88,9 @@ class LangflowTeam(MockTeam):
         problems: list[str] = []
         for attempt in range(1, MAX_FORMAT_RETRIES + 2):
             self._ensure_capacity()
+            live = self.engine.endswith("-readonly")
+            joblog.note(f"{role}: asking {self.engine}, attempt {attempt}"
+                        + ("" if live else " (Qwen3 through Langflow has no live output; the answer comes at the end)"))
             request = dict(payload)
             if problems:
                 request["format_feedback"] = problems
@@ -98,6 +101,7 @@ class LangflowTeam(MockTeam):
                                             usage={"seconds": round(time.monotonic() - started, 1)})
                 return result
             except (InvalidModelOutput, ValidationError, ValueError) as exc:
+                joblog.note(f"{role}: answer rejected: {_describe(exc)[:400]}")
                 problems = [f"Your previous answer was rejected: {_describe(exc)}",
                             "Answer again with one JSON object that follows the output keys exactly."]
         raise InvalidModelOutput(f"{role}: no valid answer after {MAX_FORMAT_RETRIES + 1} attempts: {problems[0]}", raw)

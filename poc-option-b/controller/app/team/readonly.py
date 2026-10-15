@@ -38,7 +38,7 @@ class CliReasoningClient:
     def args(self, cwd: str, last_message: Path) -> list[str]:
         if self.cli == "claude":
             tools = ["Read", "Glob", "Grep"]
-            return ["claude", "-p", "--output-format", "json", "--permission-mode", "dontAsk",
+            return ["claude", "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "dontAsk",
                     "--no-session-persistence", "--setting-sources", "local", "--strict-mcp-config",
                     "--tools", ",".join(tools), "--allowedTools", *tools]
         return ["codex", "exec", "--sandbox", "read-only", "--cd", cwd, "--ephemeral",

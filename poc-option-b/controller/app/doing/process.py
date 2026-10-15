@@ -15,6 +15,7 @@ import subprocess
 import threading
 import time
 
+from controller.app import joblog
 from controller.app.config import DATA_DIR
 
 MAX_OUTPUT = 200_000  # characters kept from the end of the combined output
@@ -66,18 +67,40 @@ def run_bounded(args: list[str], *, cwd: Path | None = None, timeout: float, inp
         return ProcessResult(list(args), None, "[cancelled: the run was cancelled]", 0.0)
     started = time.monotonic()
     process = subprocess.Popen(args, cwd=cwd, env=env, stdin=subprocess.PIPE if input_text is not None else subprocess.DEVNULL,
-                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True,
+                               bufsize=1)
     _track(process, args, container)
+    # Read the output line by line while the process runs, so the job's live log shows it as it happens.
+    log_path, program = joblog.current(), Path(args[0]).name
+    joblog.note(f"runs {program}" + (f" in container {container}" if container else ""))
+    lines: list[str] = []
+
+    def pump() -> None:
+        for line in process.stdout:
+            lines.append(line)
+            joblog.stream(log_path, program, line)
+
+    reader = threading.Thread(target=pump, daemon=True)
+    reader.start()
+    if input_text is not None:
+        try:
+            process.stdin.write(input_text)
+            process.stdin.close()
+        except (BrokenPipeError, OSError):
+            pass
     timed_out = False
     try:
-        output, _ = process.communicate(input_text, timeout=timeout)
+        process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         timed_out = True
         _kill_group(process)
-        output, _ = process.communicate()
+        process.wait()
     finally:
+        reader.join(timeout=10)
         cancelled = _untrack(process, container)
-    output = redact(output or "")[-MAX_OUTPUT:]
+    output = redact("".join(lines))[-MAX_OUTPUT:]
+    joblog.note(f"{program} {'timed out' if timed_out else 'cancelled' if cancelled else f'exited {process.returncode}'} "
+                f"after {round(time.monotonic() - started)}s")
     if cancelled:
         output += "\n[cancelled: the run was cancelled]"
     return ProcessResult(list(args), None if timed_out or cancelled else process.returncode, output,

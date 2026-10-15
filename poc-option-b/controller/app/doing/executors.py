@@ -91,7 +91,7 @@ class ClaudeExecutor:
         settings = {"hooks": {"PreToolUse": [{"matcher": "Edit|MultiEdit|Write|NotebookEdit",
                                               "hooks": [{"type": "command", "command": hook}]}]}}
         tools = ["Read", "Glob", "Grep", "Edit", "MultiEdit", "Write"]
-        return [self.binary, "-p", "--output-format", "json", "--permission-mode", "dontAsk",
+        return [self.binary, "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "dontAsk",
                 "--no-session-persistence", "--setting-sources", "local", "--strict-mcp-config",
                 "--tools", ",".join(tools), "--allowedTools", *tools, "--settings", json.dumps(settings)]
 

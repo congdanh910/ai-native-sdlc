@@ -161,7 +161,8 @@ export interface RunDetail extends RunSummary {
     url: string | null; number: number | null; head_sha: string | null; ci_status: string; review_status: string;
     merged_sha: string | null; simulated: boolean;
   } | null;
-  executions: { kind: string; role: string; status: string; attempts: number; engine: string | null; error: string | null }[];
+  executions: { id: string; kind: string; role: string; status: string; attempts: number; engine: string | null; error: string | null;
+    task: string | null; started_at: string | null; finished_at: string | null }[];
   task_steps: { task: string | null; steps: Step[] }[];
 }
 

@@ -84,3 +84,23 @@ def test_bad_plan_revision_is_explained(db, sample_repo):
 def test_unknown_project_key_is_rejected(db):
     response = client.post("/api/projects", json={"key": "Bad Key", "repo_url": "/nowhere"})
     assert response.status_code == 400
+
+
+def test_each_job_has_a_live_log(db, sample_repo, tmp_path, monkeypatch):
+    from controller.app import joblog
+    monkeypatch.setattr(joblog, "DATA_DIR", tmp_path / "logs-root")
+    post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
+    draft = {"title": "Due dates", "problem": "No deadlines.", "outcome": "- Optional due date"}
+    run = post("/api/runs", {"project": "task-board", "intent": draft, "idempotency_key": str(uuid.uuid4())},
+               status=201)
+    drain()
+    jobs = client.get(f"/api/runs/{run['id']}").json()["executions"]
+    specify = next(j for j in jobs if j["kind"] == "specify")
+    log = client.get(f"/api/runs/{run['id']}/executions/{specify['id']}/log").json()
+    assert log["status"] == "succeeded"
+    assert "specify (business_analyst) claimed" in log["text"] and "Business Analyst writes the spec" in log["text"]
+    assert log["text"].rstrip().endswith("job finished")
+    later = client.get(f"/api/runs/{run['id']}/executions/{specify['id']}/log?offset={log['offset']}").json()
+    assert later["text"] == "" and later["offset"] == log["offset"]
+    other = client.get(f"/api/runs/{uuid.uuid4()}/executions/{specify['id']}/log")
+    assert other.status_code == 404

@@ -34,7 +34,7 @@ from controller.app.feature_docs import (PHASE_HEADING, FeatureRef, link_once, p
                                          sdlc_yaml, sds_feature_heading, spec_header, spec_section, srs_feature_heading,
                                          tasks_header, tasks_section, tc_numbers, test_cases_header, test_cases_section,
                                          upsert_section)
-from controller.app import analysis, checklists
+from controller.app import analysis, checklists, joblog
 from controller.app.project_docs import (SDS_PATH, SRS_PATH, Sds, Srs, check_sds_markdown, check_srs_markdown,
                                          render_sds, render_srs, sds_sync_findings, srs_features)
 from controller.app.projects.config import EffectivePolicy, effective_policy, matches_any
@@ -453,10 +453,20 @@ def compute(team: Team, loaded: Loaded) -> dict:
     def record() -> None:
         call = getattr(team, "last_call", None)
         if call:
+            joblog.note(f"answer accepted from {call.engine} after {call.attempts} attempt(s), "
+                        f"{(call.usage or {}).get('seconds', '?')}s")
             calls.append({"engine": call.engine, "prompt_version": call.prompt_version, "attempts": call.attempts,
                           "usage": call.usage})
 
     result: dict = {}
+    run_kind = loaded.extra.get("run_kind")
+    doing = {"specify": {RunKind.SRS: "Business Analyst writes the SRS", RunKind.SDS: "Architect writes the SDS"}
+             .get(run_kind, "Business Analyst writes the spec"),
+             "plan": "Tech Lead writes the plan, then the QA Analyst designs the test cases",
+             "design_tests": "QA Analyst redesigns the test cases", "review": "Code Reviewer reviews the change",
+             "code_task": "QA Engineer, Validation Gate and Developer work on the task"}
+    if loaded.kind in doing:
+        joblog.note(doing[loaded.kind])
     if loaded.kind == "specify" and loaded.extra.get("run_kind") == RunKind.SRS:
         result = {"srs": team.write_srs(context).model_dump()}
         record()
@@ -470,6 +480,7 @@ def compute(team: Team, loaded: Loaded) -> dict:
     elif loaded.kind == "plan":
         plan, tidied = tidy_plan(team.plan(context), context.policy)
         record()
+        joblog.note(f"plan has {len(plan.tasks)} task(s); the QA Analyst designs the test cases")
         # The grounding feedback is the Tech Lead's; the QA Analyst gets the QC's feedback only on a redesign.
         tests, tidied_tests = tidy_tests(team.design_tests(dataclasses.replace(context, feedback=[]), plan), plan)
         record()
@@ -506,6 +517,7 @@ def _work_task(team: Team, loaded: Loaded) -> list[dict]:
     context, tests = loaded.context, loaded.tests
 
     def step(state: TaskStatus, role: TeamRole, result: StepResult) -> dict:
+        joblog.note(f"{task.id} {state.value} by {role.value}: {'ok' if result.ok else 'not ok'}; {result.detail[:300]}")
         return {"state": state.value, "role": role.value, "ok": result.ok, "detail": result.detail,
                 "dispute": result.dispute, "changed_files": result.changed_files, "evidence": result.evidence}
 
