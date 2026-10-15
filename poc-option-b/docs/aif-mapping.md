@@ -1,6 +1,22 @@
 # Mapping AIF-SDLC vào AI-Native SDLC
 
-> Bước 1 của làn AIF. Nguồn: `aif-sdlc.md`, `aif-review-checklist.md`, `aif-artifact-audit.md` và template của repo GRM (`.specify/templates/`, `.claude/skills/sdlc-*`). Tài liệu này chốt cách các bước 2–8 sẽ làm; chưa có code nào thay đổi.
+> Bước 1 của làn AIF. Nguồn: `aif-sdlc.md`, `aif-review-checklist.md`, `aif-artifact-audit.md` và template của repo GRM (`.specify/templates/`, `.claude/skills/sdlc-*`). Tài liệu này chốt cách các bước tiếp theo sẽ làm; chưa có code nào thay đổi.
+
+## 0. Thứ tự trong một dự án mới
+
+SRS và SDS là sản phẩm của các bước đầu dự án, không do từng run tạo. Run chỉ chạy khi dự án đã có hai tài liệu này.
+
+| # | Bước | Ai làm | Sản phẩm | Cổng |
+|---|---|---|---|---|
+| 1 | Onboarding | AI soạn nháp, PM duyệt | Repo, file onboarding, `constitution.md` | G0 |
+| 2 | Phân tích yêu cầu | Business Analyst (AI) soạn từ charter và ghi chú; người chốt qua workshop | `SRS.md` theo khung GRM: §1 giới thiệu và vai, §2 thực thể và business rules, §3 FR, §4 NFR, §5 UX, §6 luồng nghiệp vụ, §7 feature và US (chỉ story statement) | G1 · khách hàng ký SRS |
+| 3 | Kiến trúc | Architect (AI) đề xuất, người chọn | `SDS.md` theo khung GRM: §2 traceability, §4/§13 kiến trúc, §4.3.3 DB schema, §6 API, §9 quyết định | G2 |
+| 4 | Kế hoạch | Từ SRS §7 | Feature (`specs/NNN-slug/` + `sdlc.yaml`) và thứ tự US | PM và Tech Lead |
+| 5 | Mỗi US một run | Theo AIF: Spec, Design, Quality, Implement | Run nối thêm vào SRS §7, SDS §5 và các file trong `specs/` | 4 cổng của run |
+
+- Project check báo dự án **chưa sẵn sàng chạy run** khi thiếu `SRS.md` hoặc `SDS.md` đã duyệt.
+- US của run được chọn từ SRS §7; Business Analyst viết AC trong `spec.md` từ FR ở SRS §3.
+- Attendance là dự án thử đầu tiên: chạy bước 2 và 3 trước, rồi mới mở run cho từng US. Run 85d1a9fd tạo trước AIF, xem là run cũ.
 
 ## 1. Đơn vị công việc
 
@@ -12,7 +28,7 @@
 | Mỗi bước 1 branch + 1 PR vào `develop`, cần 1 approval | **1 branch + 1 PR cho cả run**; mỗi bước là một commit riêng trên nhánh run, cổng duyệt nằm trên control room |
 | Skill chạy trong IDE của từng người | Controller chạy các vai AI, người duyệt ở cổng |
 
-Form New request có thêm hai trường: **Feature** (chọn feature có sẵn trong `specs/` hoặc tạo mới với tên và prefix) và **Actor**. Controller cấp số US tiếp theo của feature đó (ví dụ `AT-US-03`).
+Form New request chọn **Feature** và **User Story** có sẵn trong SRS §7 (hoặc thêm US mới vào một feature, khi đó run thêm story statement vào SRS §7). Controller cấp số US tiếp theo của feature (ví dụ `AT-US-03`).
 
 ## 2. Vai, artifact và cổng
 
@@ -69,10 +85,12 @@ Mục về Jira, branch theo từng bước và Playwright của GRM không đư
 | 6 Prompt | Thêm mục Experience Sharing vào prompt `spec.md`, `plan.md`, `test-design.md`, `review.md`; chạy eval (hỏi trước khi dùng GX10) |
 | 7 Analyze | Kiểm spec ↔ plan ↔ tasks ↔ TC trước khi code (cơ học + AI) và sau khi code; Critical/High chặn run |
 
-## 7. Cần anh/chị chốt
+## 7. Quyết định (2026-10-15)
 
-1. **Một run = một US.** Nếu intent lớn, BA đề xuất tách thành nhiều US và mỗi US mở một run riêng. Đồng ý?
-2. **Repo chưa có `SRS.md` / `SDS.md`** (ví dụ attendance): bỏ qua phần đồng bộ SRS/SDS và báo warn ở project check, hay tạo khung `SRS.md`/`SDS.md` lúc onboarding?
-3. **Template mặc định của platform:** copy nguyên 7 template của GRM (bỏ phần Jira/Java) làm bản mặc định cho repo chưa có `.specify/templates/`?
-4. **Đánh số TC:** theo file thật của GRM (`TC-01`, tăng dần, tối thiểu 2 chữ số) thay vì `TC-NNN` của template?
-5. **Vai người QC** cho cổng Quality: hiện một operator vẫn giữ mọi vai (cho tới giai đoạn F), ghi rõ "thay mặt QC" khi duyệt.
+| # | Câu hỏi | Chốt |
+|---|---|---|
+| 1 | Một run = một US; intent lớn thì BA đề xuất tách nhiều run | Có |
+| 2 | Repo chưa có `SRS.md` / `SDS.md` | Không bỏ qua, không để run tạo khung: SRS và SDS làm ở bước Phân tích yêu cầu và Kiến trúc (mục 0) trước khi chạy run |
+| 3 | Template mặc định của platform = 7 template GRM, bỏ phần Jira và Java | Có |
+| 4 | Đánh số TC theo file thật của GRM: `TC-01`, tăng dần, tối thiểu 2 chữ số | Có |
+| 5 | Vai người QC; tới giai đoạn F một operator giữ mọi vai, ghi "thay mặt QC" khi duyệt | Có |
