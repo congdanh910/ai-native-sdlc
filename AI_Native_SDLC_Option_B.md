@@ -111,6 +111,8 @@ Allowed values: `qwen3` (Langflow and Ollama on GX10), `claude-readonly` and `co
 
 **Approval (operator, 2026-10-14, later):** the **Business Analyst** of normal runs may also use `claude-readonly`, because Qwen3 twice stopped a run on a technical question marked blocking (Task Board `backup`, Inventory `categories`) despite the prompt rule. The Code Reviewer stays on `qwen3`.
 
+**Approval (operator, 2026-10-15):** the **Code Reviewer** of normal runs may also use `claude-readonly`. With the AIF artifacts (AC/EC in Given/When/Then, test cases, design sections) the review input of the attendance `AUTH-US-01` run was about 9,500 tokens after compaction, beyond Qwen3's 8,192-token window. The operator chose Claude over a larger Qwen3 context.
+
 ### Working agreements
 1. **Artifacts, not conversations.** Each AI role works only from the artifacts handed to it. There is no hidden memory between roles. Every artifact is versioned, checksummed, attributed to the role that produced it and, by default, committed to the run branch.
 2. **No self-approval.** No role approves its own output, and no AI role approves another AI role's output. Approval authority belongs to humans only.
