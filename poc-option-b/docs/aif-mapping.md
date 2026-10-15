@@ -1,6 +1,6 @@
 # Mapping AIF-SDLC vào AI-Native SDLC
 
-> Bước 1 của làn AIF. Nguồn: `aif-sdlc.md`, `aif-review-checklist.md`, `aif-artifact-audit.md` và template của repo GRM (`.specify/templates/`, `.claude/skills/sdlc-*`). Tài liệu này chốt cách các bước tiếp theo sẽ làm; chưa có code nào thay đổi.
+> Bước 1 của làn AIF, đã chốt 15/10/2026 và đã code ở bước 2–9 (commit aaaee76 → 69ea126). Nguồn: `aif-sdlc.md`, `aif-review-checklist.md`, `aif-artifact-audit.md` và template của repo GRM (`.specify/templates/`, `.claude/skills/sdlc-*`). Tài liệu này mô tả cách AI-Native SDLC áp quy trình công ty.
 
 ## 0. Thứ tự trong một dự án mới
 
@@ -79,11 +79,11 @@ Mục về Jira, branch theo từng bước và Playwright của GRM không đư
 | Bước | Thay đổi chính |
 |---|---|
 | 2 Artifact | Contract `Spec` có user story `PREFIX-US-NN`, actor, AC/EC dạng Given/When/Then; renderer và parser theo template; thêm khái niệm feature (`specs/NNN-slug/`, `sdlc.yaml`); ghi file vào `specs/` thay vì chỉ `.sdlc/runs/`; run cũ vẫn đọc được theo định dạng cũ |
-| 3 Quality | Trạng thái mới `DESIGNING_TESTS` và `WAITING_TEST_APPROVAL` giữa cổng plan và `READY`; QA Analyst chạy sau khi plan được duyệt; vai người QC; trang Quality trên control room |
+| 3 Quality | `WAITING_TEST_APPROVAL` sau cổng plan; QA Analyst vẫn soạn test cases cùng plan để Tech Lead thấy độ phủ, QC duyệt ở cổng riêng; `DESIGNING_TESTS` khi QC trả về; vai người QC |
 | 4 Checklist | Bảng lưu checklist theo cổng; bộ kiểm cơ học; self-check của vai AI; UI tick |
 | 5 Constitution | Project check đọc constitution; context của BA, Tech Lead, QA, Code Reviewer có constitution |
 | 6 Prompt | Thêm mục Experience Sharing vào prompt `spec.md`, `plan.md`, `test-design.md`, `review.md`; chạy eval (hỏi trước khi dùng GX10) |
-| 7 Analyze | Kiểm spec ↔ plan ↔ tasks ↔ TC trước khi code (cơ học + AI) và sau khi code; Critical/High chặn run |
+| 7 Analyze | Kiểm spec ↔ plan ↔ tasks ↔ TC trước khi code (ở cổng Quality) và sau khi code (trước PR); Critical/High chặn cổng. Phần AI của analyze là self-check của các vai và review của Code Reviewer |
 
 ## 7. Quyết định (2026-10-15)
 

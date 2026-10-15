@@ -17,10 +17,10 @@ Control room là nơi duy nhất người làm việc với đội AI. Thiết k
 | Màn hình | Đường dẫn | Nội dung chính |
 | --- | --- | --- |
 | Inbox | `#/` | Thẻ theo vai, chỉ số đọc từ run (CI, review, số task pass, AC có test; với plan: grounding, cảnh báo, expected pass), nút **Open and decide**; bật thông báo trình duyệt |
-| New request | `#/new` | Form intent.md (Title, Problem, Desired outcome, …) và khung **Draft with AI** bên phải |
+| New request | `#/new` | Ba tab: **Feature request** (intent.md; dự án có SRS thì chọn User story từ SRS §7, nhóm theo feature, kèm trạng thái run của story), **Project SRS** (brief dự án), **Project SDS** (brief kiến trúc); khung **Draft with AI** cho feature request |
 | Runs | `#/runs` | Bảng run, trạng thái, đang chờ vai nào; tuỳ chọn hiện run thí nghiệm của eval |
-| Run | `#/runs/<id>` | Pipeline 8 chặng (Intent, Spec, Cổng 1, Plan, Cổng 2, Coding, Review, Cổng 3), khối quyết định, tab Tasks / Plan / Thread / Diff / Events / Jobs & decisions, cột phải: PR, độ phủ tiêu chí, thông tin run |
-| Projects | `#/projects` | Thẻ dự án với kết quả check (file onboarding, validation trong container, quyền GitHub), form thêm dự án |
+| Run | `#/runs/<id>` | Run tính năng: pipeline 9 chặng (Intent, Spec, Gate 1, Plan, Gate 2, Quality, Coding, Review, Gate 3). Run SRS/SDS: Brief, SRS hoặc SDS, Gate 1, Gate 2 (PR), chỉ có tab Thread / Events / Jobs & decisions. Khối quyết định có checklist của cổng; Thread có spec, test_cases, analysis, review, report |
+| Projects | `#/projects` | Thẻ dự án với kết quả check (file onboarding, constitution, SRS.md, SDS.md, validation trong container, quyền GitHub), form thêm dự án |
 | Evals | `#/evals`, `#/evals/<id>` | Chọn engine theo vai, chạy bộ eval, xu hướng grounding lần đầu, thẻ chỉ số so với baseline, từng case |
 | Reports | `#/reports` | Thẻ số liệu theo vai, mức dùng theo engine, bảng các eval |
 | Health | `#/health` | Kết quả kiểm tra sẵn sàng, cập nhật mỗi 10 giây |
@@ -30,12 +30,15 @@ Khối quyết định trên trang run thay đổi theo việc đang chờ:
 | Việc chờ | Thao tác |
 | --- | --- |
 | Câu hỏi chặn | Trả lời từng câu → Send answers |
-| Duyệt spec | Accept · Edit (lưu phiên bản mới) · Reject: rewrite · Reject: cancel run |
-| Duyệt plan | Approve · Edit JSON (lưu phiên bản mới) · Reject: replan · Reject: cancel run |
-| Pull request | Open PR · Request changes · Review again · Close without merge (PR giả lập: Record simulated merge) |
+| Duyệt spec / SRS / SDS | Checklist · Accept · Edit (lưu phiên bản mới) · Reject: rewrite · Reject: cancel run; SDS có khung vàng "Sync with SRS" |
+| Duyệt plan | Checklist · Approve · Edit JSON (lưu phiên bản mới) · Reject: replan · Reject: cancel run |
+| Duyệt test cases (Quality) | Checklist (kèm phân tích chéo) · Approve · Edit JSON · Reject: redesign tests · Reject: replan · Reject: cancel run |
+| Pull request | Checklist · Record review checklist · Open PR · Request changes · Review again · Close without merge (PR giả lập: Record simulated merge) |
 | Needs human | Let QA update the tests · Keep the tests (khi có tranh chấp) · Resume · Replan · Cancel run |
 | Phân loại lỗi | Category · Stage · Role · Note → Save classification |
 | Stage manual | Start stage |
+
+Checklist của cổng có ba phần: **Checked by the controller** (dấu ✓/✗ kèm chi tiết; một mục ✗ là không duyệt được), **Self-check by the AI role** (pass, deferred, fail, n/a kèm ghi chú) và **Your review** (ô tick; phải tick hết mới duyệt). Jobs & decisions ghi số mục đã qua của mỗi quyết định.
 
 ## Design token
 

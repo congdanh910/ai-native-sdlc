@@ -1,12 +1,12 @@
-# Hướng dẫn dùng thử AI-native SDLC (Option B v3)
+# Hướng dẫn dùng thử AI-Native SDLC
 
-_Cập nhật 14/10/2026 · bản gốc: [trang Claude Docs](https://claude.ai/artifact/FMfNAm6VsrVbp1B6EJ3Gkx)_
+_Cập nhật 15/10/2026 · bản gốc: [trang Claude Docs](https://claude.ai/artifact/FMfNAm6VsrVbp1B6EJ3Gkx)_
 
-Một đội phát triển gồm các vai AI nhận yêu cầu, viết spec, lập kế hoạch, viết test và code, rồi mở draft PR; người chỉ duyệt ở 3 cổng (spec, plan, merge). Hai dự án demo đã sẵn sàng để thử: `task-board` (Node) và `inventory` (Python).
+Một đội phát triển gồm các vai AI làm theo quy trình AIF-SDLC của công ty: một dự án mới bắt đầu bằng SRS rồi SDS, sau đó mỗi user story trong SRS §7 là một run viết spec, plan, test cases, code và mở draft PR. Người duyệt ở các cổng, mỗi cổng có checklist lấy từ `aif-review-checklist.md`. Ba dự án demo: `task-board` (Node), `inventory` (Python) và `attendance` (Node, dự án đầu tiên đi theo AIF-SDLC).
 
 ## Đã xây gì
 
-Sáu phase và control room mới đã xong, 144 test tự động pass; mã nguồn ở `poc-option-b/` trên branch `feature/option-b-v2` (draft PR #2).
+Sáu phase, control room và làn AIF (15/10) đã xong, 170 test tự động pass; mã nguồn ở `poc-option-b/` trên branch `feature/option-b-v2` (draft PR #2). Cách áp quy trình công ty: [aif-mapping.md](aif-mapping.md).
 
 | Phase | Nội dung | Kết quả |
 | --- | --- | --- |
@@ -17,19 +17,36 @@ Sáu phase và control room mới đã xong, 144 test tự động pass; mã ngu
 | B5 | Huỷ run, dọn khi crash, hết hạn mức subscription, webhook GitHub | Lỗi được hoãn hoặc chuyển cho người, không chạy lại mù |
 | B6 | Engine theo vai, dự án thứ hai (Python), báo cáo theo vai | BA, Tech Lead, QA Analyst chạy Claude chỉ đọc |
 | UI | Control room mới bằng React: Inbox dạng thẻ, pipeline, ma trận độ phủ, diff, sáng/tối, ⌘K | Thay UI cũ, đủ mọi thao tác của người |
+| AIF | Run SRS và SDS cho dự án mới; run của mỗi US ghi `specs/NNN-slug/` theo template công ty; cổng Quality; checklist ở mọi cổng; constitution trong repo; phân tích chéo trước và sau code | Quy trình khớp AIF-SDLC, mỗi cổng có bằng chứng |
 
 So sánh engine trên Task Board: Claude và Codex chỉ đọc đạt 5/5 plan qua grounding ngay lần đầu, Qwen3 đạt 3/5.
 
-## Flow của một run
+## Flow của một dự án
 
-Bạn chỉ duyệt ở 3 cổng, mọi bước khác chạy tự động.
+Dự án mới đi qua hai run tài liệu rồi mới tới run tính năng. Mỗi run tài liệu kết thúc bằng một draft PR; merge xong thì bấm **Check again** ở Projects để bước sau thấy file mới.
 
 ```mermaid
 flowchart LR
-  intent["Intent<br/><small>bạn viết yêu cầu</small>"] --> spec["Spec<br/><small>Business Analyst</small>"]
+  brief["Brief dự án<br/><small>Product Owner</small>"] --> srs["SRS.md<br/><small>Business Analyst</small>"]
+  srs --> gs{{"Cổng SRS<br/>PO duyệt + checklist"}}
+  gs --> prs["PR SRS.md<br/><small>bạn merge</small>"]
+  prs --> arch["Brief kiến trúc<br/><small>Tech Lead</small>"] --> sds["SDS.md<br/><small>Architect</small>"]
+  sds --> gd{{"Cổng SDS<br/>Tech Lead duyệt"}}
+  gd --> pds["PR SDS.md<br/><small>bạn merge</small>"]
+  pds --> us["Mỗi US trong SRS §7<br/><small>một run tính năng</small>"]
+```
+
+## Flow của một run tính năng
+
+Bạn duyệt ở 4 cổng (spec, plan, test cases, merge); mọi bước khác chạy tự động. Spec, plan, tasks và test cases được ghi vào `specs/NNN-slug/` của repo theo template công ty và nằm trong PR.
+
+```mermaid
+flowchart LR
+  intent["US từ SRS §7<br/><small>bạn chọn và mô tả</small>"] --> spec["Spec<br/><small>Business Analyst</small>"]
   spec --> g1{{"Cổng 1<br/>duyệt spec"}}
   g1 --> plan["Plan + tests<br/><small>kèm grounding</small>"]
   plan --> g2{{"Cổng 2<br/>duyệt plan"}}
+  g2 --> gq{{"Cổng Quality<br/>QC duyệt test cases<br/>+ phân tích chéo"}}
   subgraph task["Mỗi task, theo thứ tự phụ thuộc"]
     direction LR
     qa["QA viết test<br/><small>Codex</small>"] --> red["Red check<br/><small>test phải trượt</small>"]
@@ -38,14 +55,14 @@ flowchart LR
     dev --> val["Validation<br/><small>Docker, mọi test</small>"]
     val -- "lỗi: sửa, tối đa 2 lần" --> dev
   end
-  g2 --> qa
+  gq --> qa
   val --> review["Code Reviewer<br/><small>Qwen3, review.md</small>"]
-  review --> pr["Draft PR<br/><small>Release Engineer</small>"]
+  review --> pr["Phân tích sau code<br/>+ draft PR<br/><small>Release Engineer</small>"]
   pr --> g3{{"Cổng 3: merge<br/>GitHub, bởi bạn"}}
   g3 --> done["COMPLETED<br/><small>worker ghi nhận</small>"]
 ```
 
-Bước nào lỗi, hoặc Developer báo `DISPUTE`: run dừng ở `NEEDS_HUMAN` và chờ bạn quyết định. Grounding trượt thì Tech Lead lập lại plan một lần trước khi tới Cổng 2; mỗi task được commit riêng (test rồi code) trên branch của run.
+Mỗi cổng hiện checklist ba phần: mục controller tự kiểm (trượt thì không duyệt được), self-check của vai AI, và mục bạn phải tick hết mới duyệt được; checklist được lưu cùng quyết định. Bước nào lỗi, hoặc Developer báo `DISPUTE`: run dừng ở `NEEDS_HUMAN` và chờ bạn quyết định. Grounding trượt thì Tech Lead lập lại plan một lần trước khi tới Cổng 2; mỗi task được commit riêng (test rồi code) trên branch của run.
 
 ## Kiến trúc
 
@@ -130,16 +147,17 @@ Mỗi vai có hợp đồng riêng; engine của vai suy nghĩ đặt trong `.en
 
 | Vai | Làm gì | Engine |
 | --- | --- | --- |
-| Business Analyst | Viết spec: user story, tiêu chí AC-n, câu hỏi | Claude chỉ đọc (subscription) |
-| Tech Lead | Viết plan: task, file sửa, phụ thuộc | Claude chỉ đọc |
-| QA Analyst | Viết test plan: mỗi AC có test case | Claude chỉ đọc |
+| Business Analyst | Viết SRS.md của dự án; viết spec của US: AC-01/EC-01 dạng Given/When/Then | Claude chỉ đọc (subscription) |
+| Architect | Viết SDS.md từ SRS đã merge: kiến trúc, dữ liệu, API, quyết định §9 | Engine của Tech Lead (Claude chỉ đọc) |
+| Tech Lead | Viết plan: task, file sửa, phụ thuộc, các mục thiết kế của template plan | Claude chỉ đọc |
+| QA Analyst | Viết test cases: mỗi AC và EC có test case, kèm type và severity | Claude chỉ đọc |
 | QA Engineer | Viết test trước khi có code; chỉ được thêm test | Codex (subscription) |
 | Developer | Viết code trong đúng file của task; không được sửa test | Codex |
 | Validation Gate | Red check và validation | Container Docker, không mạng, chỉ đọc |
 | Code Reviewer | Viết review.md (tham khảo) | Qwen3 trên GX10 |
 | Release Engineer | Push branch, mở draft PR, theo dõi CI và merge | `gh` của bạn |
 
-Nền tảng không tự merge, không deploy và không dùng API key trả phí.
+Người duyệt: Product Owner (spec, SRS), Tech Lead (plan, SDS), QC (test cases), Code Owner (PR). Tạm thời một operator giữ mọi vai và ghi "thay mặt ai" trong lý do. Mọi vai đọc `.specify/memory/constitution.md` của repo nếu có (Qwen3 nhận bản cắt ngắn). Nền tảng không tự merge, không deploy và không dùng API key trả phí.
 
 ## Giao diện
 
@@ -259,21 +277,31 @@ Vào **Projects → Add a project**: **Key** bằng `project:` trong `project.ya
 
 Sửa xong thì push và bấm **Check again**.
 
-### Bước 3 — Gửi request (vai Product Owner)
+### Bước 3a — Dự án mới: SRS rồi SDS
 
-**New request** (nút đen ở góc trên bên phải): chọn project, điền Title, Problem, Desired outcome (mỗi dòng một tiêu chí), hoặc viết tự do ở khung **Draft with AI** bên phải rồi sửa lại. Ví dụ: `list --search TEXT` tìm theo SKU hoặc tên, không phân biệt hoa thường. Bấm **Submit intent.md**.
+Dự án chưa có `SRS.md` thì Projects báo dòng **SRS.md: missing**. Vào **New request → Project SRS**: điền tên sản phẩm, tóm tắt, users và roles (mỗi dòng `ROLE: làm gì`), feature mong muốn, ràng buộc, nguồn (ghi chú của sales, biên bản họp). Business Analyst viết `SRS.md` theo khung công ty (§1–§8); ở cổng, đọc SRS, xem checklist, tick 3 mục rồi **Accept**. Run mở draft PR chứa `SRS.md`; merge PR rồi **Check again** ở Projects.
+
+Tiếp theo **New request → Project SDS** (vai Tech Lead): stack, deployment, tích hợp, ghi chú. Architect viết `SDS.md` (§1–§13), §5 có một mục Purpose cho mỗi US của SRS; khung vàng ở cổng liệt kê chỗ SDS chưa phủ SRS. Duyệt, merge PR, **Check again**.
+
+### Bước 3 — Gửi request cho một US (vai Product Owner)
+
+**New request → Feature request**: chọn project; nếu dự án đã có SRS thì phải chọn **User story** trong SRS §7 (Title và Problem tự điền từ story, sửa lại nếu cần), rồi điền Desired outcome. Dự án chưa có SRS (task-board, inventory) thì gửi tự do như trước. Bấm **Submit intent.md**.
 
 ### Bước 4 — Duyệt spec (Cổng 1)
 
-**Inbox** hiện thẻ "Review spec.md" sau khoảng 1 phút; bấm **Open and decide**. Khối quyết định ở đầu trang run hiện spec.md: kiểm tra các AC, rồi **Accept**, **Edit** (lưu phiên bản mới) hoặc **Reject**. Nếu Business Analyst có câu hỏi chặn, trả lời ở đây trước.
+**Inbox** hiện thẻ "Review spec.md" sau khoảng 1 phút. Spec là section của US theo template công ty: **AC-01 — tên ngắn** với Given/When/Then mỗi vế một dòng, rồi **Edge Cases** EC-01…, cuối cùng là ghi chú của BA. Xem checklist (ID không nhảy số, đủ Given/When/Then, không từ mơ hồ…), tick 3 mục của bạn rồi **Accept**, **Edit** hoặc **Reject**. Accept xong, `specs/NNN-slug/spec.md`, `checklists/requirements.md`, `sdlc.yaml` và link `> Spec:` trong SRS được commit lên branch của run.
 
 ### Bước 5 — Duyệt plan (Cổng 2)
 
-Sau 1–3 phút có thẻ "Review the plan". Xem ma trận tiêu chí × task × test case: mỗi AC phải có ít nhất một task và một test; dòng vàng là case `expected pass` (chỉ hợp lệ khi test đó pass trên code hiện tại); đọc cảnh báo grounding (ví dụ sửa markup mà không sửa stylesheet), rồi **Approve plan**.
+Sau 1–3 phút có thẻ "Review the plan". Xem ma trận tiêu chí × task × test case và cảnh báo grounding; checklist kiểm mỗi AC/EC có task, không task nào sửa test, grounding pass. Tick rồi **Approve plan**.
+
+### Bước 5b — Duyệt test cases (Cổng Quality, vai QC)
+
+Thẻ "Review the test cases" hiện `test_cases.md` của US: Coverage Matrix và từng TC-NN (US, Given, When, Then, AC, Type, Severity). Checklist có thêm **phân tích chéo**: AC/EC nào không có task hoặc test, test case nằm sai task… (Critical/High chặn duyệt). **Approve** tạo task và bắt đầu code; **Edit JSON** sửa test plan (plan đã duyệt giữ nguyên); **Reject: redesign tests** gửi lý do cho QA Analyst; **Reject: replan** trả về Tech Lead. Approve xong, `plan.md`, `tasks.md`, `test_cases.md` và link `> Plan:` trong SDS được commit.
 
 ### Bước 6 — Theo dõi phần code
 
-Không cần làm gì. Thanh pipeline 8 chặng ở đầu trang; tab **Tasks** là dòng thời gian từng task: QA viết test → red check (test phải trượt) → Developer viết code → validation (phải xanh), kèm CLI, commit, thời gian và lý do nếu bị từ chối. Tab **Diff** cho xem code thay đổi; **Thread**, **Events**, **Jobs & decisions** cho xem chi tiết.
+Không cần làm gì. Thanh pipeline ở đầu trang; tab **Tasks** là dòng thời gian từng task: QA viết test → red check (test phải trượt) → Developer viết code → validation (phải xanh), kèm CLI, commit, thời gian và lý do nếu bị từ chối. Tab **Diff** cho xem code thay đổi; **Thread**, **Events**, **Jobs & decisions** cho xem chi tiết.
 
 ### Bước 7 — Khi run dừng ở NEEDS_HUMAN
 
@@ -281,7 +309,7 @@ Không cần làm gì. Thanh pipeline 8 chặng ở đầu trang; tab **Tasks** 
 
 ### Bước 8 — Merge (Cổng 3)
 
-Khi có thẻ "Review the pull request": bấm **Open PR**, xem code và CI trên GitHub, rồi merge. Worker thấy merge trong vòng 1 phút và đóng run thành `COMPLETED`. Muốn đội sửa tiếp → **Request changes**; review lại → **Review again**; bỏ → **Close without merge**.
+Trước khi mở PR, controller tick các task đã xong trong `tasks.md` và chạy phân tích sau code (file sửa ngoài plan, file test không đổi, task chưa pass). Khi có thẻ "Review the pull request": xem checklist, tick rồi **Record review checklist**; bấm **Open PR**, xem code và CI trên GitHub, rồi merge. Worker thấy merge trong vòng 1 phút và đóng run thành `COMPLETED`. Muốn đội sửa tiếp → **Request changes**; review lại → **Review again**; bỏ → **Close without merge**.
 
 ### Bước 9 (tuỳ chọn) — Eval cho project
 
