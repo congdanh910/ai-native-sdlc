@@ -25,6 +25,17 @@ def check_plan(plan: PlanPayload, tests: TestPlan, criteria: list[Criterion], po
             names |= provided_before(dependency, seen)
         return names
 
+    def created_before(task_id: str, seen: set[str] | None = None) -> set[str]:
+        """Files created by the tasks this task depends on, directly or not (not by the task itself)."""
+        seen = seen if seen is not None else set()
+        paths: set[str] = set()
+        for dependency in by_id[task_id].depends_on if task_id in by_id else []:
+            if dependency in seen or dependency not in by_id:
+                continue
+            seen.add(dependency)
+            paths |= set(by_id[dependency].create) | created_before(dependency, seen)
+        return paths
+
     if len(plan.tasks) > policy.max_tasks:
         findings.append(f"{len(plan.tasks)} tasks exceed the limit of {policy.max_tasks}")
     for task in plan.tasks:
@@ -46,8 +57,9 @@ def check_plan(plan: PlanPayload, tests: TestPlan, criteria: list[Criterion], po
         if not task.modify and not task.create:
             findings.append(f"{task.id} changes no file")
         for reference in task.references:
-            if reference.file not in files:
-                findings.append(f"{task.id} references {reference.file}, which does not exist")
+            if reference.file not in files and reference.file not in created_before(task.id):
+                findings.append(f"{task.id} references {reference.file}, which does not exist and no task it "
+                                f"depends on creates")
             elif (reference.symbol and reference.symbol not in symbols.get(reference.file, set())
                   and reference.symbol not in provided_before(task.id)):
                 findings.append(f"{task.id} references {reference.symbol} in {reference.file}, which is not defined there")
@@ -74,6 +86,7 @@ def check_plan(plan: PlanPayload, tests: TestPlan, criteria: list[Criterion], po
             findings.append(f"{case.id} targets {case.target_file}, outside the test paths {policy.test_paths}")
     for criterion in sorted(criterion_ids - tested):
         findings.append(f"no test case proves {criterion}")
+    findings = list(dict.fromkeys(findings))  # one line per problem, not one per reference
     return {"status": "fail" if findings else "pass", "findings": findings,
             "warnings": _warnings(changed, files, policy)}
 

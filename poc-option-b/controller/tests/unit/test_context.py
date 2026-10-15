@@ -113,3 +113,25 @@ def test_references_to_symbols_added_by_a_dependency_are_grounded():
     ]
     report = check_plan(PlanPayload(summary="s", tasks=tasks), tests(), CRITERIA, policy(), FILES, SYMBOLS)
     assert report["findings"] == ["T3 references filterTasks in src/tasks.js, which is not defined there"]
+
+
+def test_references_to_files_created_by_a_dependency_are_grounded():
+    """A new project starts empty: later tasks use the modules earlier tasks create (attendance AUTH-US-01)."""
+    tasks = [
+        {"id": "T1", "title": "Add security helpers", "create": ["src/security.js"], "provides": ["hashPassword"],
+         "acceptance_criteria": ["AC-1"], "validation": ["unit-tests"]},
+        {"id": "T2", "title": "Wire login", "depends_on": ["T1"], "modify": ["src/app.js"],
+         "references": [{"file": "src/security.js", "symbol": "hashPassword"},
+                        {"file": "src/security.js", "symbol": "hashPassword"}],
+         "acceptance_criteria": ["AC-2"], "validation": ["unit-tests"]},
+        {"id": "T3", "title": "No dependency", "modify": ["src/app.js"],
+         "references": [{"file": "src/security.js", "symbol": "hashPassword"}], "acceptance_criteria": ["AC-2"],
+         "validation": ["unit-tests"]},
+        {"id": "T4", "title": "Wrong name", "depends_on": ["T1"], "modify": ["src/app.js"],
+         "references": [{"file": "src/security.js", "symbol": "verify"}], "acceptance_criteria": ["AC-2"],
+         "validation": ["unit-tests"]},
+    ]
+    report = check_plan(PlanPayload(summary="s", tasks=tasks), tests(), CRITERIA, policy(), FILES, SYMBOLS)
+    assert report["findings"] == [
+        "T3 references src/security.js, which does not exist and no task it depends on creates",
+        "T4 references verify in src/security.js, which is not defined there"]
