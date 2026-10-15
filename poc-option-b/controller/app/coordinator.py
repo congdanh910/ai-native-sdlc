@@ -24,8 +24,8 @@ from controller.app.context.builder import build_context as build_code_context
 from controller.app.context.grounding import check_with_bundle
 from controller.app.doing import changes, github
 from controller.app.doing.github import repo_slug
-from controller.app.documents import (add_document, add_plan, latest_document, latest_plan, sha256_text,
-                                      thread_path)
+from controller.app.documents import (THREAD_DIR, add_document, add_plan, latest_document, latest_plan,
+                                      sha256_text, thread_path)
 from controller.app.events import record_event
 from controller.app.jobs import COORDINATOR, enqueue, finish
 from controller.app.models import Approval, Artifact, Document, Clarification, Execution, Project, PullRequest, Run, Task
@@ -294,7 +294,17 @@ def _release_evidence(session: Session, run: Run) -> tuple[list[str], list[str]]
     import subprocess
     diff = subprocess.run(["git", "-C", run.worktree_path, "diff", "--unified=0", run.base_commit, "HEAD"],
                           capture_output=True, text=True).stdout
-    added = [line[1:] for line in diff.splitlines() if line.startswith("+") and not line.startswith("+++")]
+    # Secrets are looked for in what ships: source and configuration. Test fixtures ("Secret123") and the story's
+    # documents (examples in criteria) are data, so test paths, specs/ and the run thread are skipped.
+    raw_policy = artifact(session, run.id, "effective_policy")
+    test_paths = EffectivePolicy.model_validate_json(raw_policy).test_paths if raw_policy else []
+    added, current = [], None
+    for line in diff.splitlines():
+        if line.startswith("+++ "):
+            current = line[6:] if line.startswith("+++ b/") else None
+        elif line.startswith("+") and current and not matches_any(current, test_paths) \
+                and not current.startswith(("specs/", THREAD_DIR + "/")) and current not in (SRS_PATH, SDS_PATH):
+            added.append(f"{current}: {line[1:]}")
     ref = feature_ref(session, run)
     changed: list[str] = []
     if ref:
@@ -829,7 +839,8 @@ def _apply_code_task(session: Session, run: Run, execution: Execution, result: d
 
 def _apply_review(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
     review = result["review"]
-    markdown = review.get("markdown") or render_review(run.title, Review.model_validate(review), team.engine)
+    engine = result.get("_engine") or team.engine  # the engine that answered, e.g. claude-readonly
+    markdown = review.get("markdown") or render_review(run.title, Review.model_validate(review), engine)
     document = add_document(session, run.id, "review", markdown, author_kind="ai",
                             author=TeamRole.CODE_REVIEWER.value, data=review)
     document.commit_sha = commit_thread(session, run, "review", document.content, "sdlc: review")
