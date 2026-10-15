@@ -191,9 +191,11 @@ def srs(data: dict) -> dict:
         data[key] = as_list(data.get(key))
     data["questions"] = [{"question": q, "blocking": False} if isinstance(q, str) else q
                          for q in as_list(data.get("questions"))]
+    for key in SRS_ROWS:
+        data[key] = _flatten_rows(data[key])
     for feature in data["features"]:
         if isinstance(feature, dict):
-            feature["requirements"] = as_list(feature.get("requirements"))
+            feature["requirements"] = _flatten_rows(as_list(feature.get("requirements")))
             for story in as_list(feature.get("stories")):
                 if isinstance(story, dict) and isinstance(story.get("actors"), str):
                     story["actors"] = [a.strip() for a in story["actors"].split(",") if a.strip()]
@@ -222,6 +224,8 @@ def sds(data: dict) -> dict:
         data[key] = as_list(data.get(key))
     data["questions"] = [{"question": q, "blocking": False} if isinstance(q, str) else q
                          for q in as_list(data.get("questions"))]
+    for key in SDS_ROWS:
+        data[key] = _flatten_rows(data[key])
     if isinstance(data.get("purposes"), list):  # [{"id": ..., "purpose": ...}] -> {id: purpose}
         data["purposes"] = {p.get("id") or p.get("story"): p.get("purpose") for p in data["purposes"] if isinstance(p, dict)}
     for endpoint in data["endpoints"]:
@@ -254,4 +258,23 @@ def self_check(value) -> list:
             continue
         status = STATUS_WORDS.get(str(item.get("status", "")).strip().lower(), "fail")
         out.append({"id": str(item["id"]), "status": status, "note": _sentence(item.get("note")) or ""})
+    return out
+
+
+# Fields that hold text in the SRS and SDS contracts; a model often answers them with a list.
+SRS_ROWS = ("definitions", "roles", "entities", "relationships", "business_rules", "qualities", "experience",
+            "dependencies")
+SDS_ROWS = ("traceability", "objects", "screens", "components", "stack", "modules", "tables", "deployment",
+            "errors", "threats", "authorization", "nfr", "metrics", "conventions", "integrations")
+KEEP_LISTS = {"actors", "steps", "alternatives", "negatives", "stories", "requirements", "states", "changes",
+              "options"}
+
+
+def _flatten_rows(rows) -> list:
+    out = []
+    for row in rows if isinstance(rows, list) else []:
+        if isinstance(row, dict):
+            row = {k: (", ".join(str(x) for x in v if x not in (None, "")) if isinstance(v, list) and k not in KEEP_LISTS
+                       else _sentence(v) if isinstance(v, dict) and k not in KEEP_LISTS else v) for k, v in row.items()}
+        out.append(row)
     return out

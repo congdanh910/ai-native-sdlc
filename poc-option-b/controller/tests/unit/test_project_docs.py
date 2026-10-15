@@ -69,3 +69,8 @@ def test_edited_srs_problems_are_named():
     problems = check_srs_markdown("# SRS\n\n## 1. Introduction\n\n#### 7.1.1 AT-US-01: A (HR)\n#### 7.1.2 AT-US-01: B (HR)\n")
     assert "section '7. Features and User Stories' is missing" in problems
     assert "user story ids appear twice: AT-US-01" in problems
+
+
+def test_normalize_joins_lists_given_for_text_fields():
+    data = normalize.srs(answer(entities=[{"name": "Shift", "description": "A period", "attributes": ["start", "end"]}]))
+    assert Srs.model_validate(data).entities[0].attributes == "start, end"
