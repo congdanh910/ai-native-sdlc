@@ -31,11 +31,23 @@ def before_coding(criteria: list[Criterion], plan: PlanPayload, tests: TestPlan)
             findings.append(_finding("High", "consistency", f"{task.id} delivers {', '.join(unknown)}, which the spec does not have"))
         if not any(c.task_id == task.id for c in tests.cases):
             findings.append(_finding("Medium", "coverage", f"{task.id} has no test case; its change is proven only by other tasks' tests"))
-    by_task = {t.id: set(t.acceptance_criteria) for t in plan.tasks}
+    tasks = {t.id: t for t in plan.tasks}
+
+    def delivered_by(task_id: str, seen: set[str]) -> set[str]:
+        """Criteria of the task and of every task it depends on: an integration test on a later task may prove
+        what an earlier task built, since the later task runs on top of it."""
+        if task_id in seen or task_id not in tasks:
+            return set()
+        seen.add(task_id)
+        out = set(tasks[task_id].acceptance_criteria)
+        for dependency in tasks[task_id].depends_on:
+            out |= delivered_by(dependency, seen)
+        return out
+
     for case in tests.cases:
-        if case.task_id in by_task and case.criterion not in by_task[case.task_id]:
-            findings.append(_finding("High", "consistency",
-                                     f"{case.id} proves {case.criterion} on {case.task_id}, which does not deliver it"))
+        if case.task_id in tasks and case.criterion not in delivered_by(case.task_id, set()):
+            findings.append(_finding("High", "consistency", f"{case.id} proves {case.criterion} on {case.task_id}, "
+                                                            "which neither delivers it nor depends on a task that does"))
     texts = {}
     for criterion in criteria:
         key = " ".join(criterion.full.lower().split())
