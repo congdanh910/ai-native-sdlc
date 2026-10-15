@@ -42,6 +42,13 @@ def test_no_task_starts_before_the_qc_approves(db, sample_repo):
     assert stale.status_code == 409
     detail = post(f"/api/runs/{run}/approve-tests", {"document_id": tests["id"], "sha256": tests["sha256"], "checked": TICKS})
     assert detail["tasks"] and [a["role"] for a in detail["approvals"]] == ["product_owner", "tech_lead", "qc"]
+    before = [d for d in detail["documents"] if d["kind"] == "analysis"][-1]
+    assert before["content"].startswith("# Analysis before: Due dates") and "**0** Critical" in before["content"]
+    drain()
+    detail = client.get(f"/api/runs/{run}").json()
+    after = [d for d in detail["documents"] if d["kind"] == "analysis"][-1]
+    assert after["content"].startswith("# Analysis after: Due dates")
+    assert any(c["id"] == "analysis" for c in detail["checklist"]["controller"])
 
 
 def test_qc_revision_keeps_the_approved_plan(db, sample_repo):

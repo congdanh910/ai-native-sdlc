@@ -153,7 +153,7 @@ function DocBody({ doc }: { doc: Doc }) {
 
 function ThreadTab({ run }: { run: RunDetail }) {
   const doc = projectDoc(run);
-  const kinds = doc ? ["intent", doc.kind, "report"] : ["intent", "spec", "tests", "review", "report"];
+  const kinds = doc ? ["intent", doc.kind, "report"] : ["intent", "spec", "tests", "analysis", "review", "report"];
   const name = (kind: string) => (doc && kind === doc.kind ? doc.name : doc && kind === "intent" ? "brief.md" : kind === "tests" ? "test_cases.md" : `${kind}.md`);
   return (
     <div className="flex flex-col gap-3">

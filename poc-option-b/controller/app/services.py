@@ -231,6 +231,7 @@ def approve_tests(session: Session, run: Run, document_id: uuid.UUID, sha256: st
               checklist=checklist)
     document.commit_sha = coordinator.commit_thread(session, run, "tests", document.content,
                                                     f"sdlc: test cases v{document.version} approved")
+    coordinator.record_analysis(session, run, "before")
     plan.commit_sha = coordinator.write_plan_files(session, run, plan) or plan.commit_sha
     for task in PlanPayload.model_validate(plan.payload).tasks:
         session.add(Task(run_id=run.id, plan_id=plan.id, external_task_id=task.id, payload=task.model_dump(),

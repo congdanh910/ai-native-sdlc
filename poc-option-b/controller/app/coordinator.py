@@ -34,7 +34,7 @@ from controller.app.feature_docs import (PHASE_HEADING, FeatureRef, link_once, p
                                          sdlc_yaml, sds_feature_heading, spec_header, spec_section, srs_feature_heading,
                                          tasks_header, tasks_section, tc_numbers, test_cases_header, test_cases_section,
                                          upsert_section)
-from controller.app import checklists
+from controller.app import analysis, checklists
 from controller.app.project_docs import (SDS_PATH, SRS_PATH, Sds, Srs, check_sds_markdown, check_srs_markdown,
                                          render_sds, render_srs, sds_sync_findings, srs_features)
 from controller.app.projects.config import EffectivePolicy, effective_policy, matches_any
@@ -282,7 +282,9 @@ def evaluate_gate(session: Session, run: Run, gate: str | None = None) -> dict |
     elif gate == "pr":
         statuses = {t.external_task_id: t.status for t in current_tasks(session, run)}
         added, changed = _release_evidence(session, run)
-        controller = checklists.check_release(statuses, added, changed)
+        after = latest_document(session, run.id, "analysis")
+        findings = after.data.get("findings", []) if after and after.data.get("stage") == "after" else []
+        controller = checklists.check_release(statuses, added, changed, findings)
     return {"gate": gate, "controller": controller, "ai": ai, "human": checklists.human_items(gate)}
 
 
@@ -827,7 +829,7 @@ def execution_report(session: Session, run: Run) -> str:
     lines = [f"# Execution report: {run.title}", "", f"- Project: {project.key}",
              f"- Base commit: `{run.base_commit}`", f"- Branch: `{run.branch}`", "", "## Artifact thread", "",
              "| Artifact | Version | SHA-256 | Author |", "|---|---|---|---|"]
-    for kind in ("intent", "spec", "srs", "sds", "review"):
+    for kind in ("intent", "spec", "srs", "sds", "tests", "analysis", "review"):
         document = latest_document(session, run.id, kind)
         if document:
             name = {"srs": SRS_PATH, "sds": SDS_PATH}.get(kind, f"{kind}.md")
@@ -856,8 +858,35 @@ def execution_report(session: Session, run: Run) -> str:
     return "\n".join(lines)
 
 
+def record_analysis(session: Session, run: Run, stage: str) -> None:
+    """Store the cross-artifact analysis as a versioned document in the run's thread."""
+    plan = latest_plan(session, run.id)
+    if plan is None:  # SRS and SDS runs have no plan, tasks or tests
+        return
+    payload, tests = PlanPayload.model_validate(plan.payload), TestPlan.model_validate(plan.test_plan)
+    if stage == "before":
+        findings = analysis.before_coding(parse_criteria(latest_document(session, run.id, "spec").content), payload, tests)
+    else:
+        statuses = {t.external_task_id: t.status for t in current_tasks(session, run)}
+        if get_settings().coding_is_mocked or not run.worktree_path:
+            findings = analysis.after_coding(payload, tests, statuses, [p for t in payload.tasks for p in [*t.modify, *t.create]]
+                                             + [c.target_file for c in tests.cases], [])  # simulated coding changes nothing
+        else:
+            import subprocess
+            changed = subprocess.run(["git", "-C", run.worktree_path, "diff", "--name-only", run.base_commit, "HEAD"],
+                                     capture_output=True, text=True).stdout.split()
+            raw_policy = artifact(session, run.id, "effective_policy")
+            test_paths = EffectivePolicy.model_validate_json(raw_policy).test_paths if raw_policy else []
+            findings = analysis.after_coding(payload, tests, statuses, changed, test_paths)
+    document = add_document(session, run.id, "analysis", analysis.render(run.title, stage, findings), author_kind="ai",
+                            author=TeamRole.COORDINATOR.value, data={"stage": stage, "findings": findings})
+    document.commit_sha = commit_thread(session, run, f"analysis-{stage}", document.content,
+                                        f"sdlc: analysis {stage} coding")
+
+
 def _apply_release(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
     tick_tasks(session, run)
+    record_analysis(session, run, "after")
     report = add_document(session, run.id, "report", execution_report(session, run), author_kind="ai",
                           author=TeamRole.RELEASE_ENGINEER.value)
     head = commit_thread(session, run, "report", report.content, "sdlc: execution report")

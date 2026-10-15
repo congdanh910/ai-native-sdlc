@@ -152,7 +152,10 @@ def check_tests(tests: TestPlan, plan: PlanPayload, criteria: list[Criterion], t
     orphans = sorted({t.task_id for t in tests.cases} - tasks)
     outside = [f"{t.id}: {t.target_file}" for t in tests.cases if not matches_any(t.target_file, test_paths)]
     empty = [t.id for t in tests.cases if not (t.description.strip() and t.expected.strip())]
+    from controller.app.analysis import before_coding, blocking
+    serious = [f"{f['severity']}: {f['text']}" for f in blocking(before_coding(criteria, plan, tests))]
     return [
+        _result("analysis", "Cross-artifact analysis finds no Critical or High issue (spec, plan, tasks, tests)", serious),
         _result("coverage", "Every AC and EC has at least one test case", [f"no test: {', '.join(uncovered)}"] if uncovered else []),
         _result("known-criteria", "Every test case names an AC or EC of this story", [f"unknown: {', '.join(unknown)}"] if unknown else []),
         _result("known-tasks", "Every test case names a task of the approved plan", [f"unknown: {', '.join(orphans)}"] if orphans else []),
@@ -161,10 +164,13 @@ def check_tests(tests: TestPlan, plan: PlanPayload, criteria: list[Criterion], t
     ]
 
 
-def check_release(task_statuses: dict[str, str], added_lines: list[str], other_sections_changed: list[str]) -> list[dict]:
+def check_release(task_statuses: dict[str, str], added_lines: list[str], other_sections_changed: list[str],
+                  analysis: list[dict] | None = None) -> list[dict]:
     failing = [t for t, s in task_statuses.items() if s != "PASSED"]
     secrets = [line.strip()[:80] for line in added_lines if SECRET.search(line)]
+    serious = [f"{f['severity']}: {f['text']}" for f in (analysis or []) if f["severity"] in ("Critical", "High")]
     return [
+        _result("analysis", "The analysis after coding finds no Critical or High issue", serious),
         _result("tasks", "Every task passed validation", [f"not passed: {', '.join(failing)}"] if failing else []),
         _result("secrets", "No hard-coded passwords, tokens or keys in the change", secrets),
         _result("other-stories", "Other stories' sections in specs/ are unchanged", other_sections_changed),
