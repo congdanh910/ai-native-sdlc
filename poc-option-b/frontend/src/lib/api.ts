@@ -136,6 +136,14 @@ export interface Step {
   files: string[];
 }
 
+/** The review checklist of the gate a run waits at (aif-review-checklist.md). */
+export interface GateChecklist {
+  gate: string;
+  controller: { id: string; text: string; ok: boolean; detail: string }[];
+  ai: { id: string; text: string; status: string; note: string }[];
+  human: { id: string; text: string; checked?: boolean }[];
+}
+
 export interface RunDetail extends RunSummary {
   base_commit: string | null;
   branch: string | null;
@@ -147,7 +155,8 @@ export interface RunDetail extends RunSummary {
   plans: PlanVersion[];
   tasks: { id: string; title: string; status: string; attempts: number; depends_on: string[] }[];
   clarifications: { id: string; question: string; blocking: boolean; answer: string | null }[];
-  approvals: { stage: string; decision: string; actor: string; role: string; reason: string | null; created_at: string }[];
+  approvals: { stage: string; decision: string; actor: string; role: string; reason: string | null; checklist: Partial<GateChecklist>; created_at: string }[];
+  checklist: GateChecklist | null;
   pull_request: {
     url: string | null; number: number | null; head_sha: string | null; ci_status: string; review_status: string;
     merged_sha: string | null; simulated: boolean;

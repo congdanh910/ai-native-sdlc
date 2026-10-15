@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import select
 
 from controller.app import coordinator, jobs, services
+from controller.app.checklists import HUMAN_ITEMS
 from controller.app.db import session_scope
 from controller.app.documents import latest_document, latest_plan
 from controller.app.models import Execution, Plan, Project, PullRequest, Run, Task
@@ -19,6 +20,8 @@ from controller.app.team.base import CapacityBusy, StepResult
 from controller.app.team.mock import MockTeam
 from controller.app.worker import run_once
 from controller.tests.conftest import git
+
+TICKS = sorted({item.id for items in HUMAN_ITEMS.values() for item in items})  # every review item ticked
 
 pytestmark = pytest.mark.integration
 OPERATOR = "tester"
@@ -55,7 +58,7 @@ def approve_spec(run_id) -> None:
     with session_scope() as session:
         run = services.get_run(session, run_id)
         spec = latest_document(session, run_id, "spec")
-        services.approve_spec(session, run, spec.id, spec.sha256, actor=OPERATOR)
+        services.approve_spec(session, run, spec.id, spec.sha256, actor=OPERATOR, checked=TICKS)
 
 
 def approve_plan(run_id, *, tests: bool = True) -> None:
@@ -63,7 +66,7 @@ def approve_plan(run_id, *, tests: bool = True) -> None:
     with session_scope() as session:
         run = services.get_run(session, run_id)
         plan = latest_plan(session, run_id)
-        services.approve_plan(session, run, plan.id, plan.sha256, actor=OPERATOR)
+        services.approve_plan(session, run, plan.id, plan.sha256, actor=OPERATOR, checked=TICKS)
     if tests:
         approve_tests(run_id)
 
@@ -72,7 +75,7 @@ def approve_tests(run_id) -> None:
     with session_scope() as session:
         run = services.get_run(session, run_id)
         document = latest_document(session, run_id, "tests")
-        services.approve_tests(session, run, document.id, document.sha256, actor=OPERATOR)
+        services.approve_tests(session, run, document.id, document.sha256, actor=OPERATOR, checked=TICKS)
 
 
 def set_stages(repo, **stages) -> None:
@@ -135,7 +138,7 @@ def test_full_loop_commits_the_artifact_thread(db, sample_repo):
             assert mirror.read_file(head, f"{thread}/{kind}.md"), kind
         spec = latest_document(session, run_id, "spec")
         assert mirror.read_file(head, f"{thread}/spec.md") == spec.content
-        services.pr_decision(session, services.get_run(session, run_id), actor=OPERATOR, decision="approve",
+        services.pr_decision(session, services.get_run(session, run_id), actor=OPERATOR, decision="approve", checked=TICKS,
                              reason=None)
     assert status(run_id) == RunStatus.COMPLETED
 
@@ -151,7 +154,7 @@ def test_stale_spec_version_is_rejected(db, sample_repo):
     with session_scope() as session:
         run = services.get_run(session, run_id)
         with pytest.raises(services.DecisionError, match="latest spec"):
-            services.approve_spec(session, run, old.id, old.sha256, actor=OPERATOR)
+            services.approve_spec(session, run, old.id, old.sha256, actor=OPERATOR, checked=TICKS)
     approve_spec(run_id)
     with session_scope() as session:
         assert session.get(Run, run_id).human_corrected

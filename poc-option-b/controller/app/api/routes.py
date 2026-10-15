@@ -57,11 +57,13 @@ class Answers(Body):
 class DocumentChoice(Body):
     document_id: uuid.UUID
     sha256: str
+    checked: list[str] = []  # the human checklist items the reviewer ticked
 
 
 class PlanChoice(Body):
     plan_id: uuid.UUID
     sha256: str
+    checked: list[str] = []
 
 
 class Revision(Body):
@@ -99,8 +101,9 @@ class Reason(Body):
 
 
 class PrDecision(Body):
-    decision: Literal["approve", "request_changes", "close", "rereview"]
+    decision: Literal["approve", "checklist", "request_changes", "close", "rereview"]
     reason: str | None = None
+    checked: list[str] = []
 
 
 class Classification(Body):
@@ -230,7 +233,8 @@ def answers(run_id: uuid.UUID, body: Answers) -> dict:
 
 @router.post("/runs/{run_id}/approve-spec")
 def approve_spec(run_id: uuid.UUID, body: DocumentChoice) -> dict:
-    return _decide(run_id, lambda s, r: services.approve_spec(s, r, body.document_id, body.sha256, actor=operator()))
+    return _decide(run_id, lambda s, r: services.approve_spec(s, r, body.document_id, body.sha256, actor=operator(),
+                                                              checked=body.checked))
 
 
 @router.post("/runs/{run_id}/revise-spec")
@@ -246,7 +250,8 @@ def reject_spec(run_id: uuid.UUID, body: Rejection) -> dict:
 
 @router.post("/runs/{run_id}/approve-plan")
 def approve_plan(run_id: uuid.UUID, body: PlanChoice) -> dict:
-    return _decide(run_id, lambda s, r: services.approve_plan(s, r, body.plan_id, body.sha256, actor=operator()))
+    return _decide(run_id, lambda s, r: services.approve_plan(s, r, body.plan_id, body.sha256, actor=operator(),
+                                                                       checked=body.checked))
 
 
 @router.post("/runs/{run_id}/revise-plan")
@@ -263,7 +268,8 @@ def reject_plan(run_id: uuid.UUID, body: Rejection) -> dict:
 
 @router.post("/runs/{run_id}/approve-tests")
 def approve_tests(run_id: uuid.UUID, body: DocumentChoice) -> dict:
-    return _decide(run_id, lambda s, r: services.approve_tests(s, r, body.document_id, body.sha256, actor=operator()))
+    return _decide(run_id, lambda s, r: services.approve_tests(s, r, body.document_id, body.sha256, actor=operator(),
+                                                               checked=body.checked))
 
 
 @router.post("/runs/{run_id}/revise-tests")
@@ -297,7 +303,7 @@ def cancel(run_id: uuid.UUID, body: Reason) -> dict:
 @router.post("/runs/{run_id}/pr-decision")
 def pr_decision(run_id: uuid.UUID, body: PrDecision) -> dict:
     return _decide(run_id, lambda s, r: services.pr_decision(s, r, actor=operator(), decision=body.decision,
-                                                             reason=body.reason))
+                                                             reason=body.reason, checked=body.checked))
 
 
 @router.post("/runs/{run_id}/classify-failure")

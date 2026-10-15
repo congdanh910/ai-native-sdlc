@@ -64,6 +64,7 @@ def spec(data: dict) -> dict:
     data = dict(data)
     data["acceptance_criteria"] = _criteria(data.get("acceptance_criteria"), "AC")
     data["edge_cases"] = _criteria(data.get("edge_cases"), "EC")
+    data["self_check"] = self_check(data.get("self_check"))
     data["questions"] = [{"question": q, "blocking": False} if isinstance(q, str) else q
                          for q in data.get("questions") or []]
     for key in ("user_stories", "assumptions", "concerns"):
@@ -92,6 +93,7 @@ def plan(data: dict, validations: list[str]) -> dict:
     data["tasks"] = tasks
     data.setdefault("summary", "")
     data["design"] = _design(data.get("design"))
+    data["self_check"] = self_check(data.get("self_check"))
     return data
 
 
@@ -143,6 +145,7 @@ def test_plan(data: dict) -> dict:
             case["severity"] = severity if severity in ("Critical", "Major", "Minor") else "Major"
         cases.append(case)
     data["cases"] = cases
+    data["self_check"] = self_check(data.get("self_check"))
     return data
 
 
@@ -234,3 +237,21 @@ def sds(data: dict) -> dict:
         if isinstance(decision, dict):
             decision["options"] = as_list(decision.get("options"))
     return data
+
+
+STATUS_WORDS = {"pass": "pass", "passed": "pass", "ok": "pass", "yes": "pass", "true": "pass", "satisfied": "pass",
+                "deferred": "deferred", "defer": "deferred", "fail": "fail", "failed": "fail", "no": "fail",
+                "false": "fail", "n/a": "n/a", "na": "n/a", "not applicable": "n/a"}
+
+
+def self_check(value) -> list:
+    """[{id, status, note}] from a list, or from {id: status} / {id: {status, note}}; unknown words become fail."""
+    if isinstance(value, dict):
+        value = [{"id": k, **(v if isinstance(v, dict) else {"status": v})} for k, v in value.items()]
+    out = []
+    for item in value if isinstance(value, list) else []:
+        if not isinstance(item, dict) or not item.get("id"):
+            continue
+        status = STATUS_WORDS.get(str(item.get("status", "")).strip().lower(), "fail")
+        out.append({"id": str(item["id"]), "status": status, "note": _sentence(item.get("note")) or ""})
+    return out

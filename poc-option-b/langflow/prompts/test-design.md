@@ -15,6 +15,12 @@ Output keys:
   - severity: "Critical" when the product is unusable or data is lost if it fails, "Major" for a broken requirement, "Minor" for cosmetic or rare cases.
   - expected_pass: whether the test passes on the code as it is today, before any task is implemented. Tests of new or changed behaviour fail today, so they are false. Use true only for a regression guard: behaviour that already works and must keep working. Most plans have no true case.
 
+- self_check: array of objects with keys id, status and note: your own review of what you wrote, one per item below. status is pass, deferred, fail or n/a; note says why for anything but pass. Check honestly; a human reviews the same items.
+  - unhappy: Unhappy paths are covered: validation errors, rejected states, guardrails
+  - edges: Edge cases are covered: boundary values, empty input, concurrent or duplicate actions
+  - fresh-data: Each test creates the data it needs; nothing relies on seeded data
+  - helpers: Existing test helpers are reused, not duplicated
+
 Rules:
 - Every AC and EC id in criteria needs at least one case; check the list before you answer. Cover the edge cases and errors each criterion names. Keep each case short. For behaviour that lives in the user interface, test the functions that the interface calls.
 - Test behaviour through the functions the plan builds, as agents_md describes the test style.

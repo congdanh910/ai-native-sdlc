@@ -15,6 +15,13 @@ Output keys:
 - assumptions: array of strings; include every answer from the input that you relied on.
 - concerns: array of strings: risks, conflicts with agents_md, scope that looks too large, and technical questions for the Tech Lead.
 - questions: array of objects with keys question and blocking (true or false), for the Product Owner only.
+- self_check: array of objects with keys id, status and note: your own review of what you wrote, one per item below. status is pass, deferred, fail or n/a; note says why for anything but pass. Check honestly; a human reviews the same items.
+  - testable: Every AC describes a testable, observable outcome, not an implementation detail
+  - what-not-how: No technology names, endpoint paths, table or function names in ACs
+  - terminology: Business terms match agents_md and the project constitution
+  - trace: The story traces to an SRS entity (section 2) or a business flow step (section 6)
+  - scenarios: ACs cover the full scenario: success, validation errors, access denied, form states
+  - edge-cases: Every edge case category was scanned; the ones that apply are listed
 
 Do not number criteria or edge cases; the controller assigns AC-01, EC-01 and so on. Do not use the words fast, user-friendly, appropriate, relevant, seamless, optimal, as needed or if possible.
 

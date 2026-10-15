@@ -23,6 +23,14 @@ Output keys:
   - error_flows: objects with keys name (scenario), detail (status or outcome) and extra (error code).
   - rule_notes: objects with keys name (a rule id or name from agents_md), detail (Satisfied, Required or Note) and extra (how).
   - element_ids: new interactive UI elements, with keys name (element), detail (its stable id) and extra (file).
+- self_check: array of objects with keys id, status and note: your own review of what you wrote, one per item below. status is pass, deferred, fail or n/a; note says why for anything but pass. Check honestly; a human reviews the same items.
+  - preflight: Spec gaps were flagged, and none blocks the design
+  - layering: Rules and business logic sit where the project's architecture puts them
+  - data-model: Domain objects are distinct from the SRS entities and named in their language
+  - sequence: Sequence diagrams follow the call chain, label intents, and show error flows
+  - api: Endpoints and errors follow the project's API standards, or there is no endpoint change
+  - security: Every protected action states who may do it; secrets and passwords are handled safely
+  - sync: SDS sections the design changes are named, or there are none
 
 Rules:
 - Follow agents_md: put rules where its architecture says they belong. Sorting, filtering, ordering, validation, defaults and migration of stored data are rules, not interface code: plan them as functions in the module agents_md names for rules, and let the interface script only call them. This keeps them testable without a browser.

@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from controller.app.main import app
-from controller.tests.integration.test_team_loop import drain
+from controller.tests.integration.test_team_loop import TICKS, drain
 
 pytestmark = pytest.mark.integration
 client = TestClient(app, headers={"X-SDLC-Client": "web"})
@@ -34,7 +34,7 @@ def test_operator_walks_the_loop_in_the_web_api(db, sample_repo):
 
     stale = client.post(f"/api/runs/{run['id']}/approve-spec", json={"document_id": spec["id"], "sha256": "0" * 64})
     assert stale.status_code == 409
-    post(f"/api/runs/{run['id']}/approve-spec", {"document_id": spec["id"], "sha256": spec["sha256"]})
+    post(f"/api/runs/{run['id']}/approve-spec", {"document_id": spec["id"], "sha256": spec["sha256"], "checked": TICKS})
     drain()
 
     detail = client.get(f"/api/runs/{run['id']}").json()
@@ -45,16 +45,16 @@ def test_operator_walks_the_loop_in_the_web_api(db, sample_repo):
                     "reason": "clearer summary"})
     plan = revised["plans"][-1]
     assert plan["version"] == 2 and plan["author_kind"] == "human"
-    post(f"/api/runs/{run['id']}/approve-plan", {"plan_id": plan["id"], "sha256": plan["sha256"]})
+    post(f"/api/runs/{run['id']}/approve-plan", {"plan_id": plan["id"], "sha256": plan["sha256"], "checked": TICKS})
     detail = client.get(f"/api/runs/{run['id']}").json()
     assert detail["waiting"] == {"role": "qc", "action": "waiting_test_approval"}
     tests = [d for d in detail["documents"] if d["kind"] == "tests"][-1]
-    post(f"/api/runs/{run['id']}/approve-tests", {"document_id": tests["id"], "sha256": tests["sha256"]})
+    post(f"/api/runs/{run['id']}/approve-tests", {"document_id": tests["id"], "sha256": tests["sha256"], "checked": TICKS})
     drain()
 
     detail = client.get(f"/api/runs/{run['id']}").json()
     assert detail["status"] == "WAITING_PR_APPROVAL" and detail["pull_request"]["simulated"]
-    detail = post(f"/api/runs/{run['id']}/pr-decision", {"decision": "approve"})
+    detail = post(f"/api/runs/{run['id']}/pr-decision", {"decision": "approve", "checked": TICKS})
     assert detail["status"] == "COMPLETED"
     assert detail["waiting"] == {"role": "tech_lead", "action": "classify"}  # the plan was corrected
     post(f"/api/runs/{run['id']}/classify-failure",
@@ -73,7 +73,7 @@ def test_bad_plan_revision_is_explained(db, sample_repo):
     drain()
     detail = client.get(f"/api/runs/{run['id']}").json()
     spec = [d for d in detail["documents"] if d["kind"] == "spec"][-1]
-    post(f"/api/runs/{run['id']}/approve-spec", {"document_id": spec["id"], "sha256": spec["sha256"]})
+    post(f"/api/runs/{run['id']}/approve-spec", {"document_id": spec["id"], "sha256": spec["sha256"], "checked": TICKS})
     drain()
     plan = client.get(f"/api/runs/{run['id']}").json()["plans"][-1]
     cyclic = {**plan["plan"], "tasks": [{**plan["plan"]["tasks"][0], "depends_on": ["T1"]}]}

@@ -41,9 +41,9 @@ def _require(run: Run, *statuses: RunStatus) -> None:
 
 
 def _approval(session: Session, run: Run, stage: str, decision: str, actor: str, role: str, *,
-              reason: str | None = None, document_id=None, plan_id=None) -> None:
+              reason: str | None = None, document_id=None, plan_id=None, checklist: dict | None = None) -> None:
     session.add(Approval(run_id=run.id, stage=stage, decision=decision, actor=actor, acting_role=role,
-                         reason=reason, document_id=document_id, plan_id=plan_id))
+                         reason=reason, document_id=document_id, plan_id=plan_id, checklist=checklist or {}))
     record_event(session, f"{stage}.{decision}", actor=actor, acting_role=role, run_id=run.id,
                  payload={"reason": reason, "document": str(document_id) if document_id else None,
                           "plan": str(plan_id) if plan_id else None})
@@ -134,10 +134,19 @@ def gate_role(run: Run) -> str:
     return TL if run.kind == RunKind.SDS else PO
 
 
-def approve_spec(session: Session, run: Run, document_id: uuid.UUID, sha256: str, *, actor: str) -> None:
+def _checklist(session: Session, run: Run, checked: list[str] | None) -> dict:
+    try:
+        return coordinator.require_checklist(session, run, checked)
+    except ValueError as exc:
+        raise DecisionError(str(exc)) from exc
+
+
+def approve_spec(session: Session, run: Run, document_id: uuid.UUID, sha256: str, *, actor: str,
+                 checked: list[str] | None = None) -> None:
     _require(run, RunStatus.WAITING_SPEC_APPROVAL)
     spec = _current_spec(session, run, document_id, sha256)
-    _approval(session, run, "spec", "approve", actor, gate_role(run), document_id=spec.id)
+    checklist = _checklist(session, run, checked)
+    _approval(session, run, "spec", "approve", actor, gate_role(run), document_id=spec.id, checklist=checklist)
     coordinator.accept_spec(session, run, spec, actor=actor, acting_role=gate_role(run))
 
 
@@ -183,10 +192,12 @@ def _current_plan(session: Session, run: Run, plan_id: uuid.UUID, sha256: str):
     return plan
 
 
-def approve_plan(session: Session, run: Run, plan_id: uuid.UUID, sha256: str, *, actor: str) -> None:
+def approve_plan(session: Session, run: Run, plan_id: uuid.UUID, sha256: str, *, actor: str,
+                 checked: list[str] | None = None) -> None:
     _require(run, RunStatus.WAITING_PLAN_APPROVAL)
     plan = _current_plan(session, run, plan_id, sha256)
-    _approval(session, run, "plan", "approve", actor, TL, plan_id=plan.id)
+    checklist = _checklist(session, run, checked)
+    _approval(session, run, "plan", "approve", actor, TL, plan_id=plan.id, checklist=checklist)
     plan.commit_sha = coordinator.commit_thread(session, run, "plan", coordinator.plan_markdown(run, plan),
                                                 f"sdlc: plan v{plan.version} approved")
     coordinator.enter_quality_gate(session, run, plan, actor=actor, acting_role=TL)
@@ -208,13 +219,16 @@ def _approved_payload(session: Session, run: Run) -> dict:
     return session.get(Plan, approval.plan_id).payload
 
 
-def approve_tests(session: Session, run: Run, document_id: uuid.UUID, sha256: str, *, actor: str) -> None:
+def approve_tests(session: Session, run: Run, document_id: uuid.UUID, sha256: str, *, actor: str,
+                  checked: list[str] | None = None) -> None:
     _require(run, RunStatus.WAITING_TEST_APPROVAL)
     document = _current_tests(session, run, document_id, sha256)
     plan = latest_plan(session, run.id)
     if document.data.get("plan_id") != str(plan.id) or plan.payload != _approved_payload(session, run):
         raise DecisionError("the test cases do not belong to the approved plan; reload the run")
-    _approval(session, run, "tests", "approve", actor, QC, document_id=document.id, plan_id=plan.id)
+    checklist = _checklist(session, run, checked)
+    _approval(session, run, "tests", "approve", actor, QC, document_id=document.id, plan_id=plan.id,
+              checklist=checklist)
     document.commit_sha = coordinator.commit_thread(session, run, "tests", document.content,
                                                     f"sdlc: test cases v{document.version} approved")
     plan.commit_sha = coordinator.write_plan_files(session, run, plan) or plan.commit_sha
@@ -392,10 +406,16 @@ def github_event(session: Session, delivery: str, event: str) -> str:
 
 # ---------------------------------------------------------------- Code Owner
 
-def pr_decision(session: Session, run: Run, *, actor: str, decision: str, reason: str | None) -> None:
+def pr_decision(session: Session, run: Run, *, actor: str, decision: str, reason: str | None,
+                checked: list[str] | None = None) -> None:
+    """approve (simulated PRs), checklist (record the review before merging in GitHub), request_changes,
+    rereview or close."""
     _require(run, RunStatus.WAITING_PR_APPROVAL)
     pull = session.scalar(select(PullRequest).where(PullRequest.run_id == run.id))
-    _approval(session, run, "pr", decision, actor, CO, reason=reason)
+    checklist = _checklist(session, run, checked) if decision in ("approve", "checklist") else None
+    _approval(session, run, "pr", decision, actor, CO, reason=reason, checklist=checklist)
+    if decision == "checklist":
+        return
     if decision == "approve":
         if not pull.simulated:
             raise DecisionError("merge the PR in GitHub; the platform records the merge from GitHub")

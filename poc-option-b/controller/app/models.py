@@ -154,6 +154,7 @@ class Approval(Base):
     acting_role: Mapped[str] = mapped_column(String(32), nullable=False)
     decision: Mapped[str] = mapped_column(String(16), nullable=False)
     reason: Mapped[str | None] = mapped_column(Text)
+    checklist: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)  # what was checked at the gate
     created_at: Mapped[datetime] = _created()
 
 

@@ -13,7 +13,7 @@ from controller.app.project_docs import ArchitectureBrief, render_architecture_b
 from controller.app.team.base import RunContext
 from controller.app.team.mock import MockTeam
 from controller.tests.integration.test_srs_flow import post, with_srs
-from controller.tests.integration.test_team_loop import drain
+from controller.tests.integration.test_team_loop import TICKS, drain
 
 pytestmark = pytest.mark.integration
 client = TestClient(app, headers={"X-SDLC-Client": "web"})
@@ -64,7 +64,7 @@ def test_story_run_writes_spec_plan_tasks_and_test_cases_in_the_feature_folder(d
     assert spec["content"].startswith("## CIW-US-01: Check in with the camera (EMPLOYEE)")
     assert "> **Feature group:** 7.1 Check in with the camera" in spec["content"]
     assert "- **AC-01 — An employee who faces:**  \n  **Given** the product as it is,  \n" in spec["content"]
-    post(f"/api/runs/{run['id']}/approve-spec", {"document_id": spec["id"], "sha256": spec["sha256"]})
+    post(f"/api/runs/{run['id']}/approve-spec", {"document_id": spec["id"], "sha256": spec["sha256"], "checked": TICKS})
     drain()
 
     with session_scope() as session:
@@ -80,10 +80,10 @@ def test_story_run_writes_spec_plan_tasks_and_test_cases_in_the_feature_folder(d
     assert f"> Spec: [{folder}/spec.md]({folder}/spec.md)" in show(worktree, "SRS.md")
 
     plan = client.get(f"/api/runs/{run['id']}").json()["plans"][-1]
-    post(f"/api/runs/{run['id']}/approve-plan", {"plan_id": plan["id"], "sha256": plan["sha256"]})
+    post(f"/api/runs/{run['id']}/approve-plan", {"plan_id": plan["id"], "sha256": plan["sha256"], "checked": TICKS})
     tests = [d for d in client.get(f"/api/runs/{run['id']}").json()["documents"] if d["kind"] == "tests"][-1]
     assert tests["content"].startswith("## CIW-US-01: Check in with the camera (EMPLOYEE)")
-    post(f"/api/runs/{run['id']}/approve-tests", {"document_id": tests["id"], "sha256": tests["sha256"]})
+    post(f"/api/runs/{run['id']}/approve-tests", {"document_id": tests["id"], "sha256": tests["sha256"], "checked": TICKS})
     drain()
     plan_md = show(worktree, f"{folder}/plan.md")
     assert plan_md.startswith("# Plan: Check in with the camera (CIW)")

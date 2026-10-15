@@ -237,6 +237,12 @@ function WorkTab({ run }: { run: RunDetail }) {
               <li key={i} className="border-t border-line py-2 first:border-t-0">
                 <b>{a.stage} {a.decision}</b> <span className="text-muted">by {a.actor} as {role(a.role)} · {when(a.created_at)}</span>
                 {a.reason ? <div className="text-sm text-ink-2">{a.reason}</div> : null}
+                {a.checklist?.gate ? (
+                  <div className="text-xs text-muted">
+                    Checklist: {(a.checklist.controller ?? []).filter((c) => c.ok).length}/{(a.checklist.controller ?? []).length} controller checks passed ·{" "}
+                    {(a.checklist.human ?? []).filter((h) => h.checked).length}/{(a.checklist.human ?? []).length} review items ticked
+                  </div>
+                ) : null}
               </li>
             ))}
           </ol>

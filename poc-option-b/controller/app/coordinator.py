@@ -34,8 +34,9 @@ from controller.app.feature_docs import (PHASE_HEADING, FeatureRef, link_once, p
                                          sdlc_yaml, sds_feature_heading, spec_header, spec_section, srs_feature_heading,
                                          tasks_header, tasks_section, tc_numbers, test_cases_header, test_cases_section,
                                          upsert_section)
-from controller.app.project_docs import (SDS_PATH, SRS_PATH, Sds, Srs, render_sds, render_srs, sds_sync_findings,
-                                         srs_features)
+from controller.app import checklists
+from controller.app.project_docs import (SDS_PATH, SRS_PATH, Sds, Srs, check_sds_markdown, check_srs_markdown,
+                                         render_sds, render_srs, sds_sync_findings, srs_features)
 from controller.app.projects.config import EffectivePolicy, effective_policy, matches_any
 from controller.app.projects.registry import mirror_for, read_snapshot
 from controller.app.projects.repo import Worktree
@@ -172,7 +173,7 @@ def write_spec_files(session: Session, run: Run, document) -> str | None:
     worktree = worktree_for(session.get(Project, run.project_id), run)
     folder = ref.folder
     model = _spec_model(session, run)
-    checks = {item["item"]: (item["status"], item.get("note", "")) for item in (model.model_dump().get("self_check") or [])}
+    checks = checklists.requirement_statuses([c.model_dump() for c in model.self_check])
     files = {
         f"{folder}/spec.md": upsert_section(worktree.read(f"{folder}/spec.md"), spec_header(ref), ref.story_id,
                                             spec_section(document.content)),
@@ -232,6 +233,99 @@ def tick_tasks(session: Session, run: Run) -> None:
     content = _tasks_file(worktree, ref, PlanPayload.model_validate(plan.payload), TestPlan.model_validate(plan.test_plan),
                           numbers, passed)
     worktree.commit_files({f"{ref.folder}/tasks.md": content}, f"sdlc: {ref.story_id} tasks done")
+
+
+# ---------------------------------------------------------------- gate checklists
+
+GATE_OF_STATUS = {RunStatus.WAITING_PLAN_APPROVAL: "plan", RunStatus.WAITING_TEST_APPROVAL: "tests",
+                  RunStatus.WAITING_PR_APPROVAL: "pr"}
+
+
+def gate_of(run: Run) -> str | None:
+    if run.status == RunStatus.WAITING_SPEC_APPROVAL:
+        return spec_kind(run)  # spec, srs or sds
+    return GATE_OF_STATUS.get(RunStatus(run.status))
+
+
+def evaluate_gate(session: Session, run: Run, gate: str | None = None) -> dict | None:
+    """The checklist of the gate the run waits at: controller results, the role's self-check, the human items."""
+    gate = gate or gate_of(run)
+    if gate is None:
+        return None
+    raw_policy = artifact(session, run.id, "effective_policy")
+    test_paths = EffectivePolicy.model_validate_json(raw_policy).test_paths if raw_policy else []
+    controller: list[dict] = []
+    ai: list[dict] = []
+    spec = latest_document(session, run.id, "spec")
+    if gate == "srs":
+        problems = check_srs_markdown(latest_document(session, run.id, "srs").content)
+        controller = [checklists._result("outline", "SRS sections 1-8 are present and story ids are unique", problems)]
+    elif gate == "sds":
+        srs_text = mirror_for(session.get(Project, run.project_id)).read_file(run.base_commit, SRS_PATH)
+        problems = check_sds_markdown(latest_document(session, run.id, "sds").content, srs_text)
+        controller = [checklists._result("outline", "SDS sections are present and every SRS story has a section 5 entry",
+                                         problems)]
+    elif gate == "spec":
+        controller = checklists.check_spec(spec.content)
+        model = _spec_model(session, run)
+        ai = checklists.ai_results(checklists.AI_ITEMS["spec"], [c.model_dump() for c in model.self_check])
+    elif gate in ("plan", "tests"):
+        plan = latest_plan(session, run.id)
+        payload, tests = PlanPayload.model_validate(plan.payload), TestPlan.model_validate(plan.test_plan)
+        criteria = parse_criteria(spec.content)
+        if gate == "plan":
+            controller = checklists.check_plan(payload, criteria, plan.grounding_report, test_paths)
+            ai = checklists.ai_results(checklists.AI_ITEMS["plan"], [c.model_dump() for c in payload.self_check])
+        else:
+            controller = checklists.check_tests(tests, payload, criteria, test_paths)
+            ai = checklists.ai_results(checklists.AI_ITEMS["tests"], [c.model_dump() for c in tests.self_check])
+    elif gate == "pr":
+        statuses = {t.external_task_id: t.status for t in current_tasks(session, run)}
+        added, changed = _release_evidence(session, run)
+        controller = checklists.check_release(statuses, added, changed)
+    return {"gate": gate, "controller": controller, "ai": ai, "human": checklists.human_items(gate)}
+
+
+def _release_evidence(session: Session, run: Run) -> tuple[list[str], list[str]]:
+    """Lines the run adds (for the secret scan) and other stories' sections that differ from the base."""
+    if not run.worktree_path or not Path(run.worktree_path).is_dir() or not run.base_commit:
+        return [], []
+    import subprocess
+    diff = subprocess.run(["git", "-C", run.worktree_path, "diff", "--unified=0", run.base_commit, "HEAD"],
+                          capture_output=True, text=True).stdout
+    added = [line[1:] for line in diff.splitlines() if line.startswith("+") and not line.startswith("+++")]
+    ref = feature_ref(session, run)
+    changed: list[str] = []
+    if ref:
+        mirror = mirror_for(session.get(Project, run.project_id))
+        worktree = worktree_for(session.get(Project, run.project_id), run)
+        for name in ("spec.md", "plan.md", "test_cases.md", "checklists/requirements.md"):
+            before = mirror.read_file(run.base_commit, f"{ref.folder}/{name}") or ""
+            after = worktree.read(f"{ref.folder}/{name}") or ""
+            for story, text in _sections(before).items():
+                if story != ref.story_id and _sections(after).get(story) != text:
+                    changed.append(f"{ref.folder}/{name}: {story}")
+    return added, changed
+
+
+def _sections(text: str) -> dict[str, str]:
+    starts = list(re.finditer(r"^## ([A-Z]{2,4}-US-\d{2}(?:\.\d+)?):", text, re.MULTILINE))
+    return {m[1]: text[m.start(): starts[i + 1].start() if i + 1 < len(starts) else len(text)].strip()
+            for i, m in enumerate(starts)}
+
+
+def require_checklist(session: Session, run: Run, checked: list[str] | None) -> dict:
+    """Refuse an approval while a controller check fails or a human item is unticked; return what to record."""
+    evaluation = evaluate_gate(session, run)
+    if evaluation is None:
+        return {}
+    failing = [f"{c['text']}: {c['detail']}" for c in evaluation["controller"] if not c["ok"]]
+    if failing:
+        raise ValueError("the controller checks fail; revise or reject instead: " + " | ".join(failing))
+    missing = checklists.missing_ticks(evaluation["gate"], checked)
+    if missing:
+        raise ValueError("tick every review item before approving; missing: " + "; ".join(missing))
+    return {**evaluation, "human": [{**h, "checked": True} for h in evaluation["human"]]}
 
 
 def on_claim(session: Session, execution: Execution) -> None:

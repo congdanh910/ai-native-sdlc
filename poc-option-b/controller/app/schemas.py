@@ -36,6 +36,13 @@ def render_intent(intent: Intent) -> str:
     return f"# Intent: {intent.title}\n\n{story}{body}\n"
 
 
+class SelfCheck(Contract):
+    """A role's answer to one item of its gate's checklist."""
+    id: str
+    status: Literal["pass", "deferred", "fail", "n/a"]
+    note: str = ""
+
+
 class Question(Contract):
     question: str
     blocking: bool
@@ -62,6 +69,7 @@ class Spec(Contract):
     user_stories: list[str]
     acceptance_criteria: list[Criterion] = Field(min_length=1)
     edge_cases: list[Criterion] = []
+    self_check: list[SelfCheck] = []
     assumptions: list[str] = []
     concerns: list[str] = []
     questions: list[Question] = []
@@ -207,6 +215,7 @@ class PlanPayload(Contract):
     summary: str
     tasks: list[PlanTask] = Field(min_length=1)
     design: PlanDesign = PlanDesign()
+    self_check: list[SelfCheck] = []
 
     @model_validator(mode="after")
     def _dag(self) -> "PlanPayload":
@@ -257,6 +266,7 @@ class TestCase(Contract):
 class TestPlan(Contract):
     __test__ = False
     cases: list[TestCase] = Field(min_length=1)
+    self_check: list[SelfCheck] = []
 
 
 def render_plan(title: str, version: int, plan: PlanPayload, tests: TestPlan, grounding: dict | None) -> str:

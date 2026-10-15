@@ -4,6 +4,7 @@ import { ExternalLink, GitPullRequest } from "lucide-react";
 import { api, projectDoc, type Meta, type RunDetail } from "../lib/api";
 import { ACTION_LABEL, role, short } from "../lib/utils";
 import { CoverageMatrix, GroundingSummary } from "./Coverage";
+import { GateChecklist } from "./GateChecklist";
 import { PlanSummary } from "./PlanSummary";
 import { ActionButton, Badge, Button, Card, Field, Markdown, Mono, Select, StatusBadge, Textarea } from "./ui";
 
@@ -47,6 +48,8 @@ export function DecisionPanel({ run, onDone }: { run: RunDetail; onDone: () => v
   const [planDraft, setPlanDraft] = useState(plan ? JSON.stringify({ plan: plan.plan, test_plan: plan.test_plan }, null, 2) : "");
   const tests = [...run.documents].reverse().find((d) => d.kind === "tests");
   const [testsDraft, setTestsDraft] = useState(plan ? JSON.stringify(plan.test_plan, null, 2) : "");
+  const [checked, setChecked] = useState<string[]>([]);
+  const checklist = run.checklist ? <GateChecklist checklist={run.checklist} checked={checked} onChange={setChecked} /> : null;
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [classification, setClassification] = useState({ category: "", stage: "", role: "", note: "" });
   if (!need) return null;
@@ -90,9 +93,10 @@ export function DecisionPanel({ run, onDone }: { run: RunDetail; onDone: () => v
             <Textarea id="spec-edit" className="min-h-72 font-mono text-[12.5px]" value={specDraft} onChange={(e) => setSpecDraft(e.target.value)} />
           </Field>
         ) : null}
+        {checklist}
         <Reason value={reason} onChange={setReason} placeholder="Required to reject, optional to revise" />
         <div className="flex flex-wrap gap-2">
-          <ActionButton variant="primary" success={srs ? `${specName} accepted; opening the PR` : "Spec accepted"} action={() => post("approve-spec", { document_id: spec.id, sha256: spec.sha256 })}>
+          <ActionButton variant="primary" success={srs ? `${specName} accepted; opening the PR` : "Spec accepted"} action={() => post("approve-spec", { document_id: spec.id, sha256: spec.sha256, checked })}>
             Accept {srs ? specName : "spec"} v{spec.version}
           </ActionButton>
           <Button onClick={() => setEditing(!editing)}>{editing ? "Hide editor" : "Edit"}</Button>
@@ -115,9 +119,10 @@ export function DecisionPanel({ run, onDone }: { run: RunDetail; onDone: () => v
             <Textarea id="plan-edit" className="min-h-80 font-mono text-[12px]" value={planDraft} onChange={(e) => setPlanDraft(e.target.value)} />
           </Field>
         ) : null}
+        {checklist}
         <Reason value={reason} onChange={setReason} placeholder="Required to reject, optional to revise" />
         <div className="flex flex-wrap items-center gap-2">
-          <ActionButton variant="primary" success="Plan approved; the QC reviews the test cases next" action={() => post("approve-plan", { plan_id: plan.id, sha256: plan.sha256 })}>
+          <ActionButton variant="primary" success="Plan approved; the QC reviews the test cases next" action={() => post("approve-plan", { plan_id: plan.id, sha256: plan.sha256, checked })}>
             Approve plan v{plan.version}
           </ActionButton>
           <Button onClick={() => setEditing(!editing)}>{editing ? "Hide editor" : "Edit JSON"}</Button>
@@ -152,9 +157,10 @@ export function DecisionPanel({ run, onDone }: { run: RunDetail; onDone: () => v
             <Textarea id="tests-edit" className="min-h-80 font-mono text-[12px]" value={testsDraft} onChange={(e) => setTestsDraft(e.target.value)} />
           </Field>
         ) : null}
+        {checklist}
         <Reason value={reason} onChange={setReason} placeholder="Required to reject, optional to revise" />
         <div className="flex flex-wrap items-center gap-2">
-          <ActionButton variant="primary" success="Test cases approved; coding starts" action={() => post("approve-tests", { document_id: tests.id, sha256: tests.sha256 })}>
+          <ActionButton variant="primary" success="Test cases approved; coding starts" action={() => post("approve-tests", { document_id: tests.id, sha256: tests.sha256, checked })}>
             Approve test cases v{tests.version}
           </ActionButton>
           <Button onClick={() => setEditing(!editing)}>{editing ? "Hide editor" : "Edit JSON"}</Button>
@@ -192,9 +198,11 @@ export function DecisionPanel({ run, onDone }: { run: RunDetail; onDone: () => v
             <p className="m-0 text-sm text-muted">Merge it in GitHub; the platform never merges. The run completes when GitHub reports a merge of this exact head (checked every minute).</p>
           </>
         )}
+        {checklist}
         <Reason value={reason} onChange={setReason} placeholder="What should change (required for request changes)" />
         <div className="flex flex-wrap gap-2">
-          {pr.simulated ? <ActionButton variant="primary" action={() => post("pr-decision", { decision: "approve" })}>Record simulated merge</ActionButton> : null}
+          {pr.simulated ? <ActionButton variant="primary" action={() => post("pr-decision", { decision: "approve", checked })}>Record simulated merge</ActionButton>
+            : <ActionButton variant="primary" success="Review checklist recorded; merge in GitHub" action={() => post("pr-decision", { decision: "checklist", checked })}>Record review checklist</ActionButton>}
           <ActionButton action={() => post("pr-decision", { decision: "request_changes", reason })}>Request changes</ActionButton>
           <ActionButton action={() => post("pr-decision", { decision: "rereview", reason })}>Review again</ActionButton>
           <ActionButton variant="danger" action={() => post("pr-decision", { decision: "close", reason })}>Close without merge</ActionButton>

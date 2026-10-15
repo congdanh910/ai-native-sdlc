@@ -12,7 +12,7 @@ from controller.app.models import Run
 from controller.app.project_docs import ProjectBrief, render_brief, render_srs
 from controller.app.team.base import RunContext
 from controller.app.team.mock import MockTeam
-from controller.tests.integration.test_team_loop import drain
+from controller.tests.integration.test_team_loop import TICKS, drain
 
 pytestmark = pytest.mark.integration
 client = TestClient(app, headers={"X-SDLC-Client": "web"})
@@ -60,7 +60,7 @@ def test_srs_run_goes_from_brief_to_a_pull_request(db, sample_repo):
     srs = srs_document(run["id"])
     assert srs["version"] == 2 and srs["author_kind"] == "human"
 
-    post(f"/api/runs/{run['id']}/approve-spec", {"document_id": srs["id"], "sha256": srs["sha256"]})
+    post(f"/api/runs/{run['id']}/approve-spec", {"document_id": srs["id"], "sha256": srs["sha256"], "checked": TICKS})
     drain()
     detail = client.get(f"/api/runs/{run['id']}").json()
     assert detail["status"] == "WAITING_PR_APPROVAL" and detail["pull_request"]["simulated"]
@@ -73,7 +73,7 @@ def test_srs_run_goes_from_brief_to_a_pull_request(db, sample_repo):
     report = [d for d in detail["documents"] if d["kind"] == "report"][-1]["content"]
     assert "| SRS.md | v2 |" in report
 
-    detail = post(f"/api/runs/{run['id']}/pr-decision", {"decision": "approve"})
+    detail = post(f"/api/runs/{run['id']}/pr-decision", {"decision": "approve", "checked": TICKS})
     assert detail["status"] == "COMPLETED"
 
 
@@ -167,7 +167,7 @@ def test_sds_run_designs_every_srs_story_and_waits_for_the_tech_lead(db, sample_
     response = client.post(f"/api/runs/{run['id']}/revise-spec", json={"content": dropped})
     assert response.status_code == 409 and "no entry for SRS stories CIW-US-01" in response.json()["detail"]
 
-    post(f"/api/runs/{run['id']}/approve-spec", {"document_id": sds["id"], "sha256": sds["sha256"]})
+    post(f"/api/runs/{run['id']}/approve-spec", {"document_id": sds["id"], "sha256": sds["sha256"], "checked": TICKS})
     drain()
     detail = client.get(f"/api/runs/{run['id']}").json()
     assert detail["status"] == "WAITING_PR_APPROVAL"

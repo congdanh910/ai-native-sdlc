@@ -7,8 +7,12 @@ from controller.app.models import (Approval, Clarification, Document, Event, Exe
                                    Run, Task)
 from controller.app.project_docs import SRS_PATH, srs_features
 from controller.app.projects.registry import mirror_for
+from controller.app.coordinator import evaluate_gate
 from controller.app.services import needs_classification
 from controller.app.states import ACTIVE, STAGE_STARTER, WAITING_FOR, HumanRole
+
+
+WAITING_GATES = ("WAITING_SPEC_APPROVAL", "WAITING_PLAN_APPROVAL", "WAITING_TEST_APPROVAL", "WAITING_PR_APPROVAL")
 
 
 def project_view(project: Project) -> dict:
@@ -77,8 +81,9 @@ def run_detail(session: Session, run: Run) -> dict:
         "clarifications": [{"id": str(c.id), "question": c.question, "blocking": c.blocking, "answer": c.answer}
                            for c in session.scalars(select(Clarification).where(Clarification.run_id == run.id)
                                                     .order_by(Clarification.created_at))],
+        "checklist": evaluate_gate(session, run) if run.status in WAITING_GATES else None,
         "approvals": [{"stage": a.stage, "decision": a.decision, "actor": a.actor, "role": a.acting_role,
-                       "reason": a.reason, "created_at": a.created_at.isoformat()}
+                       "reason": a.reason, "checklist": a.checklist, "created_at": a.created_at.isoformat()}
                       for a in session.scalars(select(Approval).where(Approval.run_id == run.id)
                                                .order_by(Approval.created_at))],
         "pull_request": None if pull is None else {
