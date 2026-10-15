@@ -151,7 +151,7 @@ def test_revised_spec_must_keep_criteria(db, sample_repo):
     run_id = new_run(add_project(sample_repo))
     drain()
     with session_scope() as session:
-        with pytest.raises(services.DecisionError, match="AC-1"):
+        with pytest.raises(services.DecisionError, match="AC-01"):
             services.revise_spec(session, services.get_run(session, run_id), "# no criteria", actor=OPERATOR,
                                  reason=None)
 

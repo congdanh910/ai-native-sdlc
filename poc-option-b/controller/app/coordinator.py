@@ -27,7 +27,12 @@ from controller.app.documents import (add_document, add_plan, latest_document, l
                                       thread_path)
 from controller.app.events import record_event
 from controller.app.jobs import COORDINATOR, enqueue, finish
-from controller.app.models import Approval, Artifact, Clarification, Execution, Project, PullRequest, Run, Task
+from controller.app.models import Approval, Artifact, Document, Clarification, Execution, Project, PullRequest, Run, Task
+from controller.app.feature_docs import (PHASE_HEADING, FeatureRef, link_once, phase_number, plan_header,
+                                         plan_section, requirements_header, requirements_section, resolve_feature,
+                                         sdlc_yaml, sds_feature_heading, spec_header, spec_section, srs_feature_heading,
+                                         tasks_header, tasks_section, tc_numbers, test_cases_header, test_cases_section,
+                                         upsert_section)
 from controller.app.project_docs import (SDS_PATH, SRS_PATH, Sds, Srs, render_sds, render_srs, sds_sync_findings,
                                          srs_features)
 from controller.app.projects.config import EffectivePolicy, effective_policy, matches_any
@@ -141,6 +146,92 @@ def artifact(session: Session, run_id: uuid.UUID, kind: str) -> str | None:
                           .order_by(Artifact.created_at.desc()).limit(1))
 
 
+def feature_ref(session: Session, run: Run) -> FeatureRef | None:
+    """The SRS story a feature run delivers and its specs/ folder, fixed at preflight; None without an SRS."""
+    raw = artifact(session, run.id, "feature")
+    return FeatureRef.model_validate_json(raw) if raw else None
+
+
+def _spec_model(session: Session, run: Run) -> Spec:
+    """The Business Analyst's last structured spec: a human edit keeps only Markdown, its notes stay the AI's."""
+    documents = session.scalars(select(Document).where(Document.run_id == run.id, Document.kind == "spec")
+                                .order_by(Document.version.desc())).all()
+    data = next((d.data for d in documents if d.data.get("goal")), None)
+    if data:
+        return Spec.model_validate(data)
+    return Spec(goal=run.title, user_stories=[], acceptance_criteria=parse_criteria(documents[0].content))
+
+
+def write_spec_files(session: Session, run: Run, document) -> str | None:
+    """Accepted spec: the story's sections in spec.md and the requirements checklist, sdlc.yaml, the SRS link."""
+    ref = feature_ref(session, run)
+    if ref is None or not run.commit_artifacts:
+        return None
+    worktree = worktree_for(session.get(Project, run.project_id), run)
+    folder = ref.folder
+    model = _spec_model(session, run)
+    checks = {item["item"]: (item["status"], item.get("note", "")) for item in (model.model_dump().get("self_check") or [])}
+    files = {
+        f"{folder}/spec.md": upsert_section(worktree.read(f"{folder}/spec.md"), spec_header(ref), ref.story_id,
+                                            spec_section(document.content)),
+        f"{folder}/checklists/requirements.md": upsert_section(
+            worktree.read(f"{folder}/checklists/requirements.md"), requirements_header(ref), ref.story_id,
+            requirements_section(ref, model, checks)),
+        f"{folder}/sdlc.yaml": sdlc_yaml(worktree.read(f"{folder}/sdlc.yaml"), ref),
+    }
+    srs = link_once(worktree.read(SRS_PATH), srs_feature_heading(ref), "Spec", f"{folder}/spec.md")
+    if srs:
+        files[SRS_PATH] = srs
+    return worktree.commit_files(files, f"sdlc: {ref.story_id} spec v{document.version} accepted")
+
+
+def write_plan_files(session: Session, run: Run, plan) -> str | None:
+    """Approved plan: the story's sections in plan.md, tasks.md and test_cases.md, and the SDS plan link."""
+    ref = feature_ref(session, run)
+    if ref is None or not run.commit_artifacts:
+        return None
+    worktree = worktree_for(session.get(Project, run.project_id), run)
+    folder = ref.folder
+    payload, tests = PlanPayload.model_validate(plan.payload), TestPlan.model_validate(plan.test_plan)
+    criteria = parse_criteria(latest_document(session, run.id, "spec").content)
+    existing_cases = worktree.read(f"{folder}/test_cases.md")
+    numbers = tc_numbers(tests, existing_cases, ref.story_id)
+    store_artifact(session, run, "tc_numbers", TeamRole.COORDINATOR, json.dumps(numbers))
+    files = {
+        f"{folder}/plan.md": upsert_section(worktree.read(f"{folder}/plan.md"), plan_header(ref), ref.story_id,
+                                            plan_section(ref, payload, criteria)),
+        f"{folder}/tasks.md": _tasks_file(worktree, ref, payload, tests, numbers),
+        f"{folder}/test_cases.md": upsert_section(existing_cases, test_cases_header(ref), ref.story_id,
+                                                  test_cases_section(ref, tests, criteria, numbers)),
+    }
+    sds = worktree.read(SDS_PATH)
+    heading = sds_feature_heading(ref, sds or "")
+    linked = link_once(sds, heading, "Plan", f"{folder}/plan.md") if heading else None
+    if linked:
+        files[SDS_PATH] = linked
+    return worktree.commit_files(files, f"sdlc: {ref.story_id} plan v{plan.version} approved")
+
+
+def _tasks_file(worktree, ref: FeatureRef, payload: PlanPayload, tests: TestPlan, numbers: dict[str, str],
+                passed: frozenset[str] = frozenset()) -> str:
+    existing = worktree.read(f"{ref.folder}/tasks.md")
+    section = tasks_section(ref, payload, tests, existing, phase_number(existing, ref.story_id), passed, numbers)
+    return upsert_section(existing, tasks_header(ref), ref.story_id, section, heading=PHASE_HEADING)
+
+
+def tick_tasks(session: Session, run: Run) -> None:
+    """Before the PR: tick the tasks in tasks.md that passed validation."""
+    ref, plan = feature_ref(session, run), latest_plan(session, run.id)
+    if ref is None or plan is None or not run.commit_artifacts:
+        return
+    worktree = worktree_for(session.get(Project, run.project_id), run)
+    passed = frozenset(t.external_task_id for t in current_tasks(session, run) if t.status == TaskStatus.PASSED)
+    numbers = json.loads(artifact(session, run.id, "tc_numbers") or "{}")
+    content = _tasks_file(worktree, ref, PlanPayload.model_validate(plan.payload), TestPlan.model_validate(plan.test_plan),
+                          numbers, passed)
+    worktree.commit_files({f"{ref.folder}/tasks.md": content}, f"sdlc: {ref.story_id} tasks done")
+
+
 def on_claim(session: Session, execution: Execution) -> None:
     """Mark side-effecting work as started before it begins, so a crash leaves a visible trace."""
     if execution.kind == "code_task":
@@ -194,10 +285,15 @@ def build_context(session: Session, run: Run, *, kind: str = "", feedback: list[
         srs, sds = mirror.read_file(run.base_commit, SRS_PATH), mirror.read_file(run.base_commit, SDS_PATH)
     return RunContext(title=run.title, policy=policy, agents_md=agents, review_md=artifact(session, run.id, "review_md"),
                       intent_md=intent, files=bundle.files, spec_md=spec.content if spec else None, srs_md=srs, sds_md=sds,
-                      answers=answers,
+                      answers=answers, story=_story_context(session, run),
                       repository=bundle.as_input(), feedback=feedback or [], session_id=f"{run.id}:{kind}",
                       run_id=str(run.id), worktree=run.worktree_path or "", base_commit=run.base_commit or "",
                       engines=json.loads(artifact(session, run.id, "engines") or "{}"))
+
+
+def _story_context(session: Session, run: Run) -> dict | None:
+    ref = feature_ref(session, run)
+    return ref.model_dump() if ref else None
 
 
 def validation_summary(session: Session, run: Run) -> str:
@@ -379,6 +475,16 @@ def _apply_preflight(session: Session, run: Run, execution: Execution, result: d
         to_needs_human(session, run, f"SRS.md is not on {project.default_branch} at {base[:12]}; "
                                      "merge the SRS pull request first, then resume")
         return
+    story = (latest_document(session, run.id, "intent").data or {}).get("story") if run.kind == RunKind.FEATURE else None
+    if story:
+        try:
+            ref = resolve_feature(mirror.read_file(base, SRS_PATH) or "", mirror.list_files(base),
+                                  lambda path: mirror.read_file(base, path), story)
+        except ValueError as exc:
+            finish(session, execution, "failed", error=str(exc))
+            to_needs_human(session, run, f"{exc} at {base[:12]}")
+            return
+        store_artifact(session, run, "feature", TeamRole.COORDINATOR, ref.model_dump_json())
     policy = effective_policy(snapshot.config)
     store_artifact(session, run, "project_config", TeamRole.COORDINATOR,
                    mirror.read_file(base, ".sdlc/project.yaml"))
@@ -455,7 +561,8 @@ def _apply_specify(session: Session, run: Run, execution: Execution, result: dic
         transition_run(session, run, RunStatus.NEEDS_CLARIFICATION, actor=TeamRole.BUSINESS_ANALYST.value,
                        reason=f"{len(blocking)} blocking question(s) for the Product Owner")
         return
-    document = add_document(session, run.id, "spec", render_spec(run.title, spec),
+    ref = feature_ref(session, run)
+    document = add_document(session, run.id, "spec", render_spec(run.title, spec, story=ref.story() if ref else None),
                             author_kind="ai", author=TeamRole.BUSINESS_ANALYST.value, data=result["spec"])
     if stage_mode(run, "spec") == "auto":
         accept_spec(session, run, document, actor=COORDINATOR)
@@ -478,6 +585,7 @@ def accept_spec(session: Session, run: Run, document, *, actor: str, acting_role
         return
     document.commit_sha = commit_thread(session, run, "spec", document.content,
                                         f"sdlc: spec v{document.version} accepted")
+    document.commit_sha = write_spec_files(session, run, document) or document.commit_sha
     enter_stage(session, run, "plan", actor=actor, acting_role=acting_role)
 
 
@@ -604,6 +712,7 @@ def execution_report(session: Session, run: Run) -> str:
 
 
 def _apply_release(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    tick_tasks(session, run)
     report = add_document(session, run.id, "report", execution_report(session, run), author_kind="ai",
                           author=TeamRole.RELEASE_ENGINEER.value)
     head = commit_thread(session, run, "report", report.content, "sdlc: execution report")

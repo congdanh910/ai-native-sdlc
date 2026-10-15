@@ -20,6 +20,7 @@ class RunContext:
     spec_md: str | None = None
     srs_md: str | None = None  # the SRS.md already on the base commit, if any
     sds_md: str | None = None  # the SDS.md already on the base commit, if any
+    story: dict | None = None  # the SRS user story a feature run delivers, with its feature's requirements
     answers: list[tuple[str, str]] = field(default_factory=list)
     repository: dict = field(default_factory=dict)  # files, symbols, selected_files
     feedback: list[str] = field(default_factory=list)

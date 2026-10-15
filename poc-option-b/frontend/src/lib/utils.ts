@@ -90,7 +90,9 @@ export function humanStatus(status: string) {
   return map[status] ?? status.charAt(0) + status.slice(1).toLowerCase().replace(/_/g, " ");
 }
 
-/** Acceptance criteria are lines `- AC-n: text` in spec.md. */
+/** Acceptance criteria and edge cases of a spec: `- **AC-01 — Name:**` (company template) or older `- AC-1: text`. */
 export function parseCriteria(markdown: string | undefined): { id: string; text: string }[] {
-  return [...(markdown ?? "").matchAll(/^- (AC-\d+):\s*(.+)$/gm)].map((m) => ({ id: m[1], text: m[2] }));
+  const body = (markdown ?? "").split("### Business Analyst notes")[0];
+  const current = [...body.matchAll(/^- \*\*((?:AC|EC)-\d+) — (.+?):\*\*/gm)].map((m) => ({ id: m[1], text: m[2] }));
+  return current.length ? current : [...body.matchAll(/^- (AC-\d+):\s*(.+)$/gm)].map((m) => ({ id: m[1], text: m[2] }));
 }

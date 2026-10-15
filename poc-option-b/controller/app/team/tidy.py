@@ -25,16 +25,16 @@ def tidy_spec(spec: Spec, policy: EffectivePolicy) -> tuple[Spec, list[str]]:
     """Move criteria about running tests or checks to concerns: validation proves them, no task can deliver them."""
     commands = [" ".join(command.run) for command in policy.validation]
     process = [c for c in spec.acceptance_criteria
-               if PROCESS_CRITERION.search(c.text) or any(command in c.text for command in commands)]
+               if PROCESS_CRITERION.search(c.full) or any(command in c.full for command in commands)]
     if not process or len(process) == len(spec.acceptance_criteria):
         return spec, []
     kept = [c for c in spec.acceptance_criteria if c not in process]
-    renumber = {c.id: f"AC-{index}" for index, c in enumerate(kept, start=1)}
+    renumber = {c.id: f"AC-{index:02d}" for index, c in enumerate(kept, start=1)}
     notes = [f"{c.id}: moved to concerns; validation runs tests and checks, so it is not a criterion" for c in process]
     if any(old != new for old, new in renumber.items()):
         notes.append("renumbered criteria: " + ", ".join(f"{old}→{new}" for old, new in renumber.items() if old != new))
     data = spec.model_dump()
-    data["acceptance_criteria"] = [{"id": renumber[c.id], "text": c.text} for c in kept]
+    data["acceptance_criteria"] = [{**c.model_dump(), "id": renumber[c.id]} for c in kept]
     data["concerns"] = data["concerns"] + [f"Covered by validation, not a criterion: {c.text}" for c in process]
     return Spec.model_validate(data), notes
 

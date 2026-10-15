@@ -116,7 +116,11 @@ class LangflowTeam(MockTeam):
                          lambda data: normalize.intent(data, title), session_id="intent-draft")
 
     def specify(self, context: RunContext) -> Spec:
-        payload = {"intent": context.intent_md, "agents_md": context.agents_md,
+        story = None
+        if context.story:
+            story = {key: context.story[key] for key in ("story_id", "story_title", "actors", "statement",
+                                                          "feature_name", "requirements")}
+        payload = {"intent": context.intent_md, "story": story, "agents_md": context.agents_md,
                    "answers": [{"question": q, "answer": a} for q, a in context.answers],
                    "repository": {"files": context.repository.get("files", []),
                                   "symbols": context.repository.get("symbols", {})}}
@@ -154,7 +158,7 @@ class LangflowTeam(MockTeam):
                          context.session_id)
 
     def design_tests(self, context: RunContext, plan: PlanPayload) -> TestPlan:
-        criteria = [{"id": c.id, "text": c.text} for c in parse_criteria(context.spec_md or "")]
+        criteria = [{"id": c.id, "text": c.full} for c in parse_criteria(context.spec_md or "")]
         # The QA Analyst needs the existing tests and the names it can call, not every source file;
         # a smaller input leaves room in the context window for one case per criterion.
         test_paths = context.policy.test_paths

@@ -57,7 +57,7 @@ def test_normalize_repairs_shape_only():
     intent = normalize.intent({"problem": "p", "outcome": ["- a", "b"], "open_questions": ["[blocking] - when?"]}, "T")
     assert intent["outcome"] == "- a\n- b" and intent["open_questions"] == "- [blocking] when?"
     spec = normalize.spec({"acceptance_criteria": ["x", {"text": "y"}], "questions": ["why?"]})
-    assert [c["id"] for c in spec["acceptance_criteria"]] == ["AC-1", "AC-2"]
+    assert [c["id"] for c in spec["acceptance_criteria"]] == ["AC-01", "AC-02"]
     assert spec["questions"] == [{"question": "why?", "blocking": False}]
     plan = normalize.plan({"tasks": [{"id": "T1", "modify": "src/a.js", "references": ["src/a.js"]}]}, ["unit-tests"])
     assert plan["tasks"][0]["modify"] == ["src/a.js"] and plan["tasks"][0]["validation"] == ["unit-tests"]
@@ -87,7 +87,7 @@ def test_invalid_answer_is_sent_back_with_the_error(settings):
     client = FakeClient(["not json", json.dumps({"goal": "g"}), json.dumps(SPEC)])
     team = LangflowTeam(settings, client=client, check_capacity=lambda: [], check_ollama=lambda: None)
     spec = team.specify(context())
-    assert spec.acceptance_criteria[0].id == "AC-1"
+    assert spec.acceptance_criteria[0].id == "AC-01"
     assert team.last_call.attempts == 3 and team.last_call.engine == "qwen3:30b-instruct"
     assert "format_feedback" not in client.calls[0][1] and "format_feedback" in client.calls[2][1]
 

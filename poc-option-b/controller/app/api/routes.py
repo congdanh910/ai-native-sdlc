@@ -157,6 +157,16 @@ def check_project(key: str) -> dict:
         return views.project_view(project)
 
 
+@router.get("/projects/{key}/stories")
+def project_stories(key: str) -> dict:
+    """SRS section 7 at the last checked commit, with the latest run of each story."""
+    with session_scope() as session:
+        project = session.scalar(select(Project).where(Project.key == key))
+        if project is None:
+            raise HTTPException(404, "project not found")
+        return views.stories_view(session, project)
+
+
 @router.post("/intents/draft")
 def draft_intent(body: DraftRequest) -> dict:
     return get_team().draft_intent(body.text, body.title).model_dump()

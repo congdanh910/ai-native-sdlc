@@ -24,7 +24,7 @@ def test_claude_readonly_answers_the_same_contract(settings, tmp_path):
     base = context()
     spec = team.specify(base.__class__(**{**base.__dict__, "worktree": str(tmp_path)}))
     args, cwd, prompt = seen[0]
-    assert spec.acceptance_criteria[0].id == "AC-1"
+    assert spec.acceptance_criteria[0].id == "AC-01"
     assert args[args.index("--tools") + 1] == "Read,Glob,Grep" and "Edit" not in args and cwd == tmp_path
     assert "Business Analyst" in prompt and "Do not change, create or run anything" in prompt
     assert team.last_call.engine == "claude-readonly" and team.last_call.usage["cost_usd"] == 0.05

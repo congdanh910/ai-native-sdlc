@@ -24,7 +24,7 @@ from controller.app.events import record_event
 from controller.app.integrations.langflow import ROLES, role_prompt
 from controller.app.models import Artifact, Clarification, EvalRun, Execution, Plan, Project, Run
 from controller.app.projects.config import EffectivePolicy, matches_any
-from controller.app.schemas import Intent
+from controller.app.schemas import Intent, parse_criteria
 from controller.app.states import RunStatus
 from controller.app.team.readonly import validate_engines
 
@@ -137,7 +137,7 @@ def score_case(session: Session, run: Run, golden: dict) -> dict:
     spec = latest_document(session, run.id, "spec")
     result = {"case": run.eval_case, "run_id": str(run.id), "status": run.status, "reason": run.status_reason,
               "blocking_questions": [q.question for q in questions if q.blocking],
-              "criteria": len(re.findall(r"^- AC-\d+:", spec.content, re.M)) if spec else 0,
+              "criteria": len(parse_criteria(spec.content)) if spec else 0,
               "plans": len(plans), "usage": _usage(session, run)}
     if not plans:
         return result

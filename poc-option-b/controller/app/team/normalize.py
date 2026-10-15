@@ -37,16 +37,33 @@ def intent(data: dict, title: str) -> dict:
     return data
 
 
+def _criteria(items, prefix: str) -> list:
+    """Ids are always renumbered AC-01, AC-02 (or EC-..) in order; Given / When / Then lists become lines."""
+    criteria = []
+    for index, item in enumerate(items or [], start=1):
+        if isinstance(item, str):
+            item = {"text": item}
+        if isinstance(item, dict):
+            item = dict(item)
+            item.pop("id", None)
+            if "name" in item and "text" not in item:
+                item["text"] = item.pop("name")
+            item.pop("name", None)
+            for key in ("given", "when", "then"):
+                value = item.get(key)
+                if isinstance(value, list):
+                    item[key] = "\n".join(str(v) for v in value if v)
+                elif value is None:
+                    item[key] = ""
+            item = {"id": f"{prefix}-{index:02d}", **item}
+        criteria.append(item)
+    return criteria
+
+
 def spec(data: dict) -> dict:
     data = dict(data)
-    criteria = []
-    for index, item in enumerate(data.get("acceptance_criteria") or [], start=1):
-        if isinstance(item, str):
-            item = {"id": f"AC-{index}", "text": item}
-        elif isinstance(item, dict) and "id" not in item:
-            item = {"id": f"AC-{index}", **item}
-        criteria.append(item)
-    data["acceptance_criteria"] = criteria
+    data["acceptance_criteria"] = _criteria(data.get("acceptance_criteria"), "AC")
+    data["edge_cases"] = _criteria(data.get("edge_cases"), "EC")
     data["questions"] = [{"question": q, "blocking": False} if isinstance(q, str) else q
                          for q in data.get("questions") or []]
     for key in ("user_stories", "assumptions", "concerns"):
@@ -74,7 +91,40 @@ def plan(data: dict, validations: list[str]) -> dict:
         tasks.append(task)
     data["tasks"] = tasks
     data.setdefault("summary", "")
+    data["design"] = _design(data.get("design"))
     return data
+
+
+DESIGN_LISTS = ("preflight", "findings", "domain_objects", "business_rules", "sequences", "error_flows", "rule_notes",
+                "element_ids")
+
+
+def _design(design) -> dict:
+    """Missing or malformed sections become empty lists; a row's missing columns become empty strings."""
+    if not isinstance(design, dict):
+        return {}
+    design = {key: value for key, value in design.items() if key in DESIGN_LISTS}
+    for key in DESIGN_LISTS:
+        items = design.get(key)
+        if not isinstance(items, list):
+            design[key] = []
+            continue
+        rows = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            item = {k: ("" if v is None else v if isinstance(v, str) else _sentence(v)) for k, v in item.items()}
+            if key in ("preflight", "findings"):
+                item.setdefault("finding", item.pop("text", ""))
+            elif key == "sequences":
+                item.setdefault("title", "Main flow")
+                item.setdefault("mermaid", "")
+            else:
+                item.setdefault("name", "")
+                item.setdefault("detail", "")
+            rows.append(item)
+        design[key] = rows
+    return design
 
 
 def test_plan(data: dict) -> dict:
@@ -87,6 +137,10 @@ def test_plan(data: dict) -> dict:
                 case[key] = _sentence(case.get(key))
             if case.get("expected_pass") is None:
                 case["expected_pass"] = False
+            kind = str(case.get("type") or "unit").lower().replace("end-to-end", "e2e")
+            case["type"] = kind if kind in ("unit", "integration", "e2e") else "unit"
+            severity = str(case.get("severity") or "Major").capitalize()
+            case["severity"] = severity if severity in ("Critical", "Major", "Minor") else "Major"
         cases.append(case)
     data["cases"] = cases
     return data

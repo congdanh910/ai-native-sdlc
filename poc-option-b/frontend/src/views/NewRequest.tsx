@@ -15,7 +15,18 @@ const FIELDS = [
   ["open_questions", "Open questions", "start a line with [blocking] if work must wait for an answer", false],
 ] as const;
 type Key = (typeof FIELDS)[number][0];
-type Errors = Partial<Record<Key | "project", string>>;
+type Errors = Partial<Record<Key | "project" | "story", string>>;
+
+interface Stories {
+  has_srs: boolean;
+  features: { section: string; name: string; prefix: string;
+    stories: { id: string; title: string; actors: string; statement: string; run: { id: string; status: string } | null }[] }[];
+}
+
+/** "**As a** `HR`, **I want to** ..." as plain text for the Problem field. */
+function plain(statement: string): string {
+  return statement.replace(/\*\*/g, "").replace(/`/g, "");
+}
 
 const BRIEF: DocField[] = [
   ["title", "Product name", "", true],
@@ -117,6 +128,13 @@ export function NewRequestView() {
   const [intent, setIntent] = useState<Record<Key, string>>({ title: "", problem: "", outcome: "", users_and_systems: "", constraints: "", open_questions: "" });
   const [errors, setErrors] = useState<Errors>({});
   const [tried, setTried] = useState(false);
+  const [story, setStory] = useState("");
+  const firstReady = (projects.data ?? []).find((p) => p.readiness !== "not_ready")?.key ?? "";
+  const stories = useQuery({
+    queryKey: ["stories", project || firstReady],
+    queryFn: () => api<Stories>(`/api/projects/${encodeURIComponent(project || firstReady)}/stories`),
+    enabled: !!(project || firstReady),
+  });
   if (projects.isLoading) return <Loading />;
   if (projects.error) return <ErrorBox error={projects.error} />;
   const ready = (projects.data ?? []).filter((p) => p.readiness !== "not_ready");
@@ -127,9 +145,25 @@ export function NewRequestView() {
   const update = (key: Key, value: string) => {
     const next = { ...intent, [key]: value };
     setIntent(next);
-    if (tried) setErrors(validate(next));  // after a first attempt, errors clear as the user types
+    if (tried) setErrors(check(next));  // after a first attempt, errors clear as the user types
   };
-  const missing = Object.keys(validate(intent)).length;
+  const features = stories.data?.has_srs ? stories.data.features.filter((f) => f.stories.length) : [];
+  const needsStory = features.length > 0;
+  const check = (values: Record<Key, string>): Errors => ({
+    ...validate(values),
+    ...(needsStory && !story ? { story: "Pick the user story from SRS.md that this run delivers" } : {}),
+  });
+  const chooseStory = (id: string) => {
+    setStory(id);
+    const picked = features.flatMap((f) => f.stories).find((s) => s.id === id);
+    if (picked) {
+      const next = { ...intent, title: intent.title.trim() ? intent.title : picked.title,
+        problem: intent.problem.trim() ? intent.problem : plain(picked.statement) };
+      setIntent(next);
+    }
+    if (tried) setErrors({ ...errors, story: id ? undefined : errors.story });
+  };
+  const missing = Object.keys(check(intent)).length;
   return (
     <>
       <PageHeader title="New request" subtitle={{
@@ -147,6 +181,20 @@ export function NewRequestView() {
                 {ready.map((p) => <option key={p.key} value={p.key}>{p.key} ({p.readiness})</option>)}
               </Select>
             </Field>
+            {kind === "feature" && needsStory ? (
+              <Field label="User story" hint="from SRS.md section 7; the run writes its sections in specs/ for this story's feature" htmlFor="story" required error={errors.story}>
+                <Select id="story" value={story} onChange={(e) => chooseStory(e.target.value)} aria-invalid={errors.story ? true : undefined}>
+                  <option value="">Choose a user story…</option>
+                  {features.map((f) => (
+                    <optgroup key={f.prefix} label={`${f.section} ${f.name} (${f.prefix})`}>
+                      {f.stories.map((s) => (
+                        <option key={s.id} value={s.id}>{s.id}: {s.title} ({s.actors}){s.run ? ` · ${s.run.status.toLowerCase().replace(/_/g, " ")}` : ""}</option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </Select>
+              </Field>
+            ) : null}
             {kind === "srs" ? <DocumentForm key="srs" project={chosen} fields={BRIEF} bodyKey="brief" submit="Submit brief, write SRS.md" />
         : kind === "sds" ? <DocumentForm key="sds" project={chosen} fields={ARCHITECTURE} bodyKey="architecture" submit="Submit, write SDS.md" /> : FIELDS.map(([key, label, hint, required]) => {
               const props = {
@@ -168,14 +216,14 @@ export function NewRequestView() {
             {kind !== "feature" ? null : <div className="flex flex-wrap items-center gap-3">
               <ActionButton variant="primary" action={async () => {
                 setTried(true);
-                const local = validate(intent);
+                const local = check(intent);
                 setErrors(local);
                 if (Object.keys(local).length) {
                   focusFirst(local);
                   throw new ApiError(`Fill in ${Object.keys(local).length} required field(s) before submitting.`);
                 }
                 try {
-                  const run = await api<RunSummary>("/api/runs", { method: "POST", body: { project: chosen, intent, idempotency_key: idempotencyKey } });
+                  const run = await api<RunSummary>("/api/runs", { method: "POST", body: { project: chosen, intent: { ...intent, story }, idempotency_key: idempotencyKey } });
                   navigate(`/runs/${run.id}`);
                 } catch (error) {
                   const fields = error instanceof ApiError ? error.fields : {};
@@ -199,7 +247,7 @@ export function NewRequestView() {
               const draft = await api<Record<Key, string>>("/api/intents/draft", { method: "POST", body: { title: intent.title.trim().length >= 3 ? intent.title : "Untitled request", text: free } });
               const next = Object.fromEntries(FIELDS.map(([k]) => [k, draft[k] ?? ""])) as Record<Key, string>;
               setIntent(next);
-              if (tried) setErrors(validate(next));
+              if (tried) setErrors(check(next));
               toast.success("Draft filled in. Submitting accepts it as the Product Owner.");
             }}>Draft intent.md</ActionButton>
           </div>

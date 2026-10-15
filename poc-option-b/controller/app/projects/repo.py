@@ -106,6 +106,27 @@ class Worktree:
         _git("--git-dir", str(self.mirror.path), "worktree", "add", "--quiet", "-b", self.branch,
              str(self.path), base_commit)
 
+    def read(self, relative_path: str) -> str | None:
+        """A file as the run branch has it now; None if missing."""
+        target = self.path / safe_repo_path(relative_path)
+        return target.read_text() if target.is_file() and not target.is_symlink() else None
+
+    def commit_files(self, files: dict[str, str], message: str) -> str:
+        """Write several files and commit them together; returns the commit SHA."""
+        paths = []
+        for relative_path, content in files.items():
+            relative_path = safe_repo_path(relative_path)
+            target = self.path / relative_path
+            if target.is_symlink():
+                raise ValueError(f"refusing to write through a symlink: {relative_path}")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content)
+            paths.append(relative_path)
+        _git("add", "--", *paths, cwd=self.path)
+        if _git("status", "--porcelain", "--", *paths, cwd=self.path).strip():
+            _git(*COMMITTER, "commit", "--quiet", "-m", message, "--", *paths, cwd=self.path)
+        return _git("rev-parse", "HEAD", cwd=self.path).strip()
+
     def commit_file(self, relative_path: str, content: str, message: str) -> str:
         """Write one file and commit it; returns the commit SHA (unchanged content is not committed again)."""
         relative_path = safe_repo_path(relative_path)

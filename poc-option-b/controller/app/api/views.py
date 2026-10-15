@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session
 
 from controller.app.models import (Approval, Clarification, Document, Event, Execution, Plan, Project, PullRequest,
                                    Run, Task)
+from controller.app.project_docs import SRS_PATH, srs_features
+from controller.app.projects.registry import mirror_for
 from controller.app.services import needs_classification
 from controller.app.states import ACTIVE, STAGE_STARTER, WAITING_FOR, HumanRole
 
@@ -121,3 +123,18 @@ def inbox(session: Session) -> list[dict]:
             items.append({**run_summary(run, key), **{"role": need["role"], "action": need["action"],
                                                        "stage": need.get("stage")}})
     return items
+
+
+def stories_view(session: Session, project: Project) -> dict:
+    srs = mirror_for(project).read_file(project.checked_commit, SRS_PATH) if project.checked_commit else None
+    latest: dict[str, dict] = {}
+    rows = session.execute(select(Run, Document.data).join(Document, Document.run_id == Run.id)
+                           .where(Run.project_id == project.id, Run.kind == "feature", Document.kind == "intent",
+                                  Document.version == 1).order_by(Run.created_at)).all()
+    for run, data in rows:
+        story = (data or {}).get("story")
+        if story:
+            latest[story] = {"id": str(run.id), "status": run.status}
+    return {"commit": project.checked_commit, "has_srs": srs is not None,
+            "features": [{**f.model_dump(), "stories": [{**s.model_dump(), "run": latest.get(s.id)} for s in f.stories]}
+                         for f in srs_features(srs or "")]}

@@ -13,7 +13,7 @@ from controller.app.documents import add_document, add_plan, latest_document, la
 from controller.app.events import record_event
 from controller.app.models import Approval, Clarification, Project, PullRequest, Run, Task
 from controller.app.project_docs import (SRS_PATH, ArchitectureBrief, ProjectBrief, check_sds_markdown,
-                                         check_srs_markdown, render_architecture_brief, render_brief)
+                                         check_srs_markdown, render_architecture_brief, render_brief, srs_features)
 from controller.app.projects.registry import mirror_for
 from controller.app.schemas import Intent, PlanPayload, TestPlan, parse_criteria, render_intent
 from controller.app.state_machine import transition_run, transition_task
@@ -74,6 +74,14 @@ def create_run(session: Session, project: Project, intent: Intent | ProjectBrief
             else RunKind.FEATURE)
     if kind != RunKind.FEATURE and experiment:
         raise DecisionError(f"an {kind.upper()} run cannot be an experiment")
+    has_srs = any(i.get("name") == SRS_PATH and i.get("status") == "ok" for i in project.readiness_report.get("items", []))
+    if kind == RunKind.FEATURE and has_srs and not experiment:
+        if not intent.story:
+            raise DecisionError(f"{project.key} has an SRS: pick the user story from SRS.md section 7 that this run delivers")
+        stories = {s.id for f in srs_features(mirror_for(project).read_file(project.checked_commit, SRS_PATH) or "")
+                   for s in f.stories}
+        if intent.story not in stories:
+            raise DecisionError(f"{intent.story} is not a user story in SRS.md section 7")
     if kind == RunKind.SDS:
         srs_item = next((i for i in project.readiness_report.get("items", []) if i.get("name") == SRS_PATH), None)
         if not srs_item or srs_item.get("status") != "ok":
@@ -180,6 +188,7 @@ def approve_plan(session: Session, run: Run, plan_id: uuid.UUID, sha256: str, *,
     _approval(session, run, "plan", "approve", actor, TL, plan_id=plan.id)
     plan.commit_sha = coordinator.commit_thread(session, run, "plan", coordinator.plan_markdown(run, plan),
                                                 f"sdlc: plan v{plan.version} approved")
+    plan.commit_sha = coordinator.write_plan_files(session, run, plan) or plan.commit_sha
     for task in PlanPayload.model_validate(plan.payload).tasks:
         session.add(Task(run_id=run.id, plan_id=plan.id, external_task_id=task.id, payload=task.model_dump(),
                          status=TaskStatus.PENDING.value))

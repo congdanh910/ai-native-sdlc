@@ -3,7 +3,7 @@ import { Link } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Check, FileCode2, GitCommit, X } from "lucide-react";
 import { api, projectDoc, type Doc, type PlanVersion, type RunDetail, type RunEvent, type Step } from "../lib/api";
-import { ACTIVE_WORK, TERMINAL, ago, cn, duration, role, short, when } from "../lib/utils";
+import { ACTIVE_WORK, TERMINAL, ago, cn, duration, role, short, when, parseCriteria } from "../lib/utils";
 import { Pipeline } from "../components/Pipeline";
 import { DecisionPanel } from "../components/Decision";
 import { CoverageMatrix, GroundingSummary } from "../components/Coverage";
@@ -267,11 +267,11 @@ function SidePanel({ run }: { run: RunDetail }) {
         <Card className="flex flex-col gap-2.5 p-4">
           <h2 className="m-0 text-base font-semibold">Criteria coverage</h2>
           <div className="grid grid-cols-4 gap-1.5">
-            {[...spec.content.matchAll(/^- (AC-\d+):/gm)].map((m) => {
-              const n = plan.test_plan.cases.filter((c) => c.criterion === m[1]).length;
+            {parseCriteria(spec.content).map(({ id }) => {
+              const n = plan.test_plan.cases.filter((c) => c.criterion === id).length;
               return (
-                <div key={m[1]} className={cn("rounded-lg px-1 py-1.5 text-center", n ? "bg-good-soft" : "bg-bad-soft")}>
-                  <div className="font-mono text-[11px] text-muted">{m[1]}</div><b className={n ? "text-good" : "text-bad"}>{n}</b>
+                <div key={id} className={cn("rounded-lg px-1 py-1.5 text-center", n ? "bg-good-soft" : "bg-bad-soft")}>
+                  <div className="font-mono text-[11px] text-muted">{id}</div><b className={n ? "text-good" : "text-bad"}>{n}</b>
                 </div>
               );
             })}

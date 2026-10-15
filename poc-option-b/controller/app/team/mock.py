@@ -45,10 +45,11 @@ class MockTeam:
             text = line[len("[blocking]"):].strip() if blocking else line
             if text not in answered:
                 questions.append(Question(question=text, blocking=blocking))
-        criteria = [Criterion(id=f"AC-{i}", text=text) for i, text in enumerate(outcome, start=1)]
+        criteria = [Criterion(id=f"AC-{i:02d}", text=" ".join(text.split()[:4]).rstrip(".,"), given="the product as it is",
+                              when="the user uses it", then=text) for i, text in enumerate(outcome, start=1)]
         assumptions = [f"Answer to '{q}': {a}" for q, a in context.answers]
         return Spec(goal=_section(context.intent_md, "Problem") or context.title,
-                    user_stories=[f"As a user, I want {text[0].lower() + text[1:]}" for text in outcome],
+                    user_stories=[f"**As a** user, **I want to** {text[0].lower() + text[1:]}" for text in outcome],
                     acceptance_criteria=criteria, assumptions=assumptions,
                     concerns=["Mock Business Analyst: no model was called."], questions=questions)
 

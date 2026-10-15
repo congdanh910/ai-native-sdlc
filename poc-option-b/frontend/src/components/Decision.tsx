@@ -84,7 +84,7 @@ export function DecisionPanel({ run, onDone }: { run: RunDetail; onDone: () => v
         ) : null}
         <div className="max-h-[520px] overflow-y-auto rounded-lg border border-line bg-side p-4"><Markdown source={spec.content} /></div>
         {editing ? (
-          <Field label={`Edit ${specName}`} hint={doc?.kind === "srs" ? "keep sections 1-8 and story headings like #### 7.1.1 AT-US-01: Title (ROLE)" : doc ? "keep sections 1-13 and a section 5 entry for every SRS story" : "keep acceptance criteria as lines like - AC-1: …"} htmlFor="spec-edit">
+          <Field label={`Edit ${specName}`} hint={doc?.kind === "srs" ? "keep sections 1-8 and story headings like #### 7.1.1 AT-US-01: Title (ROLE)" : doc ? "keep sections 1-13 and a section 5 entry for every SRS story" : "keep criteria as - **AC-01 — Name:** followed by Given / When / Then lines"} htmlFor="spec-edit">
             <Textarea id="spec-edit" className="min-h-72 font-mono text-[12.5px]" value={specDraft} onChange={(e) => setSpecDraft(e.target.value)} />
           </Field>
         ) : null}

@@ -8,7 +8,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from controller.app.projects.repo import safe_repo_path
 
 TASK_ID = re.compile(r"T\d{1,3}")
-CRITERION = re.compile(r"^- (AC-\d{1,3}):\s*(\S.*)$", re.MULTILINE)
+CRITERION = re.compile(r"^- (AC-\d{1,3}):\s*(\S.*)$", re.MULTILINE)  # older runs: "- AC-1: text"
+# The company format: "- **AC-01 — Short name:**" then indented Given / When / Then lines.
+GWT_CRITERION = re.compile(r"^- \*\*((?:AC|EC)-\d{2,3}) — (.+?):\*\*[ \t]*\n((?:(?:[ \t]+.*)?\n?)*)", re.MULTILINE)
 
 
 class Contract(BaseModel):
@@ -22,14 +24,16 @@ class Intent(Contract):
     users_and_systems: str = ""
     constraints: str = ""
     open_questions: str = ""
+    story: str = ""  # the SRS user story this run delivers, such as AT-US-01; empty for projects without an SRS
 
 
 def render_intent(intent: Intent) -> str:
+    story = f"Delivers {intent.story} from SRS.md.\n\n" if intent.story else ""
     sections = [("Problem", intent.problem), ("Desired outcome", intent.outcome),
                 ("Affected users and systems", intent.users_and_systems), ("Constraints", intent.constraints),
                 ("Open questions", intent.open_questions)]
     body = "\n\n".join(f"## {heading}\n\n{text.strip() or '_None._'}" for heading, text in sections)
-    return f"# Intent: {intent.title}\n\n{body}\n"
+    return f"# Intent: {intent.title}\n\n{story}{body}\n"
 
 
 class Question(Contract):
@@ -39,35 +43,103 @@ class Question(Contract):
 
 class Criterion(Contract):
     id: str
-    text: str
+    text: str  # the short name, 2-4 words in the company format
+    given: str = ""  # several conditions: one per line, each extra one joined with "and"
+    when: str = ""
+    then: str = ""
+
+    @property
+    def full(self) -> str:
+        """One line for roles that read criteria as text: the name and its Given / When / Then."""
+        parts = [f"{word} {' and '.join(line.strip() for line in value.splitlines() if line.strip())}"
+                 for word, value in (("Given", self.given), ("when", self.when), ("then", self.then)) if value.strip()]
+        joined = ", ".join(parts)
+        return f"{self.text}: {joined}" if joined else self.text
 
 
 class Spec(Contract):
     goal: str
     user_stories: list[str]
     acceptance_criteria: list[Criterion] = Field(min_length=1)
+    edge_cases: list[Criterion] = []
     assumptions: list[str] = []
     concerns: list[str] = []
     questions: list[Question] = []
 
 
-def render_spec(title: str, spec: Spec) -> str:
+NOTES_HEADING = "### Business Analyst notes"
+
+
+def gwt_lines(criterion: Criterion) -> list[str]:
+    """Given / When / Then, each on its own line; extra conditions as indented **and** lines (company template)."""
+    lines = [f"- **{criterion.id} — {criterion.text}:**  "]
+    clauses = [("Given", criterion.given), ("When", criterion.when), ("Then", criterion.then)]
+    clauses = [(word, [part.strip().rstrip(",.") for part in value.splitlines() if part.strip()]) for word, value in clauses]
+    clauses = [(word, parts) for word, parts in clauses if parts]
+    rendered = []
+    for word, parts in clauses:
+        rendered.append(f"  **{word}** {parts[0]},")
+        rendered += [f"    **and** {part}," for part in parts[1:]]
+    if rendered:
+        rendered[-1] = rendered[-1][:-1] + "."
+    return lines + [line + "  " for line in rendered[:-1]] + rendered[-1:]
+
+
+def render_spec(title: str, spec: Spec, *, story: dict | None = None) -> str:
+    """One user story section in the company spec template. `story` (from the SRS) gives the id, statement and
+    feature group; without it the section is headed by the run title (projects without an SRS)."""
     def bullets(items: list[str]) -> str:
         return "\n".join(f"- {item}" for item in items) or "_None._"
-    criteria = "\n".join(f"- {c.id}: {c.text}" for c in spec.acceptance_criteria)
+    if story:
+        lines = [f"## {story['id']}: {story['title']}", "",
+                 "> **Jira Story:** TBD  ", f"> **Feature group:** {story['feature_group']}", "", story["statement"]]
+    else:
+        lines = [f"## {title}", "", *(spec.user_stories[:1] or [f"**As a** user, **I want to** {title.lower()}."])]
+    lines += ["", "### Acceptance Criteria", ""]
+    for criterion in spec.acceptance_criteria:
+        lines += gwt_lines(criterion)
+    if spec.edge_cases:
+        lines += ["", "### Edge Cases", ""]
+        for criterion in spec.edge_cases:
+            lines += gwt_lines(criterion)
     open_items = "\n".join(f"- {'[blocking] ' if q.blocking else ''}{q.question}" for q in spec.questions)
-    return (f"# Spec: {title}\n\n## Goal\n\n{spec.goal}\n\n## User stories\n\n{bullets(spec.user_stories)}\n\n"
-            f"## Acceptance criteria\n\n{criteria}\n\n## Assumptions\n\n{bullets(spec.assumptions)}\n\n"
-            f"## Concerns\n\n{bullets(spec.concerns)}\n\n## Open questions\n\n{open_items or '_None._'}\n")
+    lines += ["", NOTES_HEADING, "", f"**Goal:** {spec.goal}", "", "**Assumptions**", "", bullets(spec.assumptions), "",
+              "**Concerns**", "", bullets(spec.concerns), "", "**Open questions**", "", open_items or "_None._"]
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _parse_gwt(name: str, body: str) -> tuple[str, str, str]:
+    clauses = {"Given": [], "When": [], "Then": []}
+    current = None
+    for raw in body.splitlines():
+        line = raw.strip().rstrip()
+        match = re.match(r"\*\*(Given|When|Then|and)\*\*\s*(.*)", line)
+        if not match:
+            continue
+        word, text = match[1], match[2].strip().rstrip(",.").strip()
+        if word != "and":
+            current = word
+        if current and text:
+            clauses[current].append(text)
+    return tuple("\n".join(clauses[w]) for w in ("Given", "When", "Then"))
 
 
 def parse_criteria(spec_markdown: str) -> list[Criterion]:
-    """Acceptance criteria are lines `- AC-n: text`; a human-edited spec must keep that shape."""
-    criteria = [Criterion(id=match[0], text=match[1].strip()) for match in CRITERION.findall(spec_markdown)]
+    """Acceptance criteria and edge cases of a spec, in either format: the company template
+    (`- **AC-01 — Name:**` with Given / When / Then lines) or the older `- AC-1: text` lines."""
+    criteria = []
+    for match in GWT_CRITERION.finditer(spec_markdown.split(NOTES_HEADING)[0]):
+        given, when, then = _parse_gwt(match[2], match[3])
+        criteria.append(Criterion(id=match[1], text=match[2].strip(), given=given, when=when, then=then))
     if not criteria:
-        raise ValueError("spec must list acceptance criteria as lines like `- AC-1: ...`")
+        criteria = [Criterion(id=m[0], text=m[1].strip()) for m in CRITERION.findall(spec_markdown)]
+    if not criteria:
+        raise ValueError("spec must list acceptance criteria like `- **AC-01 — Short name:**` followed by "
+                         "Given / When / Then lines")
     if len({c.id for c in criteria}) != len(criteria):
         raise ValueError("acceptance criterion ids must be unique")
+    if not any(c.id.startswith("AC-") for c in criteria):
+        raise ValueError("spec needs at least one acceptance criterion (AC-01)")
     return criteria
 
 
@@ -100,9 +172,41 @@ class PlanTask(Contract):
         return [safe_repo_path(path) for path in value]
 
 
+class DesignFinding(Contract):
+    """A spec gap (G), ambiguity (A) or design review finding (D) the Tech Lead found and how it is resolved."""
+    type: str = "Gap"
+    criterion: str = ""
+    finding: str
+    resolution: str = ""
+
+
+class Row(Contract):
+    name: str
+    detail: str
+    extra: str = ""
+
+
+class Sequence(Contract):
+    title: str
+    mermaid: str  # a sequenceDiagram body; happy path first, one alt per error, steps tagged [AC-01]
+
+
+class PlanDesign(Contract):
+    """The company plan template's Architecture sections. All optional: a small change may need few of them."""
+    preflight: list[DesignFinding] = []  # spec gaps and ambiguities found before designing
+    findings: list[DesignFinding] = []  # design review findings against the project's rules
+    domain_objects: list[Row] = []  # domain object | database entity | key fields
+    business_rules: list[Row] = []  # rule | source AC | enforcement
+    sequences: list[Sequence] = []
+    error_flows: list[Row] = []  # scenario | HTTP status or outcome | error code
+    rule_notes: list[Row] = []  # project rule id | Satisfied / Required / Note | note
+    element_ids: list[Row] = []  # UI element | id | file
+
+
 class PlanPayload(Contract):
     summary: str
     tasks: list[PlanTask] = Field(min_length=1)
+    design: PlanDesign = PlanDesign()
 
     @model_validator(mode="after")
     def _dag(self) -> "PlanPayload":
@@ -140,6 +244,9 @@ class TestCase(Contract):
     expected: str
     target_file: str
     expected_pass: bool = False
+    name: str = ""  # short test name for test_cases.md
+    type: Literal["unit", "integration", "e2e"] = "unit"
+    severity: Literal["Critical", "Major", "Minor"] = "Major"
 
     @field_validator("target_file")
     @classmethod

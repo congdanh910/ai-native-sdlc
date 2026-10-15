@@ -8,7 +8,7 @@ const SENTENCE = /(?<=[.!?])\s+(?=[A-Z`(])/;
 const TASK_START = /^(T\d+)\b/;
 const NOTE = /out of scope|not in scope|left open|leaves? (them|it) open|QA Engineer|tests are written|assum|risk|follow-up/i;
 // Things a reader scans for: `quoted code`, file paths, module:names, dotted calls, ENV_VARS and HTTP codes.
-const TOKEN = /(`[^`]+`|\b[\w-]+(?:\/[\w.-]+)+\.\w+\b|\b[\w-]+\.(?:js|ts|tsx|py|json|md|yaml|css|html)\b|\bnode:[\w/]+|\b[a-z][A-Za-z0-9]*\.[a-z][A-Za-z0-9]*(?:\(\))?|\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b|\bAC-\d+\b)/g;
+const TOKEN = /(`[^`]+`|\b[\w-]+(?:\/[\w.-]+)+\.\w+\b|\b[\w-]+\.(?:js|ts|tsx|py|json|md|yaml|css|html)\b|\bnode:[\w/]+|\b[a-z][A-Za-z0-9]*\.[a-z][A-Za-z0-9]*(?:\(\))?|\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b|\b(?:AC|EC)-\d+\b)/g;
 
 export function Rich({ text }: { text: string }) {
   const parts = text.split(TOKEN);
@@ -16,7 +16,7 @@ export function Rich({ text }: { text: string }) {
     <>
       {parts.map((part, i) => {
         if (i % 2 === 0) return <Fragment key={i}>{part}</Fragment>;
-        if (/^AC-\d+$/.test(part)) return <b key={i} className="font-semibold text-ink">{part}</b>;
+        if (/^(?:AC|EC)-\d+$/.test(part)) return <b key={i} className="font-semibold text-ink">{part}</b>;
         return <code key={i} className="rounded bg-sunken px-1 py-px font-mono text-[12.5px] text-ink">{part.replace(/^`|`$/g, "")}</code>;
       })}
     </>
