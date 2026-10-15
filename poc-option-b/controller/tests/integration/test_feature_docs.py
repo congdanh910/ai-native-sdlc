@@ -99,3 +99,25 @@ def test_story_run_writes_spec_plan_tasks_and_test_cases_in_the_feature_folder(d
     assert detail["status"] == "WAITING_PR_APPROVAL"
     stories = client.get("/api/projects/task-board/stories").json()
     assert stories["features"][0]["stories"][0]["run"] == {"id": run["id"], "status": "WAITING_PR_APPROVAL"}
+
+
+def test_the_project_constitution_reaches_every_role(db, sample_repo):
+    rules = sample_repo / ".specify" / "memory" / "constitution.md"
+    rules.parent.mkdir(parents=True)
+    rules.write_text("# Constitution\n\n- AR-01: business rules live in src/tasks.js\n")
+    for args in (["add", "."], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "-m", "rules"]):
+        subprocess.run(["git", "-C", str(sample_repo), *args], check=True)
+    project = post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
+    item = next(i for i in project["report"] if i["name"] == "constitution")
+    assert item["status"] == "ok" and item["detail"].startswith(".specify/memory/constitution.md")
+    seen = []
+
+    class Recording(MockTeam):
+        def specify(self, context):
+            seen.append(context.constitution_md)
+            return super().specify(context)
+
+    intent = {"title": "Due dates", "problem": "No deadlines.", "outcome": "- Optional due date"}
+    post("/api/runs", {"project": "task-board", "intent": intent, "idempotency_key": str(uuid.uuid4())}, status=201)
+    drain(Recording())
+    assert seen == ["# Constitution\n\n- AR-01: business rules live in src/tasks.js\n"]

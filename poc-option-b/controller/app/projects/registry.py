@@ -24,6 +24,7 @@ CONFIG_PATH = ".sdlc/project.yaml"
 AGENTS_PATH = "AGENTS.md"
 CLAUDE_PATH = "CLAUDE.md"
 REVIEW_PATH = "REVIEW.md"
+CONSTITUTION_PATHS = (".specify/memory/constitution.md", "constitution.md")
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,7 @@ class Snapshot:
     config: ProjectConfig
     agents_md: str
     review_md: str | None
+    constitution_md: str | None = None
 
 
 class ProjectError(ValueError):
@@ -93,6 +95,12 @@ def read_snapshot(mirror: Mirror, commit: str) -> tuple[Snapshot | None, list[It
     review = mirror.read_file(commit, REVIEW_PATH)
     items.append(Item("REVIEW.md", "ok" if review else "warn",
                       "present" if review else "optional; the Code Reviewer uses platform defaults"))
+    constitution_path = next((p for p in CONSTITUTION_PATHS if mirror.read_file(commit, p)), None)
+    constitution = mirror.read_file(commit, constitution_path) if constitution_path else None
+    items.append(Item("constitution", "ok" if constitution else "warn",
+                      f"{constitution_path}; every AI role and the Code Reviewer follow it" if constitution else
+                      "optional; add .specify/memory/constitution.md (architecture, API, naming, security rules) "
+                      "so every role and the Code Reviewer follow the project's rules"))
     srs = mirror.read_file(commit, SRS_PATH)
     if srs:
         stories = srs_stories(srs)
@@ -123,7 +131,7 @@ def read_snapshot(mirror: Mirror, commit: str) -> tuple[Snapshot | None, list[It
             config = None
     if config is None or not agents:
         return None, items
-    return Snapshot(commit, config, agents, review), items
+    return Snapshot(commit, config, agents, review, constitution), items
 
 
 def _first_error(exc: Exception) -> str:

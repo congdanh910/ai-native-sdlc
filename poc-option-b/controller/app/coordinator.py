@@ -380,6 +380,7 @@ def build_context(session: Session, run: Run, *, kind: str = "", feedback: list[
         mirror = mirror_for(session.get(Project, run.project_id))
         srs, sds = mirror.read_file(run.base_commit, SRS_PATH), mirror.read_file(run.base_commit, SDS_PATH)
     return RunContext(title=run.title, policy=policy, agents_md=agents, review_md=artifact(session, run.id, "review_md"),
+                      constitution_md=artifact(session, run.id, "constitution") or "",
                       intent_md=intent, files=bundle.files, spec_md=spec.content if spec else None, srs_md=srs, sds_md=sds,
                       answers=answers, story=_story_context(session, run),
                       repository=bundle.as_input(), feedback=feedback or [], session_id=f"{run.id}:{kind}",
@@ -599,6 +600,8 @@ def _apply_preflight(session: Session, run: Run, execution: Execution, result: d
     store_artifact(session, run, "agents_md", TeamRole.COORDINATOR, snapshot.agents_md)
     if snapshot.review_md:
         store_artifact(session, run, "review_md", TeamRole.COORDINATOR, snapshot.review_md)
+    if snapshot.constitution_md:
+        store_artifact(session, run, "constitution", TeamRole.COORDINATOR, snapshot.constitution_md)
     run.base_commit = base
     modes = {**policy.stages.model_dump(), **run.stage_overrides}
     if modes.get("plan") not in ("manual", "gated"):

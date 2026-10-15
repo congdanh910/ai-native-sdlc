@@ -97,6 +97,9 @@ class ReadonlyTeam(LangflowTeam):
         self.last_call = CallRecord(self.engine, call.prompt_version, call.attempts, usage=dict(self.client.last_usage))
         return result
 
+    def _constitution(self, context: RunContext) -> str:
+        return context.constitution_md or ""  # subscription CLIs have room for the whole file
+
     def _in(self, context: RunContext):
         self.client.cwd = context.worktree or None
 

@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     ollama_model: str = "qwen3:30b-instruct"
     ollama_num_ctx: int = 8192
     context_char_budget: int = 16000
+    constitution_char_budget: int = 6000  # Qwen3 roles; read-only CLIs get the whole file
 
     gx10_ssh_host: str = PLACEHOLDER
     gx10_ssh_port: int = 22

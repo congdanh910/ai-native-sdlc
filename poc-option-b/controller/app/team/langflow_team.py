@@ -102,6 +102,13 @@ class LangflowTeam(MockTeam):
                             "Answer again with one JSON object that follows the output keys exactly."]
         raise InvalidModelOutput(f"{role}: no valid answer after {MAX_FORMAT_RETRIES + 1} attempts: {problems[0]}", raw)
 
+    def _constitution(self, context: RunContext) -> str:
+        """The project's rules. Qwen3's context window is small, so a long constitution is cut to the budget; the
+        rules come first in the file, the rationale later."""
+        text = context.constitution_md or ""
+        budget = self.settings.constitution_char_budget
+        return text if len(text) <= budget else text[:budget] + "\n\n[cut: the rest of the constitution did not fit]"
+
     @staticmethod
     def _policy(context: RunContext) -> dict:
         policy = context.policy
@@ -120,7 +127,7 @@ class LangflowTeam(MockTeam):
         if context.story:
             story = {key: context.story[key] for key in ("story_id", "story_title", "actors", "statement",
                                                           "feature_name", "requirements")}
-        payload = {"intent": context.intent_md, "story": story, "agents_md": context.agents_md,
+        payload = {"intent": context.intent_md, "story": story, "agents_md": context.agents_md, "constitution": self._constitution(context),
                    "answers": [{"question": q, "answer": a} for q, a in context.answers],
                    "repository": {"files": context.repository.get("files", []),
                                   "symbols": context.repository.get("symbols", {})}}
@@ -129,7 +136,7 @@ class LangflowTeam(MockTeam):
     def write_srs(self, context: RunContext) -> Srs:
         payload = {"brief": context.intent_md, "current_srs": context.srs_md or "",
                    "answers": [{"question": q, "answer": a} for q, a in context.answers],
-                   "agents_md": context.agents_md, "feedback": context.feedback}
+                   "agents_md": context.agents_md, "constitution": self._constitution(context), "feedback": context.feedback}
         return self._ask("srs", payload, Srs, normalize.srs, context.session_id)
 
     def write_sds(self, context: RunContext) -> Sds:
@@ -137,7 +144,7 @@ class LangflowTeam(MockTeam):
                    for f in srs_features(context.srs_md or "") for s in f.stories]
         payload = {"brief": context.intent_md, "srs": context.srs_md or "", "stories": stories,
                    "current_sds": context.sds_md or "", "answers": [{"question": q, "answer": a} for q, a in context.answers],
-                   "agents_md": context.agents_md, "repository": {"files": context.repository.get("files", []),
+                   "agents_md": context.agents_md, "constitution": self._constitution(context), "repository": {"files": context.repository.get("files", []),
                                                                   "symbols": context.repository.get("symbols", {})},
                    "feedback": context.feedback}
         return self._ask("sds", payload, Sds, normalize.sds, context.session_id)
@@ -152,7 +159,7 @@ class LangflowTeam(MockTeam):
                       "selected_files": [f for f in context.repository.get("selected_files", [])
                                          if not matches_any(f["path"], policy.test_paths)],
                       "ui_files": [p for p in files if p.endswith(UI_SUFFIXES) and matches_any(p, policy.allowed_paths)]}
-        payload = {"spec": context.spec_md, "agents_md": context.agents_md, "repository": repository,
+        payload = {"spec": context.spec_md, "agents_md": context.agents_md, "constitution": self._constitution(context), "repository": repository,
                    "policy": self._policy(context), "feedback": context.feedback}
         return self._ask("plan", payload, PlanPayload, lambda data: normalize.plan(data, validations),
                          context.session_id)
@@ -166,7 +173,7 @@ class LangflowTeam(MockTeam):
                       "selected_files": [f for f in context.repository.get("selected_files", [])
                                          if matches_any(f["path"], test_paths)]}
         payload = {"spec": context.spec_md, "criteria": criteria, "plan": plan.model_dump(),
-                   "agents_md": context.agents_md, "repository": repository, "policy": self._policy(context),
+                   "agents_md": context.agents_md, "constitution": self._constitution(context), "repository": repository, "policy": self._policy(context),
                    "feedback": context.feedback}
         return self._ask("test-design", payload, TestPlan, normalize.test_plan, context.session_id)
 
@@ -178,7 +185,7 @@ class LangflowTeam(MockTeam):
                  for c in tests.cases]
         payload = {"spec": context.spec_md, "plan": plan.model_dump(), "test_plan": {"cases": cases},
                    "diff": diff, "validation": validation or "coding was simulated; no validation ran",
-                   "agents_md": context.agents_md, "review_md": context.review_md}
+                   "agents_md": context.agents_md, "constitution": self._constitution(context), "review_md": context.review_md}
         return self._ask("review", payload, Review, normalize.review, context.session_id)
 
 

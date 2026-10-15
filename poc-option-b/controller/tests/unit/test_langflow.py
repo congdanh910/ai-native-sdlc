@@ -142,3 +142,16 @@ def test_tech_lead_sees_ui_files_but_not_test_contents(settings):
     repository = client.calls[0][1]["repository"]
     assert [f["path"] for f in repository["selected_files"]] == ["src/tasks.js"]
     assert repository["ui_files"] == ["src/index.html", "src/styles.css"]
+
+
+def test_a_long_constitution_is_cut_for_qwen_but_not_for_subscription_clis():
+    from controller.app.config import Settings
+    from controller.app.team.base import RunContext
+    from controller.app.team.langflow_team import LangflowTeam
+    from controller.app.team.readonly import ReadonlyTeam
+    settings = Settings(constitution_char_budget=20)
+    context = RunContext(title="t", policy=None, agents_md="", review_md=None, intent_md="", files=[],
+                         constitution_md="R" * 50)
+    qwen = LangflowTeam(settings, client=object(), check_capacity=lambda: [], check_ollama=lambda: None)
+    assert qwen._constitution(context).startswith("R" * 20 + "\n\n[cut:")
+    assert ReadonlyTeam(settings, "claude", client=object())._constitution(context) == "R" * 50
