@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from controller.app.models import (Approval, Clarification, Document, Event, Execution, Plan, Project, PullRequest,
                                    Run, Task)
 from controller.app.services import needs_classification
-from controller.app.states import ACTIVE, STAGE_STARTER, WAITING_FOR
+from controller.app.states import ACTIVE, STAGE_STARTER, WAITING_FOR, HumanRole
 
 
 def project_view(project: Project) -> dict:
@@ -20,6 +20,8 @@ def waiting(run: Run) -> dict | None:
     if run.awaiting_start:
         return {"role": STAGE_STARTER[run.awaiting_start].value, "action": "start", "stage": run.awaiting_start}
     role = WAITING_FOR.get(run.status)
+    if run.kind == "sds" and run.status == "WAITING_SPEC_APPROVAL":
+        role = HumanRole.TECH_LEAD  # the architecture is the Tech Lead's call
     if role:
         return {"role": role.value, "action": run.status.lower()}
     if needs_classification(run):
@@ -38,6 +40,7 @@ def _document(document: Document) -> dict:
     return {"id": str(document.id), "kind": document.kind, "version": document.version, "sha256": document.sha256,
             "author_kind": document.author_kind, "author": document.author, "content": document.content,
             "repo_path": document.repo_path, "commit_sha": document.commit_sha,
+            "findings": (document.data or {}).get("sync_findings", []),
             "created_at": document.created_at.isoformat()}
 
 

@@ -19,7 +19,7 @@ from controller.app.config import PROJECT_ROOT, Settings
 PROMPTS = PROJECT_ROOT / "langflow" / "prompts"
 MAX_RESPONSE_BYTES = 2_000_000
 FLOW_PREFIX = "sdlc-v3-"
-ROLES = ("intent-draft", "spec", "srs", "plan", "test-design", "review")
+ROLES = ("intent-draft", "spec", "srs", "sds", "plan", "test-design", "review")
 OLLAMA_TIMEOUT_SECONDS = 300
 
 

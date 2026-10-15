@@ -386,3 +386,398 @@ def check_srs_markdown(content: str) -> list[str]:
 
 def srs_stories(content: str) -> list[str]:
     return STORY_LINE.findall(content)
+
+
+# ---------------------------------------------------------------- reading an SRS back
+
+FEATURE_LINE = re.compile(r"^###\s+7\.(\d+)\s+(.+?)\s+\(([A-Z]{2,4})\)", re.MULTILINE)
+STORY_HEADING = re.compile(r"^####\s+7\.(\d+)\.(\d+)\s+(?:\[[^\]]+\]\([^)]*\):\s+)?([A-Z]{2,4}-US-\d{2}(?:\.\d+)?):\s+"
+                           r"(.+?)\s+\(([^)]*)\)", re.MULTILINE)
+TAGS = re.compile(r"<[^>]+>")
+
+
+class SrsStory(Contract):
+    id: str
+    section: str
+    title: str
+    actors: str
+    statement: str = ""
+
+
+class SrsFeature(Contract):
+    section: str
+    name: str
+    prefix: str
+    stories: list[SrsStory] = []
+
+
+def srs_features(content: str) -> list[SrsFeature]:
+    """Section 7 of an SRS as features and stories. Works on rendered SRS files and on the GRM style (spans, emoji)."""
+    text = TAGS.sub("", content)
+    seven = re.search(r"^##\s+7\.\s.*?$(.*?)(?=^##\s+\d+\.\s|\Z)", text, re.MULTILINE | re.DOTALL)
+    if not seven:
+        return []
+    body = seven[1]
+    features: list[SrsFeature] = []
+    for match in FEATURE_LINE.finditer(body):
+        name = re.sub(r"[^\w\s&/()-]+", "", match[2]).strip()
+        features.append(SrsFeature(section=f"7.{match[1]}", name=name, prefix=match[3]))
+    stories = list(STORY_HEADING.finditer(body))
+    for index, match in enumerate(stories):
+        end = stories[index + 1].start() if index + 1 < len(stories) else len(body)
+        following = body[match.end():end]
+        nxt = re.search(r"^#{2,3}\s", following, re.MULTILINE)
+        following = following[:nxt.start()] if nxt else following
+        statement = next((line.strip() for line in following.splitlines() if line.strip().startswith("**As a")), "")
+        story = SrsStory(id=match[3], section=f"7.{match[1]}.{match[2]}", title=match[4].strip(),
+                         actors=match[5].strip(), statement=statement)
+        feature = next((f for f in features if f.section == f"7.{match[1]}"), None)
+        if feature:
+            feature.stories.append(story)
+    return features
+
+
+# ---------------------------------------------------------------- SDS (architecture) run
+
+SDS_PATH = "SDS.md"
+API_ID = re.compile(r"API-[A-Z]{2,4}-\d{2}")
+
+
+class ArchitectureBrief(Contract):
+    title: str = Field(min_length=3, max_length=200)
+    stack: str = Field(min_length=1)
+    deployment: str = ""
+    integrations: str = ""
+    notes: str = ""
+
+
+def render_architecture_brief(brief: ArchitectureBrief) -> str:
+    sections = [("Technology and stack", brief.stack), ("Deployment and infrastructure", brief.deployment),
+                ("Integrations", brief.integrations), ("Notes", brief.notes)]
+    body = "\n\n".join(f"## {heading}\n\n{text.strip() or '_None._'}" for heading, text in sections)
+    return f"# Architecture brief: {brief.title}\n\n{body}\n"
+
+
+class Trace(Contract):
+    entity: str = "N/A"  # SRS §2 entity, or N/A for a technical-only object
+    object: str
+    table: str = ""
+    notes: str = ""
+
+
+class DomainObject(Contract):
+    name: str
+    description: str
+    notes: str = ""
+
+
+class Screen(Contract):
+    name: str
+    roles: str
+    purpose: str
+
+
+class Component(Contract):
+    name: str
+    responsibility: str
+    technology: str = ""
+
+
+class Table(Contract):
+    name: str
+    columns: str
+    notes: str = ""
+
+
+class Node(Contract):
+    name: str
+    runs: str
+
+
+class Scenario(Contract):
+    name: str
+    steps: list[str] = Field(min_length=1)
+
+
+class Endpoint(Contract):
+    method: str
+    path: str
+    feature: str
+    stories: list[str] = []
+    purpose: str = ""
+    id: str = ""
+
+
+class ErrorCode(Contract):
+    http: int
+    code: str
+    reason: str
+    resolution: str = ""
+
+
+class Threat(Contract):
+    threat: str
+    mitigation: str
+
+
+class Approach(Contract):
+    nfr: str
+    approach: str
+    verification: str = ""
+    target: str = ""
+
+
+class Decision(Contract):
+    title: str
+    context: str
+    options: list[str] = []
+    decision: str
+    consequences: str = ""
+
+
+class Integration(Contract):
+    name: str
+    purpose: str
+    interface: str = ""
+
+
+class Sds(Contract):
+    purpose: str
+    scope: str
+    assumptions: list[str] = []
+    traceability: list[Trace] = Field(min_length=1)
+    objects: list[DomainObject] = []
+    ui_principles: list[str] = []
+    screens: list[Screen] = []
+    context: str
+    components: list[Component] = Field(min_length=1)
+    stack: list[Term] = Field(min_length=1)  # layer -> technology
+    modules: list[Term] = []  # repository path -> purpose
+    tables: list[Table] = []
+    process: list[Scenario] = []
+    deployment: list[Node] = []
+    principles: list[str] = []
+    purposes: dict[str, str] = {}  # SRS story id -> its Purpose for §5
+    api_standards: list[str] = []
+    endpoints: list[Endpoint] = []
+    errors: list[ErrorCode] = []
+    authentication: str = ""
+    authorization: list[Term] = []  # role -> what it may do
+    threats: list[Threat] = []
+    data_protection: list[str] = []
+    secrets: list[str] = []
+    nfr: list[Approach] = []
+    decisions: list[Decision] = Field(min_length=1)
+    metrics: list[Term] = []
+    future: list[str] = []
+    conventions: list[Term] = []
+    integrations: list[Integration] = []
+    questions: list[Question] = []
+    concerns: list[str] = []
+
+
+def number_sds(sds: Sds, features: list[SrsFeature]) -> Sds:
+    """API ids per feature (API-BU-01), and only purposes for stories the SRS has."""
+    data = sds.model_dump()
+    counters: dict[str, int] = {}
+    prefixes = {f.prefix for f in features}
+    for endpoint in data["endpoints"]:
+        feature = endpoint["feature"].strip().upper()
+        endpoint["feature"] = feature
+        counters[feature] = counters.get(feature, 0) + 1
+        endpoint["id"] = f"API-{feature}-{counters[feature]:02d}" if feature in prefixes else f"API-{counters[feature]:02d}"
+    known = {s.id for f in features for s in f.stories}
+    data["purposes"] = {k: v for k, v in data["purposes"].items() if k in known}
+    return Sds.model_validate(data)
+
+
+PURPOSE_LATER = "_Purpose to be written by the Design step of this story's run._"
+
+
+def render_sds(sds: Sds, features: list[SrsFeature], *, product: str, author: str, today: date | None = None) -> str:
+    """Markdown in the company SDS outline (sections 1-13); section 5 mirrors SRS section 7 story by story."""
+    sds = number_sds(sds, features)
+    today = today or date.today()
+    out: list[str] = []
+
+    def heading(level: int, text: str) -> None:
+        out.extend([f"{'#' * level} {text} <a id=\"{_slug(text)}\"></a>", ""])
+
+    toc = ["1. Introduction", "2. Technical Domain Model", "3. UI Design", "4. Architecture Design",
+           "5. Product Features and User Story Specification", "6. API Design", "7. Security Design",
+           "8. Non-Functional Requirements (NFR)", "9. Design Decisions and Tradeoffs", "10. Product Metrics",
+           "11. Future Enhancements", "12. Appendix", "13. External Integrations"]
+    out += [f"# {product} - Software Design Specification (SDS)", "",
+            *_table(["Version", "Date", "Author", "Change"], [["0.1", today.isoformat(), author, "Initial draft"]]),
+            "", "---", "", "## Table of Contents", ""]
+    for item in toc:
+        out.append(f"- [{item}](#{_slug(item)})")
+        if item.startswith("5."):
+            for index, feature in enumerate(features, start=1):
+                section = f"5.{index} {feature.name} ({feature.prefix})"
+                out.append(f"  - [{section}](#{_slug(section)})")
+                for s_index, story in enumerate(feature.stories, start=1):
+                    text = f"5.{index}.{s_index} {story.id}: {story.title} ({story.actors})"
+                    out.append(f"    - [{text}](#{_slug(text)})")
+    out += ["", "---", ""]
+
+    heading(2, "1. Introduction")
+    heading(3, "1.1 Purpose")
+    out += [sds.purpose.strip(), ""]
+    heading(3, "1.2 Scope")
+    out += [sds.scope.strip(), ""]
+    heading(3, "1.3 Assumptions and Constraints")
+    out += [*_bullets(sds.assumptions), ""]
+    heading(3, "1.4 Related Documents")
+    out += [f"- [SRS.md]({SRS_PATH}): requirements this design implements", ""]
+
+    heading(2, "2. Technical Domain Model")
+    heading(3, "2.1 Domain Layer Traceability")
+    out += [f"> **Last synced with SRS §2.1 Domain Entity:** {today.isoformat()}", "",
+            *_table(["SRS §2.1 Domain Entity", "SDS §2.2 Domain Object", "SDS §4.3.3 Database Entity", "Notes"],
+                    [[f"`{t.entity}`" if t.entity != "N/A" else "N/A", f"`{t.object}`",
+                      f"`{t.table}`" if t.table else "", t.notes] for t in sds.traceability]), ""]
+    heading(3, "2.2 Domain Object")
+    out += [*_table(["Object", "Description", "Implementation Notes"],
+                    [[o.name, o.description, o.notes] for o in sds.objects]), ""]
+    heading(3, "2.3 Domain Object State")
+    out += [f"States and transitions follow [SRS §2.4](SRS.md#2-4-domain-object-state).", ""]
+
+    heading(2, "3. UI Design")
+    heading(3, "3.1 UI/UX Principles")
+    out += [*_bullets(sds.ui_principles), ""]
+    heading(3, "3.2 Screens")
+    out += [*_table(["Screen", "Roles", "Purpose"], [[s.name, s.roles, s.purpose] for s in sds.screens]), ""]
+
+    heading(2, "4. Architecture Design")
+    heading(3, "4.1 System Context")
+    out += [sds.context.strip(), ""]
+    heading(3, "4.2 Logical View")
+    out += [*_table(["Component", "Responsibility", "Technology"],
+                    [[c.name, c.responsibility, c.technology] for c in sds.components]), ""]
+    heading(3, "4.3 Development View")
+    heading(4, "4.3.1 Technology Stack")
+    out += [*_table(["Layer", "Technology"], [[t.term, t.meaning] for t in sds.stack]), ""]
+    heading(4, "4.3.2 Repository Layout")
+    out += [*_table(["Path", "Purpose"], [[f"`{m.term}`", m.meaning] for m in sds.modules]), ""]
+    heading(4, "4.3.3 Database Schema")
+    out += [*_table(["Table", "Columns", "Notes"], [[f"`{t.name}`", t.columns, t.notes] for t in sds.tables]), ""]
+    heading(3, "4.4 Process View")
+    if not sds.process:
+        out += [NOT_COVERED, ""]
+    for index, scenario in enumerate(sds.process, start=1):
+        heading(4, f"4.4.{index} {scenario.name}")
+        out += [*[f"{n}. {step}" for n, step in enumerate(scenario.steps, start=1)], ""]
+    heading(3, "4.5 Physical View")
+    out += [*_table(["Node", "Runs"], [[n.name, n.runs] for n in sds.deployment]), ""]
+    heading(3, "4.6 Architecture Principles")
+    out += [*_bullets(sds.principles), ""]
+
+    heading(2, "5. Product Features and User Story Specification")
+    out += [f"> **Last synced with SRS §7 User Stories:** {today.isoformat()}", "",
+            "Each story keeps only its Purpose here; the Design step of its run links the plan once on the feature.", ""]
+    for index, feature in enumerate(features, start=1):
+        heading(3, f"5.{index} {feature.name} ({feature.prefix})")
+        for s_index, story in enumerate(feature.stories, start=1):
+            heading(4, f"5.{index}.{s_index} {story.id}: {story.title} ({story.actors})")
+            out += ["**Purpose**", "", sds.purposes.get(story.id, PURPOSE_LATER), ""]
+
+    heading(2, "6. API Design")
+    heading(3, "6.1 API Design Standards")
+    out += [*_bullets(sds.api_standards), ""]
+    heading(3, "6.2 Data Transfer Objects (DTOs) and Domain Mapping")
+    out += ["_Added by the Design step of each story's run._", ""]
+    heading(3, "6.3 API Index")
+    out += [*_table(["API ID", "Endpoint", "Feature"],
+                    [[f"`{e.id}`", f"`{e.method.upper()} {e.path}`", e.feature] for e in sds.endpoints]), ""]
+    heading(3, "6.4 API Specification")
+    out += ["_Added by the Design step of each story's run._", ""]
+    heading(3, "6.5 API -> User Story Traceability")
+    out += [*_table(["API ID", "User Stories", "Purpose"],
+                    [[f"`{e.id}`", ", ".join(e.stories), e.purpose] for e in sds.endpoints]), ""]
+    heading(3, "6.6 Error Response Catalog")
+    out += [*_table(["HTTP", "Error Code", "Domain/Business Reason", "Resolution"],
+                    [[str(e.http), f"`{e.code}`", e.reason, e.resolution] for e in sds.errors]), ""]
+
+    heading(2, "7. Security Design")
+    heading(3, "7.1 User Authentication")
+    out += [sds.authentication.strip() or NOT_COVERED, ""]
+    heading(3, "7.2 User Authorization")
+    out += [*_table(["Role", "Allowed"], [[f"`{a.term}`", a.meaning] for a in sds.authorization]), ""]
+    heading(3, "7.3 Threat Modeling")
+    out += [*_table(["Threat", "Mitigation"], [[t.threat, t.mitigation] for t in sds.threats]), ""]
+    heading(3, "7.4 Data Protection")
+    out += [*_bullets(sds.data_protection), ""]
+    heading(3, "7.5 Secret Management")
+    out += [*_bullets(sds.secrets), ""]
+
+    heading(2, "8. Non-Functional Requirements (NFR)")
+    out += [*_table(["NFR", "Design Approach"], [[a.nfr, a.approach] for a in sds.nfr]), ""]
+    heading(3, "8.1 NFR Verification Matrix")
+    out += [*_table(["NFR", "Verification Method", "Target"], [[a.nfr, a.verification, a.target] for a in sds.nfr]), ""]
+
+    heading(2, "9. Design Decisions and Tradeoffs")
+    for index, decision in enumerate(sds.decisions, start=1):
+        heading(3, f"9.{index} {decision.title}")
+        out += [f"**Context:** {decision.context.strip()}", ""]
+        if decision.options:
+            out += ["**Options considered:**", "", *[f"- {o}" for o in decision.options], ""]
+        out += [f"**Decision:** {decision.decision.strip()}", ""]
+        if decision.consequences:
+            out += [f"**Consequences:** {decision.consequences.strip()}", ""]
+
+    heading(2, "10. Product Metrics")
+    out += [*_table(["Metric", "Definition"], [[m.term, m.meaning] for m in sds.metrics]), ""]
+    heading(2, "11. Future Enhancements")
+    out += [*_bullets(sds.future), ""]
+    heading(2, "12. Appendix")
+    heading(3, "12.1 Naming Conventions")
+    out += [*_table(["Item", "Convention"], [[c.term, c.meaning] for c in sds.conventions]), ""]
+    heading(2, "13. External Integrations")
+    out += [*_table(["Integration", "Purpose", "Interface"],
+                    [[i.name, i.purpose, i.interface] for i in sds.integrations]), ""]
+    return "\n".join(out).rstrip() + "\n"
+
+
+SDS_SECTIONS = ("1. Introduction", "2. Technical Domain Model", "4. Architecture Design",
+                "5. Product Features and User Story Specification", "6. API Design", "9. Design Decisions")
+SDS_STORY_LINE = re.compile(r"^####\s+5\.\d+\.\d+\s+([A-Z]{2,4}-US-\d{2}(?:\.\d+)?):", re.MULTILINE)
+
+
+def check_sds_markdown(content: str, srs: str | None = None) -> list[str]:
+    problems = []
+    text = TAGS.sub("", content)
+    headings = [line for line in text.splitlines() if line.startswith("## ")]
+    for section in SDS_SECTIONS:
+        if not any(line[3:].lstrip().startswith(section) for line in headings):
+            problems.append(f"section '{section}' is missing")
+    if srs:
+        expected = [s.id for f in srs_features(srs) for s in f.stories]
+        found = SDS_STORY_LINE.findall(text)
+        missing = [s for s in expected if s not in found]
+        if missing:
+            problems.append(f"section 5 has no entry for SRS stories {', '.join(missing)}")
+    return problems
+
+
+def sds_sync_findings(sds: Sds, srs: str) -> list[str]:
+    """Where the design does not cover the requirements: SRS entities without a traced object, stories without
+    a purpose. Shown at the SDS gate; they do not block it."""
+    findings = []
+    entities = re.findall(r"^\|\s*`?([A-Z][A-Za-z0-9]+)`?\s*\|", _section_text(srs, "2."), re.MULTILINE)
+    entities = [e for e in entities if e not in ("Entity", "Subject", "Rule", "State")]
+    traced = {t.entity.strip("`") for t in sds.traceability}
+    for entity in entities:
+        if entity not in traced:
+            findings.append(f"SRS entity {entity} has no row in SDS §2.1 traceability")
+    for feature in srs_features(srs):
+        for story in feature.stories:
+            if story.id not in sds.purposes:
+                findings.append(f"{story.id} has no Purpose in SDS §5 yet")
+    return findings
+
+
+def _section_text(markdown: str, number: str) -> str:
+    text = TAGS.sub("", markdown)
+    match = re.search(rf"^##\s+{re.escape(number)}\s.*?$(.*?)(?=^##\s+\d+\.\s|\Z)", text, re.MULTILINE | re.DOTALL)
+    return match[1] if match else ""

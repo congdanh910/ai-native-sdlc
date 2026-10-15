@@ -17,41 +17,50 @@ const FIELDS = [
 type Key = (typeof FIELDS)[number][0];
 type Errors = Partial<Record<Key | "project", string>>;
 
-const BRIEF = [
+const BRIEF: DocField[] = [
   ["title", "Product name", "", true],
   ["summary", "Summary", "what the product is for and why it is built now", true],
   ["users", "Users and roles", "one role per line, like HR: manages employees and reads reports", true],
   ["features", "Wanted features", "one feature per line; the Business Analyst splits them into user stories", true],
   ["constraints", "Constraints", "deadline, compliance, devices, integrations; start a line with [blocking] if the SRS must wait for an answer", false],
   ["sources", "Sources", "notes from sales, meetings and the contract that the SRS should trace to", false],
-] as const;
-type BriefKey = (typeof BRIEF)[number][0];
-type Kind = "feature" | "srs";
+];
+const ARCHITECTURE: DocField[] = [
+  ["title", "Product name", "as in SRS.md", true],
+  ["stack", "Technology and stack", "languages, frameworks, database, devices the team will use or must use", true],
+  ["deployment", "Deployment and infrastructure", "where it runs: cloud, on-premise, edge devices, environments", false],
+  ["integrations", "Integrations", "systems it talks to, such as HR, payroll, identity provider", false],
+  ["notes", "Notes", "security, data protection, performance targets; start a line with [blocking] if the SDS must wait for an answer", false],
+];
+type DocField = readonly [string, string, string, boolean];
+type Kind = "feature" | "srs" | "sds";
 
-function validateBrief(brief: Record<BriefKey, string>): Partial<Record<BriefKey, string>> {
-  const errors: Partial<Record<BriefKey, string>> = {};
-  if (brief.title.trim().length < 3) errors.title = brief.title.trim() ? "Product name needs at least 3 characters" : "Product name is required";
-  for (const [key, label, , required] of BRIEF) {
-    if (required && key !== "title" && !brief[key].trim()) errors[key] = `${label} is required`;
+function validateDoc(fields: readonly DocField[], values: Record<string, string>): Record<string, string> {
+  const errors: Record<string, string> = {};
+  for (const [key, label, , required] of fields) {
+    const value = (values[key] ?? "").trim();
+    if (key === "title" && value.length < 3) errors.title = value ? `${label} needs at least 3 characters` : `${label} is required`;
+    else if (required && !value) errors[key] = `${label} is required`;
   }
   return errors;
 }
 
-/** A project brief: the Business Analyst writes SRS.md from it, before any feature run. */
-function BriefForm({ project }: { project: string }) {
+/** A project document request: a brief the Business Analyst turns into SRS.md, or an architecture brief the
+ * Architect turns into SDS.md. Both come before any feature run. */
+function DocumentForm({ project, fields, bodyKey, submit }: { project: string; fields: readonly DocField[]; bodyKey: "brief" | "architecture"; submit: string }) {
   const [, navigate] = useLocation();
   const idempotencyKey = useMemo(() => crypto.randomUUID(), []);
-  const [brief, setBrief] = useState<Record<BriefKey, string>>({ title: "", summary: "", users: "", features: "", constraints: "", sources: "" });
-  const [errors, setErrors] = useState<Partial<Record<BriefKey, string>>>({});
+  const [brief, setBrief] = useState<Record<string, string>>(() => Object.fromEntries(fields.map(([k]) => [k, ""])));
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const [tried, setTried] = useState(false);
-  const update = (key: BriefKey, value: string) => {
+  const update = (key: string, value: string) => {
     const next = { ...brief, [key]: value };
     setBrief(next);
-    if (tried) setErrors(validateBrief(next));
+    if (tried) setErrors(validateDoc(fields, next));
   };
   return (
     <>
-      {BRIEF.map(([key, label, hint, required]) => (
+      {fields.map(([key, label, hint, required]) => (
         <Field key={key} label={label} hint={hint || undefined} htmlFor={`brief-${key}`} required={required} error={errors[key]}>
           {key === "title" ? (
             <Input id={`brief-${key}`} value={brief[key]} maxLength={200} aria-invalid={errors[key] ? true : undefined} onChange={(e) => update(key, e.target.value)} />
@@ -63,21 +72,21 @@ function BriefForm({ project }: { project: string }) {
       <div>
         <ActionButton variant="primary" action={async () => {
           setTried(true);
-          const local = validateBrief(brief);
+          const local = validateDoc(fields, brief);
           setErrors(local);
           if (Object.keys(local).length) {
             document.getElementById(`brief-${Object.keys(local)[0]}`)?.focus();
             throw new ApiError(`Fill in ${Object.keys(local).length} required field(s) before submitting.`);
           }
           try {
-            const run = await api<RunSummary>("/api/runs", { method: "POST", body: { project, brief, idempotency_key: idempotencyKey } });
+            const run = await api<RunSummary>("/api/runs", { method: "POST", body: { project, [bodyKey]: brief, idempotency_key: idempotencyKey } });
             navigate(`/runs/${run.id}`);
           } catch (error) {
-            const fields = error instanceof ApiError ? error.fields : {};
-            if (Object.keys(fields).length) setErrors(fields as Partial<Record<BriefKey, string>>);
+            const returned = error instanceof ApiError ? error.fields : {};
+            if (Object.keys(returned).length) setErrors(returned);
             throw error;
           }
-        }}>Submit brief, write SRS.md</ActionButton>
+        }}>{submit}</ActionButton>
       </div>
     </>
   );
@@ -123,10 +132,12 @@ export function NewRequestView() {
   const missing = Object.keys(validate(intent)).length;
   return (
     <>
-      <PageHeader title="New request" subtitle={kind === "srs"
-        ? "You act as Product Owner. A new project starts here: the Business Analyst writes SRS.md from this brief, and feature runs follow it."
-        : "You act as Product Owner. This form is intent.md; the Business Analyst turns it into spec.md."} />
-      <Tabs<Kind> value={kind} onChange={setKind} tabs={[{ id: "feature", label: "Feature request" }, { id: "srs", label: "Project SRS" }]} />
+      <PageHeader title="New request" subtitle={{
+        srs: "Step 1 of a new project, as Product Owner: the Business Analyst writes SRS.md from this brief.",
+        sds: "Step 2 of a new project, as Tech Lead: the Architect writes SDS.md from the merged SRS.md and this brief.",
+        feature: "You act as Product Owner. This form is intent.md; the Business Analyst turns it into spec.md.",
+      }[kind]} />
+      <Tabs<Kind> value={kind} onChange={setKind} tabs={[{ id: "feature", label: "Feature request" }, { id: "srs", label: "Project SRS" }, { id: "sds", label: "Project SDS" }]} />
       <div className="flex flex-wrap items-start gap-5">
         <div className="flex min-w-0 flex-[999_1_560px] flex-col gap-5">
           <Card className="flex flex-col gap-4 p-5">
@@ -136,7 +147,8 @@ export function NewRequestView() {
                 {ready.map((p) => <option key={p.key} value={p.key}>{p.key} ({p.readiness})</option>)}
               </Select>
             </Field>
-            {kind === "srs" ? <BriefForm project={chosen} /> : FIELDS.map(([key, label, hint, required]) => {
+            {kind === "srs" ? <DocumentForm key="srs" project={chosen} fields={BRIEF} bodyKey="brief" submit="Submit brief, write SRS.md" />
+        : kind === "sds" ? <DocumentForm key="sds" project={chosen} fields={ARCHITECTURE} bodyKey="architecture" submit="Submit, write SDS.md" /> : FIELDS.map(([key, label, hint, required]) => {
               const props = {
                 id: key,
                 value: intent[key],
@@ -153,7 +165,7 @@ export function NewRequestView() {
                 </Field>
               );
             })}
-            {kind === "srs" ? null : <div className="flex flex-wrap items-center gap-3">
+            {kind !== "feature" ? null : <div className="flex flex-wrap items-center gap-3">
               <ActionButton variant="primary" action={async () => {
                 setTried(true);
                 const local = validate(intent);
@@ -175,7 +187,7 @@ export function NewRequestView() {
             </div>}
           </Card>
         </div>
-        {kind === "srs" ? null : <Card className="flex min-w-0 flex-[1_1_300px] flex-col gap-3 p-5">
+        {kind !== "feature" ? null : <Card className="flex min-w-0 flex-[1_1_300px] flex-col gap-3 p-5">
           <h2 className="m-0 flex items-center gap-2 text-base font-semibold"><Sparkles className="size-4 text-accent" aria-hidden />Draft with AI</h2>
           <p className="m-0 text-sm text-muted">Describe what you want in your own words. The Business Analyst fills the form; correct it before you submit.</p>
           <Field label="Your words" htmlFor="free">

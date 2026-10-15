@@ -146,3 +146,37 @@ def srs(data: dict) -> dict:
             for key in ("steps", "alternatives", "negatives"):
                 flow[key] = as_list(flow.get(key))
     return data
+
+
+def sds(data: dict) -> dict:
+    data = dict(data)
+
+    def as_list(value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [line.strip().lstrip("-*0123456789. ").strip() for line in value.splitlines() if line.strip()]
+        return value
+
+    for key in ("assumptions", "traceability", "objects", "ui_principles", "screens", "components", "stack", "modules",
+                "tables", "process", "deployment", "principles", "api_standards", "endpoints", "errors",
+                "authorization", "threats", "data_protection", "secrets", "nfr", "decisions", "metrics", "future",
+                "conventions", "integrations", "concerns"):
+        data[key] = as_list(data.get(key))
+    data["questions"] = [{"question": q, "blocking": False} if isinstance(q, str) else q
+                         for q in as_list(data.get("questions"))]
+    if isinstance(data.get("purposes"), list):  # [{"id": ..., "purpose": ...}] -> {id: purpose}
+        data["purposes"] = {p.get("id") or p.get("story"): p.get("purpose") for p in data["purposes"] if isinstance(p, dict)}
+    for endpoint in data["endpoints"]:
+        if isinstance(endpoint, dict) and isinstance(endpoint.get("stories"), str):
+            endpoint["stories"] = [s.strip() for s in endpoint["stories"].split(",") if s.strip()]
+    for item in data["errors"]:
+        if isinstance(item, dict) and isinstance(item.get("http"), str) and item["http"].strip().isdigit():
+            item["http"] = int(item["http"].strip())
+    for scenario in data["process"]:
+        if isinstance(scenario, dict):
+            scenario["steps"] = as_list(scenario.get("steps"))
+    for decision in data["decisions"]:
+        if isinstance(decision, dict):
+            decision["options"] = as_list(decision.get("options"))
+    return data

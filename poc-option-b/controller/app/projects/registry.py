@@ -15,7 +15,7 @@ from controller.app.doing.github import repo_slug
 from controller.app.doing.validation import ValidationGate
 from controller.app.events import record_event
 from controller.app.models import Project
-from controller.app.project_docs import SRS_PATH, srs_stories
+from controller.app.project_docs import SDS_PATH, SRS_PATH, SDS_STORY_LINE, srs_stories
 from controller.app.projects.config import ProjectConfig, effective_policy, parse_project_config
 from controller.app.projects.repo import GitError, Mirror, _git, validate_repo_url
 
@@ -102,6 +102,12 @@ def read_snapshot(mirror: Mirror, commit: str) -> tuple[Snapshot | None, list[It
     else:
         items.append(Item(SRS_PATH, "warn", "missing; start an SRS request (New request, Project SRS) "
                                             "before feature runs"))
+    sds = mirror.read_file(commit, SDS_PATH)
+    if sds:
+        items.append(Item(SDS_PATH, "ok", f"present; {len(SDS_STORY_LINE.findall(sds))} user stories in section 5"))
+    else:
+        items.append(Item(SDS_PATH, "warn", "missing; after the SRS is merged, start an SDS request "
+                                            "(New request, Project SDS) before feature runs"))
 
     config = None
     raw = mirror.read_file(commit, CONFIG_PATH)

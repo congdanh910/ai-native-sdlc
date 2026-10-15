@@ -9,7 +9,7 @@ interface Stage { key: string; label: string; detail: string; gate?: boolean; st
 export function stages(run: RunDetail): Stage[] {
   const has = (kind: string) => run.documents.some((d) => d.kind === kind);
   const approved = (stage: string) => run.approvals.some((a) => a.stage === stage && a.decision === "approve");
-  if (run.kind === "srs") return srsStages(run, has, approved);
+  if (run.kind !== "feature") return documentStages(run, has, approved);
   const plan = run.plans[run.plans.length - 1];
   const passed = run.tasks.filter((t) => t.status === "PASSED").length;
   const review = [...run.documents].reverse().find((d) => d.kind === "review");
@@ -38,14 +38,16 @@ export function stages(run: RunDetail): Stage[] {
   return withState(run, list, done);
 }
 
-/** An SRS run: brief, Business Analyst writes SRS.md, SRS gate, PR. */
-function srsStages(run: RunDetail, has: (kind: string) => boolean, approved: (stage: string) => boolean): Stage[] {
+/** A project document run: brief, Business Analyst writes SRS.md (or Architect writes SDS.md), gate, PR. */
+function documentStages(run: RunDetail, has: (kind: string) => boolean, approved: (stage: string) => boolean): Stage[] {
   const pr = run.pull_request;
-  const done = [has("intent"), has("srs"), approved("spec"), !!pr && (pr.merged_sha !== null || run.status === "COMPLETED")];
+  const srs = run.kind === "srs";
+  const kind = srs ? "srs" : "sds", name = srs ? "SRS" : "SDS";
+  const done = [has("intent"), has(kind), approved("spec"), !!pr && (pr.merged_sha !== null || run.status === "COMPLETED")];
   const list: Omit<Stage, "state">[] = [
-    { key: "brief", label: "Brief", detail: "Product Owner" },
-    { key: "srs", label: "SRS", detail: has("srs") ? "Business Analyst" : "not yet" },
-    { key: "gate1", label: "Gate 1", detail: approved("spec") ? "SRS approved" : "approve SRS", gate: true },
+    { key: "brief", label: "Brief", detail: srs ? "Product Owner" : "architecture brief" },
+    { key: kind, label: name, detail: has(kind) ? (srs ? "Business Analyst" : "Architect") : "not yet" },
+    { key: "gate1", label: "Gate 1", detail: approved("spec") ? `${name} approved` : `approve ${name}`, gate: true },
     { key: "gate2", label: "Gate 2", detail: pr?.merged_sha ? "merged" : pr ? (pr.simulated ? "simulated PR" : `PR #${pr.number}`) : "merge PR", gate: true },
   ];
   return withState(run, list, done);

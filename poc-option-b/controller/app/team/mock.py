@@ -8,7 +8,7 @@ clarification loop.
 
 import re
 
-from controller.app.project_docs import Srs
+from controller.app.project_docs import Sds, Srs, srs_features
 from controller.app.projects.config import matches_any
 from controller.app.schemas import (Criterion, Intent, PlanPayload, PlanTask, Question, Review, Spec, TestCase,
                                     TestPlan, parse_criteria)
@@ -88,6 +88,30 @@ class MockTeam:
             "flows": [{"name": "Main flow", "steps": [f"{roles[0]['role']} uses {f['name']}" for f in features]
                        + ["The system records the result"]}],
             "questions": questions, "concerns": ["Mock Business Analyst: no model was called."]})
+
+    def write_sds(self, context: RunContext) -> Sds:
+        """One object and table per SRS feature, one decision for the stack named in the brief."""
+        features = srs_features(context.srs_md or "")
+        stack = _section(context.intent_md, "Technology and stack") or "Not chosen"
+        answered = {question for question, _ in context.answers}
+        questions = [{"question": line[len("[blocking]"):].strip(), "blocking": True}
+                     for line in _items(_section(context.intent_md, "Notes")) if line.lower().startswith("[blocking]")
+                     and line[len("[blocking]"):].strip() not in answered]
+        return Sds.model_validate({
+            "purpose": f"Design for {context.title}.", "scope": ", ".join(f.name for f in features) or "Whole product",
+            "assumptions": [f"Answer to '{q}': {a}" for q, a in context.answers],
+            "traceability": [{"entity": "N/A", "object": f.name.replace(" ", ""), "table": f.prefix.lower()}
+                             for f in features] or [{"object": "Product"}],
+            "context": "Users reach the product through a web browser.",
+            "components": [{"name": f"{f.name} module", "responsibility": f"Implements {f.prefix} stories"} for f in features]
+                          or [{"name": "Application", "responsibility": "Everything"}],
+            "stack": [{"term": "Application", "meaning": stack.splitlines()[0]}],
+            "purposes": {s.id: f"Let {s.actors} {s.title.lower()}." for f in features for s in f.stories},
+            "endpoints": [{"method": "GET", "path": f"/api/v1/{f.prefix.lower()}", "feature": f.prefix,
+                           "stories": [s.id for s in f.stories]} for f in features],
+            "decisions": [{"title": "Technology Stack Selection", "context": "The brief names the stack.",
+                           "decision": stack.splitlines()[0]}],
+            "questions": questions, "concerns": ["Mock Architect: no model was called."]})
 
     def plan(self, context: RunContext) -> PlanPayload:
         criteria = parse_criteria(context.spec_md or "")

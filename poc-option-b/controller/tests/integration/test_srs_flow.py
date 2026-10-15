@@ -9,6 +9,9 @@ import pytest
 from controller.app.db import session_scope
 from controller.app.main import app
 from controller.app.models import Run
+from controller.app.project_docs import ProjectBrief, render_brief, render_srs
+from controller.app.team.base import RunContext
+from controller.app.team.mock import MockTeam
 from controller.tests.integration.test_team_loop import drain
 
 pytestmark = pytest.mark.integration
@@ -90,7 +93,6 @@ def test_srs_rejection_sends_the_reason_back_to_the_business_analyst(db, sample_
             seen.append(context.feedback)
             return self.team.write_srs(context)
 
-    from controller.app.team.mock import MockTeam
     recording = Recording()
     recording.team = MockTeam()
     drain(recording)
@@ -116,3 +118,62 @@ def test_a_run_takes_either_an_intent_or_a_brief(db, sample_repo):
     post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
     response = client.post("/api/runs", json={"project": "task-board", "idempotency_key": str(uuid.uuid4())})
     assert response.status_code == 422
+
+
+ARCHITECTURE = {"title": "Attendance", "stack": "Node 20, PostgreSQL", "deployment": "One VM on the office network",
+                "integrations": "", "notes": ""}
+
+
+def with_srs(sample_repo) -> str:
+    """Put a rendered SRS on main, as if the SRS pull request had been merged."""
+    context = RunContext(title="Attendance", policy=None, agents_md="", review_md=None,
+                         intent_md=render_brief(ProjectBrief(**BRIEF)), files=[])
+    content = render_srs(MockTeam().write_srs(context), author="t")
+    (sample_repo / "SRS.md").write_text(content)
+    for args in (["add", "SRS.md"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "-m", "srs"]):
+        subprocess.run(["git", "-C", str(sample_repo), *args], check=True)
+    return content
+
+
+def test_sds_needs_the_srs_first(db, sample_repo):
+    post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
+    response = client.post("/api/runs", json={"project": "task-board", "architecture": ARCHITECTURE,
+                                              "idempotency_key": str(uuid.uuid4())})
+    assert response.status_code == 409 and "no SRS.md" in response.json()["detail"]
+
+
+def test_sds_run_designs_every_srs_story_and_waits_for_the_tech_lead(db, sample_repo):
+    with_srs(sample_repo)
+    project = post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
+    assert next(i for i in project["report"] if i["name"] == "SRS.md")["detail"] == "present; 2 user stories in section 7"
+    assert next(i for i in project["report"] if i["name"] == "SDS.md")["status"] == "warn"
+    run = post("/api/runs", {"project": "task-board", "architecture": ARCHITECTURE,
+                             "idempotency_key": str(uuid.uuid4())}, status=201)
+    assert run["kind"] == "sds"
+    drain()
+    assert [(i["role"], i["action"]) for i in client.get("/api/inbox").json()] == [
+        ("tech_lead", "waiting_spec_approval")]
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    sds = [d for d in detail["documents"] if d["kind"] == "sds"][-1]
+    assert sds["content"].startswith("# Attendance - Software Design Specification (SDS)")
+    assert "#### 5.1.1 CIW-US-01: Check in with the camera (EMPLOYEE)" in sds["content"]
+    assert "Let EMPLOYEE check in with the camera." in sds["content"]
+    assert "| `API-CIW-01` | `GET /api/v1/ciw` | CIW |" in sds["content"]
+    assert "| Application | Node 20, PostgreSQL |" in sds["content"]
+    assert sds["findings"] == ["SRS entity Check has no row in SDS §2.1 traceability",
+                               "SRS entity Attendance has no row in SDS §2.1 traceability"]
+
+    dropped = sds["content"].replace("#### 5.1.1 CIW-US-01", "#### 5.1.1 XX-US-09")
+    response = client.post(f"/api/runs/{run['id']}/revise-spec", json={"content": dropped})
+    assert response.status_code == 409 and "no entry for SRS stories CIW-US-01" in response.json()["detail"]
+
+    post(f"/api/runs/{run['id']}/approve-spec", {"document_id": sds["id"], "sha256": sds["sha256"]})
+    drain()
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    assert detail["status"] == "WAITING_PR_APPROVAL"
+    assert [a["role"] for a in detail["approvals"]] == ["tech_lead"]
+    with session_scope() as session:
+        worktree = session.get(Run, uuid.UUID(run["id"])).worktree_path
+    committed = subprocess.run(["git", "-C", worktree, "show", "HEAD~1:SDS.md"], capture_output=True, text=True,
+                               check=True).stdout
+    assert committed == sds["content"]

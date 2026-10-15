@@ -24,6 +24,9 @@ class CompositeTeam:
     def write_srs(self, *args, **kwargs):
         return self.thinking.write_srs(*args, **kwargs)
 
+    def write_sds(self, *args, **kwargs):
+        return self.thinking.write_sds(*args, **kwargs)
+
     def plan(self, *args, **kwargs):
         return self.thinking.plan(*args, **kwargs)
 

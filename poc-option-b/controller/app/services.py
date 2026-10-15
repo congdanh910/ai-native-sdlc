@@ -12,7 +12,9 @@ from controller.app import coordinator
 from controller.app.documents import add_document, add_plan, latest_document, latest_plan
 from controller.app.events import record_event
 from controller.app.models import Approval, Clarification, Project, PullRequest, Run, Task
-from controller.app.project_docs import ProjectBrief, check_srs_markdown, render_brief
+from controller.app.project_docs import (SRS_PATH, ArchitectureBrief, ProjectBrief, check_sds_markdown,
+                                         check_srs_markdown, render_architecture_brief, render_brief)
+from controller.app.projects.registry import mirror_for
 from controller.app.schemas import Intent, PlanPayload, TestPlan, parse_criteria, render_intent
 from controller.app.state_machine import transition_run, transition_task
 from controller.app.config import get_settings
@@ -59,7 +61,8 @@ def get_run(session: Session, run_id: uuid.UUID) -> Run:
 
 # ---------------------------------------------------------------- Product Owner
 
-def create_run(session: Session, project: Project, intent: Intent | ProjectBrief, *, actor: str, idempotency_key: str,
+def create_run(session: Session, project: Project, intent: Intent | ProjectBrief | ArchitectureBrief, *, actor: str,
+               idempotency_key: str,
                experiment: bool = False, base_commit: str | None = None, stage_overrides: dict | None = None,
                eval_run_id: uuid.UUID | None = None, eval_case: str | None = None) -> Run:
     existing = session.scalar(select(Run).where(Run.idempotency_key == idempotency_key))
@@ -67,11 +70,17 @@ def create_run(session: Session, project: Project, intent: Intent | ProjectBrief
         return existing
     if project.readiness == "not_ready":
         raise DecisionError(f"project {project.key} is not ready; open Projects and run the check")
-    srs = isinstance(intent, ProjectBrief)
-    if srs and experiment:
-        raise DecisionError("an SRS run cannot be an experiment")
-    run = Run(project_id=project.id, title=f"SRS: {intent.title}" if srs else intent.title,
-              kind=RunKind.SRS.value if srs else RunKind.FEATURE.value, idempotency_key=idempotency_key,
+    kind = (RunKind.SRS if isinstance(intent, ProjectBrief) else RunKind.SDS if isinstance(intent, ArchitectureBrief)
+            else RunKind.FEATURE)
+    if kind != RunKind.FEATURE and experiment:
+        raise DecisionError(f"an {kind.upper()} run cannot be an experiment")
+    if kind == RunKind.SDS:
+        srs_item = next((i for i in project.readiness_report.get("items", []) if i.get("name") == SRS_PATH), None)
+        if not srs_item or srs_item.get("status") != "ok":
+            raise DecisionError(f"{project.key} has no SRS.md with user stories on {project.default_branch}; "
+                                "write and merge the SRS first, then run the project check")
+    title = {RunKind.SRS: f"SRS: {intent.title}", RunKind.SDS: f"SDS: {intent.title}"}.get(kind, intent.title)
+    run = Run(project_id=project.id, title=title, kind=kind.value, idempotency_key=idempotency_key,
               status=RunStatus.RECEIVED.value, experiment=experiment, base_commit=base_commit,
               stage_overrides=stage_overrides or {}, eval_run_id=eval_run_id, eval_case=eval_case)
     session.add(run)
@@ -79,7 +88,8 @@ def create_run(session: Session, project: Project, intent: Intent | ProjectBrief
     if not experiment:  # pinned at creation, so a later .env change never alters a run in flight
         engines = json.dumps(get_settings().default_engines)
         coordinator.store_artifact(session, run, "engines", TeamRole.COORDINATOR, engines)
-    add_document(session, run.id, "intent", render_brief(intent) if srs else render_intent(intent),
+    render = {RunKind.SRS: render_brief, RunKind.SDS: render_architecture_brief}.get(kind, render_intent)
+    add_document(session, run.id, "intent", render(intent),
                  author_kind="human", author=actor, data=intent.model_dump())
     record_event(session, "intent.accepted", actor=actor, acting_role=PO, run_id=run.id, project_id=project.id,
                  payload={"kind": run.kind})
@@ -110,17 +120,26 @@ def _current_spec(session: Session, run: Run, document_id: uuid.UUID, sha256: st
     return spec
 
 
+def gate_role(run: Run) -> str:
+    """Who decides at the first gate: the Product Owner, or the Tech Lead for the architecture (SDS)."""
+    return TL if run.kind == RunKind.SDS else PO
+
+
 def approve_spec(session: Session, run: Run, document_id: uuid.UUID, sha256: str, *, actor: str) -> None:
     _require(run, RunStatus.WAITING_SPEC_APPROVAL)
     spec = _current_spec(session, run, document_id, sha256)
-    _approval(session, run, "spec", "approve", actor, PO, document_id=spec.id)
-    coordinator.accept_spec(session, run, spec, actor=actor, acting_role=PO)
+    _approval(session, run, "spec", "approve", actor, gate_role(run), document_id=spec.id)
+    coordinator.accept_spec(session, run, spec, actor=actor, acting_role=gate_role(run))
 
 
 def revise_spec(session: Session, run: Run, content: str, *, actor: str, reason: str | None) -> None:
     _require(run, RunStatus.WAITING_SPEC_APPROVAL)
-    if run.kind == RunKind.SRS:
-        problems = check_srs_markdown(content)
+    if run.kind in (RunKind.SRS, RunKind.SDS):
+        if run.kind == RunKind.SRS:
+            problems = check_srs_markdown(content)
+        else:
+            srs = mirror_for(session.get(Project, run.project_id)).read_file(run.base_commit, SRS_PATH)
+            problems = check_sds_markdown(content, srs)
         if problems:
             raise DecisionError("; ".join(problems))
     else:
@@ -129,7 +148,7 @@ def revise_spec(session: Session, run: Run, content: str, *, actor: str, reason:
         except ValueError as exc:
             raise DecisionError(str(exc)) from exc
     document = add_document(session, run.id, coordinator.spec_kind(run), content, author_kind="human", author=actor)
-    _approval(session, run, "spec", "revise", actor, PO, reason=reason, document_id=document.id)
+    _approval(session, run, "spec", "revise", actor, gate_role(run), reason=reason, document_id=document.id)
     _corrected(run)
 
 
@@ -137,12 +156,12 @@ def reject_spec(session: Session, run: Run, *, actor: str, reason: str, next_ste
     _require(run, RunStatus.WAITING_SPEC_APPROVAL)
     if not reason.strip():
         raise DecisionError("a rejection needs a reason")
-    _approval(session, run, "spec", "reject", actor, PO, reason=reason)
+    _approval(session, run, "spec", "reject", actor, gate_role(run), reason=reason)
     _corrected(run)
     if next_step == "cancel":
-        transition_run(session, run, RunStatus.CANCELLED, actor=actor, acting_role=PO, reason=reason)
+        transition_run(session, run, RunStatus.CANCELLED, actor=actor, acting_role=gate_role(run), reason=reason)
     else:
-        transition_run(session, run, RunStatus.SPECIFYING, actor=actor, acting_role=PO, reason=reason)
+        transition_run(session, run, RunStatus.SPECIFYING, actor=actor, acting_role=gate_role(run), reason=reason)
         coordinator.queue(session, run, "specify")
 
 

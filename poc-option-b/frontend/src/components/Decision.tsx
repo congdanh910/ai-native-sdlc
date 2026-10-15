@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ExternalLink, GitPullRequest } from "lucide-react";
-import { api, type Meta, type RunDetail } from "../lib/api";
+import { api, projectDoc, type Meta, type RunDetail } from "../lib/api";
 import { ACTION_LABEL, role, short } from "../lib/utils";
 import { CoverageMatrix, GroundingSummary } from "./Coverage";
 import { PlanSummary } from "./PlanSummary";
@@ -38,9 +38,10 @@ export function DecisionPanel({ run, onDone }: { run: RunDetail; onDone: () => v
     setEditing(false);
     onDone();
   };
-  const srs = run.kind === "srs";
-  const spec = [...run.documents].reverse().find((d) => d.kind === (srs ? "srs" : "spec"));
-  const specName = srs ? "SRS.md" : "spec.md";
+  const doc = projectDoc(run);
+  const srs = doc !== null;  // a project document (SRS or SDS) rather than a feature spec
+  const spec = [...run.documents].reverse().find((d) => d.kind === (doc?.kind ?? "spec"));
+  const specName = doc?.name ?? "spec.md";
   const [specDraft, setSpecDraft] = useState(spec?.content ?? "");
   const plan = run.plans[run.plans.length - 1];
   const [planDraft, setPlanDraft] = useState(plan ? JSON.stringify({ plan: plan.plan, test_plan: plan.test_plan }, null, 2) : "");
@@ -74,17 +75,23 @@ export function DecisionPanel({ run, onDone }: { run: RunDetail; onDone: () => v
   if (need.action === "waiting_spec_approval" && spec) {
     return (
       <Panel run={run} title={`${specName} v${spec.version}`}>
-        {srs ? <p className="m-0 text-sm text-muted">Accepting commits SRS.md to the repository root and opens a draft PR; feature runs pick their user stories from section 7.</p> : null}
+        {srs ? <p className="m-0 text-sm text-muted">Accepting commits {specName} to the repository root and opens a draft PR; {doc?.kind === "srs" ? "the SDS and the feature runs build on its section 7 user stories" : "feature runs design each story inside this architecture"}.</p> : null}
+        {spec.findings?.length ? (
+          <div className="rounded-lg border border-warn/40 bg-warn-soft p-3 text-sm">
+            <b>Sync with SRS: {spec.findings.length} finding(s)</b>
+            <ul className="mb-0 mt-1 pl-5">{spec.findings.map((f) => <li key={f}>{f}</li>)}</ul>
+          </div>
+        ) : null}
         <div className="max-h-[520px] overflow-y-auto rounded-lg border border-line bg-side p-4"><Markdown source={spec.content} /></div>
         {editing ? (
-          <Field label={`Edit ${specName}`} hint={srs ? "keep sections 1-8 and story headings like #### 7.1.1 AT-US-01: Title (ROLE)" : "keep acceptance criteria as lines like - AC-1: …"} htmlFor="spec-edit">
+          <Field label={`Edit ${specName}`} hint={doc?.kind === "srs" ? "keep sections 1-8 and story headings like #### 7.1.1 AT-US-01: Title (ROLE)" : doc ? "keep sections 1-13 and a section 5 entry for every SRS story" : "keep acceptance criteria as lines like - AC-1: …"} htmlFor="spec-edit">
             <Textarea id="spec-edit" className="min-h-72 font-mono text-[12.5px]" value={specDraft} onChange={(e) => setSpecDraft(e.target.value)} />
           </Field>
         ) : null}
         <Reason value={reason} onChange={setReason} placeholder="Required to reject, optional to revise" />
         <div className="flex flex-wrap gap-2">
-          <ActionButton variant="primary" success={srs ? "SRS accepted; opening the PR" : "Spec accepted"} action={() => post("approve-spec", { document_id: spec.id, sha256: spec.sha256 })}>
-            Accept {srs ? "SRS" : "spec"} v{spec.version}
+          <ActionButton variant="primary" success={srs ? `${specName} accepted; opening the PR` : "Spec accepted"} action={() => post("approve-spec", { document_id: spec.id, sha256: spec.sha256 })}>
+            Accept {srs ? specName : "spec"} v{spec.version}
           </ActionButton>
           <Button onClick={() => setEditing(!editing)}>{editing ? "Hide editor" : "Edit"}</Button>
           {editing ? <ActionButton action={() => post("revise-spec", { content: specDraft, reason: reason || null })}>Save as new version</ActionButton> : null}

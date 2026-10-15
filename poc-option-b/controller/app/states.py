@@ -42,6 +42,7 @@ class TaskStatus(StrEnum):
 class RunKind(StrEnum):
     FEATURE = "feature"  # one user story: spec, plan, tests, code, review, PR
     SRS = "srs"  # the project's SRS.md: Business Analyst, SRS gate, PR
+    SDS = "sds"  # the project's SDS.md from the merged SRS: Architect, SDS gate, PR
 
 
 class HumanRole(StrEnum):
@@ -55,6 +56,7 @@ class TeamRole(StrEnum):
     COORDINATOR = "delivery_coordinator"
     BUSINESS_ANALYST = "business_analyst"
     TECH_LEAD = "tech_lead_ai"
+    ARCHITECT = "architect"
     QA_ANALYST = "qa_analyst"
     QA_ENGINEER = "qa_engineer"
     DEVELOPER = "developer"

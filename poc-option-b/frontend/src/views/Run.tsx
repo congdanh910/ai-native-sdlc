@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Check, FileCode2, GitCommit, X } from "lucide-react";
-import { api, type Doc, type PlanVersion, type RunDetail, type RunEvent, type Step } from "../lib/api";
+import { api, projectDoc, type Doc, type PlanVersion, type RunDetail, type RunEvent, type Step } from "../lib/api";
 import { ACTIVE_WORK, TERMINAL, ago, cn, duration, role, short, when } from "../lib/utils";
 import { Pipeline } from "../components/Pipeline";
 import { DecisionPanel } from "../components/Decision";
@@ -152,8 +152,9 @@ function DocBody({ doc }: { doc: Doc }) {
 }
 
 function ThreadTab({ run }: { run: RunDetail }) {
-  const kinds = run.kind === "srs" ? ["intent", "srs", "report"] : ["intent", "spec", "review", "report"];
-  const name = (kind: string) => (kind === "srs" ? "SRS.md" : run.kind === "srs" && kind === "intent" ? "brief.md" : `${kind}.md`);
+  const doc = projectDoc(run);
+  const kinds = doc ? ["intent", doc.kind, "report"] : ["intent", "spec", "review", "report"];
+  const name = (kind: string) => (doc && kind === doc.kind ? doc.name : doc && kind === "intent" ? "brief.md" : `${kind}.md`);
   return (
     <div className="flex flex-col gap-3">
       {kinds.map((kind) => (
@@ -307,7 +308,7 @@ export function RunView({ id }: { id: string }) {
   const refresh = () => { client.invalidateQueries({ queryKey: ["run", id] }); client.invalidateQueries({ queryKey: ["inbox"] }); };
   const select = (t: Tab) => { setTab(t); try { sessionStorage.setItem("runTab", t); } catch { /* ignore */ } };
   const spec = [...r.documents].reverse().find((d) => d.kind === "spec");
-  const srs = r.kind === "srs";  // an SRS run has no tasks, plan or code
+  const srs = r.kind !== "feature";  // an SRS or SDS run has no tasks, plan or code
   const shown: Tab = srs && ["tasks", "plan", "diff"].includes(tab) ? "thread" : tab;
   return (
     <>

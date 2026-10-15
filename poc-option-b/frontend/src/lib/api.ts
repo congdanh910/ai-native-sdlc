@@ -59,7 +59,7 @@ export type Waiting = { role: string; action: string; stage?: string | null } | 
 export interface RunSummary {
   id: string;
   title: string;
-  kind: "feature" | "srs";
+  kind: "feature" | "srs" | "sds";
   project: string;
   status: string;
   version: number;
@@ -87,6 +87,7 @@ export interface Doc {
   repo_path: string | null;
   commit_sha: string | null;
   created_at: string;
+  findings?: string[];
 }
 
 export interface PlanTask {
@@ -249,4 +250,11 @@ export interface Report {
   roles: Record<string, Record<string, number | null>>;
   engines: Record<string, { calls: number; seconds: number; cost_usd: number }>;
   evals: { id: string; suite: string; created_at: string; summary: EvalSummary | null; engines: Record<string, string> | null }[];
+}
+
+/** Project documents written before feature runs; null for a feature run. */
+export function projectDoc(run: { kind: string }): { kind: "srs" | "sds"; name: string } | null {
+  if (run.kind === "srs") return { kind: "srs", name: "SRS.md" };
+  if (run.kind === "sds") return { kind: "sds", name: "SDS.md" };
+  return null;
 }
