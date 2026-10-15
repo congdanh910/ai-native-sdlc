@@ -401,3 +401,11 @@ def test_session_timeout_comes_from_the_project_limits(worktree, tmp_path):
     team, _ = doing(tmp_path, dev=dev)
     team.implement(context(worktree, session_timeout_seconds=2700), TASK, 1, TESTS)
     assert dev.sessions[-1].timeout == 2700
+
+
+def test_every_subscription_limit_message_is_recognised():
+    from controller.app.doing.executors import LIMIT
+    for message in ("Claude AI usage limit reached", "You've hit your session limit · resets 11:50pm (Asia/Saigon)",
+                    "You've hit your weekly limit", "429 Too Many Requests"):
+        assert LIMIT.search(message), message
+    assert not LIMIT.search("AssertionError: expected 1 to equal 2")

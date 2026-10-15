@@ -27,7 +27,7 @@ GUARD = Path(__file__).with_name("guard.py")
 DISPUTE_PREFIX = "DISPUTE:"
 # How the CLIs report an exhausted subscription window; the job waits instead of failing.
 LIMIT = re.compile(r"usage limit|rate limit|rate_limit|too many requests|\b429\b|quota exceeded|"
-                   r"hit your (?:usage )?limit|limit reached", re.I)
+                   r"hit your (?:\w+ )?limit|(?:session|usage|weekly) limit|limit reached|resets \d", re.I)
 
 
 @dataclass(frozen=True)
