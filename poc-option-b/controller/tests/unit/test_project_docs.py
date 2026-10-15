@@ -35,7 +35,7 @@ def test_render_numbers_ids_and_keeps_the_company_outline():
     assert "#### 7.1.1 CI-US-01: Check in (EMPLOYEE) <a id=\"7-1-1-ci-us-01-check-in-employee\"></a>" in markdown
     assert "**As a** `EMPLOYEE`, **I want to** check in **so that** my hours count." in markdown
     assert "#### 7.2.1 RP-US-01: View the monthly report (All internal)" in markdown
-    assert "**As a** All internal, **I want to** see hours" in markdown
+    assert "**As** any internal user, **I want to** see hours" in markdown
     assert "| 0.1 | 2026-10-15 | Business Analyst (AI) | Initial draft |" in markdown
     assert "- [7.1.2 CI-US-02: Correct a check-in (HR)](#7-1-2-ci-us-02-correct-a-check-in-hr)" in markdown
     assert check_srs_markdown(markdown) == []

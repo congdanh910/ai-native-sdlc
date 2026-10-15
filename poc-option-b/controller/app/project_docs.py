@@ -241,8 +241,12 @@ def _actor_label(actors: list[str]) -> str:
     return ", ".join(actors)
 
 
+SHORTHAND_WORDS = {"All": "any signed-in user", "All internal": "any internal user", "SYSTEM": "`SYSTEM`"}
+
+
 def _actor_inline(actors: list[str]) -> str:
-    return " or ".join(a if a in SHORTHAND_ACTORS else f"`{a}`" for a in actors)
+    """'**As a** `HR`', or plain words for the shorthands: '**As** any internal user'."""
+    return " or ".join(SHORTHAND_WORDS.get(a, f"`{a}`") for a in actors)
 
 
 def story_heading(section: str, story: Story) -> str:
@@ -251,7 +255,8 @@ def story_heading(section: str, story: Story) -> str:
 
 
 def story_statement(story: Story) -> str:
-    return f"**As a** {_actor_inline(story.actors)}, **I want to** {story.goal} **so that** {story.reason}."
+    lead = "**As**" if story.actors[0] in ("All", "All internal") else "**As a**"
+    return f"{lead} {_actor_inline(story.actors)}, **I want to** {story.goal} **so that** {story.reason}."
 
 
 def render_srs(srs: Srs, *, author: str, today: date | None = None) -> str:

@@ -120,7 +120,7 @@ def check_spec(markdown: str) -> list[dict]:
         criteria = parse_criteria(markdown)
     except ValueError as exc:
         return [_result("parse", "The spec lists its criteria in the template format", [str(exc)])]
-    stories = len(re.findall(r"\*\*As an?\*\*", markdown.split("### Business Analyst notes")[0]))
+    stories = len(re.findall(r"\*\*As(?: an?)?\*\*", markdown.split("### Business Analyst notes")[0]))
     results = [_result("one-story", "The section holds exactly one user story statement (**As a** ...)",
                        [] if stories == 1 else [f"found {stories} statements"])]
     return results + check_criteria(criteria)
