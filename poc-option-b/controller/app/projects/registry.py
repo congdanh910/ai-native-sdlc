@@ -15,6 +15,7 @@ from controller.app.doing.github import repo_slug
 from controller.app.doing.validation import ValidationGate
 from controller.app.events import record_event
 from controller.app.models import Project
+from controller.app.project_docs import SRS_PATH, srs_stories
 from controller.app.projects.config import ProjectConfig, effective_policy, parse_project_config
 from controller.app.projects.repo import GitError, Mirror, _git, validate_repo_url
 
@@ -92,6 +93,15 @@ def read_snapshot(mirror: Mirror, commit: str) -> tuple[Snapshot | None, list[It
     review = mirror.read_file(commit, REVIEW_PATH)
     items.append(Item("REVIEW.md", "ok" if review else "warn",
                       "present" if review else "optional; the Code Reviewer uses platform defaults"))
+    srs = mirror.read_file(commit, SRS_PATH)
+    if srs:
+        stories = srs_stories(srs)
+        items.append(Item(SRS_PATH, "ok" if stories else "warn",
+                          f"present; {len(stories)} user stories in section 7" if stories
+                          else "present, but section 7 lists no user stories"))
+    else:
+        items.append(Item(SRS_PATH, "warn", "missing; start an SRS request (New request, Project SRS) "
+                                            "before feature runs"))
 
     config = None
     raw = mirror.read_file(commit, CONFIG_PATH)

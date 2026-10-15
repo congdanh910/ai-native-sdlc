@@ -38,7 +38,9 @@ export function DecisionPanel({ run, onDone }: { run: RunDetail; onDone: () => v
     setEditing(false);
     onDone();
   };
-  const spec = [...run.documents].reverse().find((d) => d.kind === "spec");
+  const srs = run.kind === "srs";
+  const spec = [...run.documents].reverse().find((d) => d.kind === (srs ? "srs" : "spec"));
+  const specName = srs ? "SRS.md" : "spec.md";
   const [specDraft, setSpecDraft] = useState(spec?.content ?? "");
   const plan = run.plans[run.plans.length - 1];
   const [planDraft, setPlanDraft] = useState(plan ? JSON.stringify({ plan: plan.plan, test_plan: plan.test_plan }, null, 2) : "");
@@ -71,17 +73,18 @@ export function DecisionPanel({ run, onDone }: { run: RunDetail; onDone: () => v
 
   if (need.action === "waiting_spec_approval" && spec) {
     return (
-      <Panel run={run} title={`spec.md v${spec.version}`}>
+      <Panel run={run} title={`${specName} v${spec.version}`}>
+        {srs ? <p className="m-0 text-sm text-muted">Accepting commits SRS.md to the repository root and opens a draft PR; feature runs pick their user stories from section 7.</p> : null}
         <div className="max-h-[520px] overflow-y-auto rounded-lg border border-line bg-side p-4"><Markdown source={spec.content} /></div>
         {editing ? (
-          <Field label="Edit spec.md" hint="keep acceptance criteria as lines like - AC-1: …" htmlFor="spec-edit">
+          <Field label={`Edit ${specName}`} hint={srs ? "keep sections 1-8 and story headings like #### 7.1.1 AT-US-01: Title (ROLE)" : "keep acceptance criteria as lines like - AC-1: …"} htmlFor="spec-edit">
             <Textarea id="spec-edit" className="min-h-72 font-mono text-[12.5px]" value={specDraft} onChange={(e) => setSpecDraft(e.target.value)} />
           </Field>
         ) : null}
         <Reason value={reason} onChange={setReason} placeholder="Required to reject, optional to revise" />
         <div className="flex flex-wrap gap-2">
-          <ActionButton variant="primary" success="Spec accepted" action={() => post("approve-spec", { document_id: spec.id, sha256: spec.sha256 })}>
-            Accept spec v{spec.version}
+          <ActionButton variant="primary" success={srs ? "SRS accepted; opening the PR" : "Spec accepted"} action={() => post("approve-spec", { document_id: spec.id, sha256: spec.sha256 })}>
+            Accept {srs ? "SRS" : "spec"} v{spec.version}
           </ActionButton>
           <Button onClick={() => setEditing(!editing)}>{editing ? "Hide editor" : "Edit"}</Button>
           {editing ? <ActionButton action={() => post("revise-spec", { content: specDraft, reason: reason || null })}>Save as new version</ActionButton> : null}

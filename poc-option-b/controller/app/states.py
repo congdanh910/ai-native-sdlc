@@ -39,6 +39,11 @@ class TaskStatus(StrEnum):
     CANCELLED = "CANCELLED"
 
 
+class RunKind(StrEnum):
+    FEATURE = "feature"  # one user story: spec, plan, tests, code, review, PR
+    SRS = "srs"  # the project's SRS.md: Business Analyst, SRS gate, PR
+
+
 class HumanRole(StrEnum):
     PRODUCT_OWNER = "product_owner"
     TECH_LEAD = "tech_lead"
@@ -67,7 +72,7 @@ _RUN_FLOW: dict[RunStatus, set[RunStatus]] = {
     R.PREFLIGHT: {R.SPECIFYING},
     R.SPECIFYING: {R.NEEDS_CLARIFICATION, R.WAITING_SPEC_APPROVAL, R.PLANNING},
     R.NEEDS_CLARIFICATION: {R.SPECIFYING},
-    R.WAITING_SPEC_APPROVAL: {R.PLANNING, R.SPECIFYING},
+    R.WAITING_SPEC_APPROVAL: {R.PLANNING, R.SPECIFYING, R.PR_OPEN},  # PR_OPEN: an approved SRS goes straight to a PR
     R.PLANNING: {R.GROUNDING},
     R.GROUNDING: {R.PLANNING, R.WAITING_PLAN_APPROVAL},
     R.WAITING_PLAN_APPROVAL: {R.READY, R.PLANNING},

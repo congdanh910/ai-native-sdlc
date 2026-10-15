@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from controller.app.project_docs import Srs
 from controller.app.projects.config import EffectivePolicy
 from controller.app.schemas import Intent, PlanPayload, PlanTask, Review, Spec, TestPlan
 
@@ -17,6 +18,7 @@ class RunContext:
     intent_md: str
     files: list[str]
     spec_md: str | None = None
+    srs_md: str | None = None  # the SRS.md already on the base commit, if any
     answers: list[tuple[str, str]] = field(default_factory=list)
     repository: dict = field(default_factory=dict)  # files, symbols, selected_files
     feedback: list[str] = field(default_factory=list)
@@ -68,6 +70,7 @@ class Team(Protocol):
 
     def draft_intent(self, text: str, title: str) -> Intent: ...
     def specify(self, context: RunContext) -> Spec: ...
+    def write_srs(self, context: RunContext) -> Srs: ...
     def plan(self, context: RunContext) -> PlanPayload: ...
     def design_tests(self, context: RunContext, plan: PlanPayload) -> TestPlan: ...
     def write_tests(self, context: RunContext, task: PlanTask, tests: TestPlan, feedback: str = "",

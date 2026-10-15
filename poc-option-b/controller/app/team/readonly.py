@@ -104,6 +104,10 @@ class ReadonlyTeam(LangflowTeam):
         self._in(context)
         return super().specify(context)
 
+    def write_srs(self, context):
+        self._in(context)
+        return super().write_srs(context)
+
     def plan(self, context):
         self._in(context)
         return super().plan(context)
@@ -152,6 +156,9 @@ class RoutingTeam:
 
     def specify(self, context):
         return self._call(self._for(context, "business_analyst"), "specify", context)
+
+    def write_srs(self, context):
+        return self._call(self._for(context, "business_analyst"), "write_srs", context)
 
     def plan(self, context):
         return self._call(self._for(context, "tech_lead"), "plan", context)

@@ -28,7 +28,7 @@ def waiting(run: Run) -> dict | None:
 
 
 def run_summary(run: Run, project_key: str) -> dict:
-    return {"id": str(run.id), "title": run.title, "project": project_key, "status": run.status,
+    return {"id": str(run.id), "title": run.title, "kind": run.kind, "project": project_key, "status": run.status,
             "version": run.version, "reason": run.status_reason, "waiting": waiting(run),
             "experiment": run.experiment, "updated_at": run.updated_at.isoformat(),
             "created_at": run.created_at.isoformat()}

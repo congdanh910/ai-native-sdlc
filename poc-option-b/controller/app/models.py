@@ -57,6 +57,7 @@ class Run(Base):
     id: Mapped[uuid.UUID] = _id()
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), nullable=False)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="feature", server_default="feature")
     idempotency_key: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
     base_commit: Mapped[str | None] = mapped_column(String(40))
     branch: Mapped[str | None] = mapped_column(String(255))

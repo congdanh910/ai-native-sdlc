@@ -12,10 +12,11 @@ from controller.app import coordinator
 from controller.app.documents import add_document, add_plan, latest_document, latest_plan
 from controller.app.events import record_event
 from controller.app.models import Approval, Clarification, Project, PullRequest, Run, Task
+from controller.app.project_docs import ProjectBrief, check_srs_markdown, render_brief
 from controller.app.schemas import Intent, PlanPayload, TestPlan, parse_criteria, render_intent
 from controller.app.state_machine import transition_run, transition_task
 from controller.app.config import get_settings
-from controller.app.states import TASK_TRANSITIONS, TERMINAL, HumanRole, RunStatus, TaskStatus, TeamRole
+from controller.app.states import TASK_TRANSITIONS, TERMINAL, HumanRole, RunKind, RunStatus, TaskStatus, TeamRole
 
 PO, TL, CO = HumanRole.PRODUCT_OWNER.value, HumanRole.TECH_LEAD.value, HumanRole.CODE_OWNER.value
 
@@ -58,7 +59,7 @@ def get_run(session: Session, run_id: uuid.UUID) -> Run:
 
 # ---------------------------------------------------------------- Product Owner
 
-def create_run(session: Session, project: Project, intent: Intent, *, actor: str, idempotency_key: str,
+def create_run(session: Session, project: Project, intent: Intent | ProjectBrief, *, actor: str, idempotency_key: str,
                experiment: bool = False, base_commit: str | None = None, stage_overrides: dict | None = None,
                eval_run_id: uuid.UUID | None = None, eval_case: str | None = None) -> Run:
     existing = session.scalar(select(Run).where(Run.idempotency_key == idempotency_key))
@@ -66,7 +67,11 @@ def create_run(session: Session, project: Project, intent: Intent, *, actor: str
         return existing
     if project.readiness == "not_ready":
         raise DecisionError(f"project {project.key} is not ready; open Projects and run the check")
-    run = Run(project_id=project.id, title=intent.title, idempotency_key=idempotency_key,
+    srs = isinstance(intent, ProjectBrief)
+    if srs and experiment:
+        raise DecisionError("an SRS run cannot be an experiment")
+    run = Run(project_id=project.id, title=f"SRS: {intent.title}" if srs else intent.title,
+              kind=RunKind.SRS.value if srs else RunKind.FEATURE.value, idempotency_key=idempotency_key,
               status=RunStatus.RECEIVED.value, experiment=experiment, base_commit=base_commit,
               stage_overrides=stage_overrides or {}, eval_run_id=eval_run_id, eval_case=eval_case)
     session.add(run)
@@ -74,9 +79,10 @@ def create_run(session: Session, project: Project, intent: Intent, *, actor: str
     if not experiment:  # pinned at creation, so a later .env change never alters a run in flight
         engines = json.dumps(get_settings().default_engines)
         coordinator.store_artifact(session, run, "engines", TeamRole.COORDINATOR, engines)
-    add_document(session, run.id, "intent", render_intent(intent), author_kind="human", author=actor,
-                 data=intent.model_dump())
-    record_event(session, "intent.accepted", actor=actor, acting_role=PO, run_id=run.id, project_id=project.id)
+    add_document(session, run.id, "intent", render_brief(intent) if srs else render_intent(intent),
+                 author_kind="human", author=actor, data=intent.model_dump())
+    record_event(session, "intent.accepted", actor=actor, acting_role=PO, run_id=run.id, project_id=project.id,
+                 payload={"kind": run.kind})
     transition_run(session, run, RunStatus.PREFLIGHT, actor=actor, acting_role=PO)
     coordinator.queue(session, run, "preflight")
     return run
@@ -98,7 +104,7 @@ def answer_questions(session: Session, run: Run, answers: dict[str, str], *, act
 
 
 def _current_spec(session: Session, run: Run, document_id: uuid.UUID, sha256: str):
-    spec = latest_document(session, run.id, "spec")
+    spec = latest_document(session, run.id, coordinator.spec_kind(run))
     if spec is None or spec.id != document_id or spec.sha256 != sha256:
         raise DecisionError("this is not the latest spec version; reload and review it again")
     return spec
@@ -113,11 +119,16 @@ def approve_spec(session: Session, run: Run, document_id: uuid.UUID, sha256: str
 
 def revise_spec(session: Session, run: Run, content: str, *, actor: str, reason: str | None) -> None:
     _require(run, RunStatus.WAITING_SPEC_APPROVAL)
-    try:
-        parse_criteria(content)
-    except ValueError as exc:
-        raise DecisionError(str(exc)) from exc
-    document = add_document(session, run.id, "spec", content, author_kind="human", author=actor)
+    if run.kind == RunKind.SRS:
+        problems = check_srs_markdown(content)
+        if problems:
+            raise DecisionError("; ".join(problems))
+    else:
+        try:
+            parse_criteria(content)
+        except ValueError as exc:
+            raise DecisionError(str(exc)) from exc
+    document = add_document(session, run.id, coordinator.spec_kind(run), content, author_kind="human", author=actor)
     _approval(session, run, "spec", "revise", actor, PO, reason=reason, document_id=document.id)
     _corrected(run)
 

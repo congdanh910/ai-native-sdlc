@@ -8,6 +8,7 @@ clarification loop.
 
 import re
 
+from controller.app.project_docs import Srs
 from controller.app.projects.config import matches_any
 from controller.app.schemas import (Criterion, Intent, PlanPayload, PlanTask, Question, Review, Spec, TestCase,
                                     TestPlan, parse_criteria)
@@ -50,6 +51,43 @@ class MockTeam:
                     user_stories=[f"As a user, I want {text[0].lower() + text[1:]}" for text in outcome],
                     acceptance_criteria=criteria, assumptions=assumptions,
                     concerns=["Mock Business Analyst: no model was called."], questions=questions)
+
+    def write_srs(self, context: RunContext) -> Srs:
+        """One feature per wanted feature line, one story each, every story for the first role."""
+        brief = context.intent_md
+        title = re.sub(r"^# Project brief:\s*", "", brief.splitlines()[0]) if brief else context.title
+        roles = []
+        for line in _items(_section(brief, "Users and roles")) or ["USER: a person using the product"]:
+            name, _, description = line.partition(":")
+            code = re.sub(r"[^A-Z0-9]+", "_", name.strip().upper()).strip("_")[:16] or "USER"
+            if len(code) < 2:
+                code = f"{code}X"
+            if code not in {r["role"] for r in roles}:
+                roles.append({"role": code, "description": description.strip() or name.strip()})
+        answered = {question for question, _ in context.answers}
+        questions = [{"question": line[len("[blocking]"):].strip(), "blocking": True}
+                     for line in _items(_section(brief, "Constraints")) if line.lower().startswith("[blocking]")
+                     and line[len("[blocking]"):].strip() not in answered]
+        features, used = [], set()
+        for line in _items(_section(brief, "Wanted features")) or [title]:
+            words = re.findall(r"[A-Za-z]+", line) or ["Feature"]
+            prefix = "".join(w[0] for w in words[:3]).upper().ljust(2, "X")
+            while prefix in used:
+                prefix = (prefix[:3] + chr(ord("A") + len(used) % 26))[:4]
+            used.add(prefix)
+            features.append({"name": line[:60], "prefix": prefix, "summary": line,
+                             "requirements": [{"function": line[:40], "requirement": f"The system shall support: {line}"}],
+                             "stories": [{"title": line[:60], "actors": [roles[0]["role"]], "goal": line[0].lower() + line[1:],
+                                          "reason": "the brief asks for it"}]})
+        return Srs.model_validate({
+            "product": title, "purpose": _section(brief, "Summary") or title,
+            "scope": "; ".join(f["name"] for f in features), "roles": roles,
+            "assumptions": [f"Answer to '{q}': {a}" for q, a in context.answers],
+            "entities": [{"name": f["name"].split()[0].capitalize(), "description": f["summary"]} for f in features],
+            "features": features,
+            "flows": [{"name": "Main flow", "steps": [f"{roles[0]['role']} uses {f['name']}" for f in features]
+                       + ["The system records the result"]}],
+            "questions": questions, "concerns": ["Mock Business Analyst: no model was called."]})
 
     def plan(self, context: RunContext) -> PlanPayload:
         criteria = parse_criteria(context.spec_md or "")

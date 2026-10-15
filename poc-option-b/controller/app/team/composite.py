@@ -21,6 +21,9 @@ class CompositeTeam:
     def specify(self, *args, **kwargs):
         return self.thinking.specify(*args, **kwargs)
 
+    def write_srs(self, *args, **kwargs):
+        return self.thinking.write_srs(*args, **kwargs)
+
     def plan(self, *args, **kwargs):
         return self.thinking.plan(*args, **kwargs)
 

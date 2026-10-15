@@ -4,7 +4,7 @@ import uuid
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 
 from controller.app import evals, services
@@ -13,6 +13,7 @@ from controller.app.config import get_settings
 from controller.app.db import session_scope
 from controller.app.models import EvalRun, Project, Run
 from controller.app.projects import registry
+from controller.app.project_docs import ProjectBrief
 from controller.app.schemas import Intent
 from controller.app.states import STAGE_STARTER, HumanRole
 from controller.app.team import get_team
@@ -37,8 +38,15 @@ class DraftRequest(Body):
 
 class NewRun(Body):
     project: str
-    intent: Intent
+    intent: Intent | None = None  # a feature request
+    brief: ProjectBrief | None = None  # a project brief: the run writes SRS.md
     idempotency_key: str = Field(min_length=8, max_length=128)
+
+    @model_validator(mode="after")
+    def _one_input(self) -> "NewRun":
+        if (self.intent is None) == (self.brief is None):
+            raise ValueError("send either intent (a feature request) or brief (the project SRS), not both")
+        return self
 
 
 class Answers(Body):
@@ -160,7 +168,7 @@ def create_run(body: NewRun) -> dict:
             project = session.scalar(select(Project).where(Project.key == body.project))
             if project is None:
                 raise HTTPException(404, "project not found")
-            run = services.create_run(session, project, body.intent, actor=operator(),
+            run = services.create_run(session, project, body.intent or body.brief, actor=operator(),
                                       idempotency_key=body.idempotency_key)
             return views.run_summary(run, project.key)
     except services.DecisionError as exc:

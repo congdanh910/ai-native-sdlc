@@ -152,12 +152,13 @@ function DocBody({ doc }: { doc: Doc }) {
 }
 
 function ThreadTab({ run }: { run: RunDetail }) {
-  const kinds = ["intent", "spec", "review", "report"];
+  const kinds = run.kind === "srs" ? ["intent", "srs", "report"] : ["intent", "spec", "review", "report"];
+  const name = (kind: string) => (kind === "srs" ? "SRS.md" : run.kind === "srs" && kind === "intent" ? "brief.md" : `${kind}.md`);
   return (
     <div className="flex flex-col gap-3">
       {kinds.map((kind) => (
         <Card key={kind} className="p-5">
-          <h3 className="mt-0 mb-3 flex items-center gap-2 text-base font-semibold"><FileCode2 className="size-4 text-muted" aria-hidden />{kind}.md</h3>
+          <h3 className="mt-0 mb-3 flex items-center gap-2 text-base font-semibold"><FileCode2 className="size-4 text-muted" aria-hidden />{name(kind)}</h3>
           <VersionPicker items={run.documents.filter((d) => d.kind === kind)}>{(doc) => <DocBody doc={doc} />}</VersionPicker>
         </Card>
       ))}
@@ -306,6 +307,8 @@ export function RunView({ id }: { id: string }) {
   const refresh = () => { client.invalidateQueries({ queryKey: ["run", id] }); client.invalidateQueries({ queryKey: ["inbox"] }); };
   const select = (t: Tab) => { setTab(t); try { sessionStorage.setItem("runTab", t); } catch { /* ignore */ } };
   const spec = [...r.documents].reverse().find((d) => d.kind === "spec");
+  const srs = r.kind === "srs";  // an SRS run has no tasks, plan or code
+  const shown: Tab = srs && ["tasks", "plan", "diff"].includes(tab) ? "thread" : tab;
   return (
     <>
       <nav aria-label="Breadcrumb" className="text-sm text-muted"><Link href="/runs">Runs</Link> / {r.project} / <Mono>{r.id.slice(0, 8)}</Mono></nav>
@@ -331,20 +334,19 @@ export function RunView({ id }: { id: string }) {
       <DecisionPanel key={`${r.id}:${r.version}`} run={r} onDone={refresh} />
       <div className="flex flex-wrap items-start gap-5">
         <div className="flex min-w-0 flex-[999_1_620px] flex-col gap-4">
-          <Tabs<Tab> value={tab} onChange={select} tabs={[
-            { id: "tasks", label: "Tasks", count: r.tasks.length },
-            { id: "plan", label: "Plan", count: r.plans.length },
+          <Tabs<Tab> value={shown} onChange={select} tabs={[
+            ...(srs ? [] : [{ id: "tasks" as Tab, label: "Tasks", count: r.tasks.length }, { id: "plan" as Tab, label: "Plan", count: r.plans.length }]),
             { id: "thread", label: "Thread" },
-            { id: "diff", label: "Diff" },
+            ...(srs ? [] : [{ id: "diff" as Tab, label: "Diff" }]),
             { id: "events", label: "Events" },
             { id: "work", label: "Jobs & decisions" },
           ]} />
-          {tab === "tasks" ? <TasksTab run={r} /> : null}
-          {tab === "plan" ? (r.plans.length ? <Card className="p-5"><VersionPicker items={r.plans}>{(p) => <PlanBody plan={p} spec={spec} />}</VersionPicker></Card> : <Empty>No plan yet.</Empty>) : null}
-          {tab === "thread" ? <ThreadTab run={r} /> : null}
-          {tab === "diff" ? <DiffTab run={r} /> : null}
-          {tab === "events" ? <EventsTab run={r} /> : null}
-          {tab === "work" ? <WorkTab run={r} /> : null}
+          {shown === "tasks" ? <TasksTab run={r} /> : null}
+          {shown === "plan" ? (r.plans.length ? <Card className="p-5"><VersionPicker items={r.plans}>{(p) => <PlanBody plan={p} spec={spec} />}</VersionPicker></Card> : <Empty>No plan yet.</Empty>) : null}
+          {shown === "thread" ? <ThreadTab run={r} /> : null}
+          {shown === "diff" ? <DiffTab run={r} /> : null}
+          {shown === "events" ? <EventsTab run={r} /> : null}
+          {shown === "work" ? <WorkTab run={r} /> : null}
         </div>
         <SidePanel run={r} />
       </div>

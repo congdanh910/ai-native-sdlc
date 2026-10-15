@@ -59,6 +59,7 @@ export type Waiting = { role: string; action: string; stage?: string | null } | 
 export interface RunSummary {
   id: string;
   title: string;
+  kind: "feature" | "srs";
   project: string;
   status: string;
   version: number;

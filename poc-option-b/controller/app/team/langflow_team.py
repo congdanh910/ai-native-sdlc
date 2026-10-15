@@ -16,6 +16,7 @@ from controller.app import capacity
 from controller.app.config import Settings
 from controller.app.integrations.langflow import (InvalidModelOutput, LangflowClient, client_from_settings,
                                                   extract_json, role_prompt)
+from controller.app.project_docs import Srs
 from controller.app.projects.config import matches_any
 from controller.app.schemas import Intent, PlanPayload, Review, Spec, TestPlan, parse_criteria
 from controller.app.team import normalize
@@ -120,6 +121,12 @@ class LangflowTeam(MockTeam):
                    "repository": {"files": context.repository.get("files", []),
                                   "symbols": context.repository.get("symbols", {})}}
         return self._ask("spec", payload, Spec, normalize.spec, context.session_id)
+
+    def write_srs(self, context: RunContext) -> Srs:
+        payload = {"brief": context.intent_md, "current_srs": context.srs_md or "",
+                   "answers": [{"question": q, "answer": a} for q, a in context.answers],
+                   "agents_md": context.agents_md, "feedback": context.feedback}
+        return self._ask("srs", payload, Srs, normalize.srs, context.session_id)
 
     def plan(self, context: RunContext) -> PlanPayload:
         validations = [command.name for command in context.policy.validation]

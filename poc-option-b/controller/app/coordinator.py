@@ -26,14 +26,15 @@ from controller.app.documents import (add_document, add_plan, latest_document, l
                                       thread_path)
 from controller.app.events import record_event
 from controller.app.jobs import COORDINATOR, enqueue, finish
-from controller.app.models import Artifact, Clarification, Execution, Project, PullRequest, Run, Task
+from controller.app.models import Approval, Artifact, Clarification, Execution, Project, PullRequest, Run, Task
+from controller.app.project_docs import SRS_PATH, Srs, render_srs
 from controller.app.projects.config import EffectivePolicy, effective_policy, matches_any
 from controller.app.projects.registry import mirror_for, read_snapshot
 from controller.app.projects.repo import Worktree
 from controller.app.schemas import (PlanPayload, PlanTask, Review, Spec, TestPlan, parse_criteria, render_plan,
                                     render_review, render_spec)
 from controller.app.state_machine import transition_run, transition_task
-from controller.app.states import RunStatus, TaskStatus, TeamRole
+from controller.app.states import RunKind, RunStatus, TaskStatus, TeamRole
 from controller.app.team.base import ReleaseResult, RunContext, StepResult, Team
 from controller.app.team.tidy import tidy_plan, tidy_spec, tidy_tests
 
@@ -185,8 +186,12 @@ def build_context(session: Session, run: Run, *, kind: str = "", feedback: list[
         select(Clarification).where(Clarification.run_id == run.id, Clarification.answer.is_not(None)))]
     bundle = code_bundle(session, run, [intent, spec.content if spec else "", agents],
                          get_settings().context_char_budget)
+    srs = None
+    if run.kind == RunKind.SRS and run.base_commit:
+        srs = mirror_for(session.get(Project, run.project_id)).read_file(run.base_commit, SRS_PATH)
     return RunContext(title=run.title, policy=policy, agents_md=agents, review_md=artifact(session, run.id, "review_md"),
-                      intent_md=intent, files=bundle.files, spec_md=spec.content if spec else None, answers=answers,
+                      intent_md=intent, files=bundle.files, spec_md=spec.content if spec else None, srs_md=srs,
+                      answers=answers,
                       repository=bundle.as_input(), feedback=feedback or [], session_id=f"{run.id}:{kind}",
                       run_id=str(run.id), worktree=run.worktree_path or "", base_commit=run.base_commit or "",
                       engines=json.loads(artifact(session, run.id, "engines") or "{}"))
@@ -215,6 +220,11 @@ def load(session: Session, execution: Execution) -> Loaded:
             and (plan.grounding_report or {}).get("status") == "fail"):
         feedback = list(plan.grounding_report["findings"])
         loaded.extra["regenerated_from"] = str(plan.id)
+    if execution.kind == "specify" and run.kind == RunKind.SRS:
+        feedback = [f"Reviewer asked for changes: {reason}" for reason in session.scalars(
+            select(Approval.reason).where(Approval.run_id == run.id, Approval.stage == "spec",
+                                          Approval.decision == "reject").order_by(Approval.created_at)) if reason]
+    loaded.extra["run_kind"] = run.kind
     loaded.context = build_context(session, run, kind=execution.kind, feedback=feedback)
     if plan:
         loaded.plan = PlanPayload.model_validate(plan.payload)
@@ -245,7 +255,10 @@ def compute(team: Team, loaded: Loaded) -> dict:
                           "usage": call.usage})
 
     result: dict = {}
-    if loaded.kind == "specify":
+    if loaded.kind == "specify" and loaded.extra.get("run_kind") == RunKind.SRS:
+        result = {"srs": team.write_srs(context).model_dump()}
+        record()
+    elif loaded.kind == "specify":
         spec, tidied = tidy_spec(team.specify(context), context.policy)
         result = {"spec": spec.model_dump(), "tidied": tidied}
         record()
@@ -380,7 +393,31 @@ def _apply_preflight(session: Session, run: Run, execution: Execution, result: d
     enter_stage(session, run, "spec")
 
 
+def spec_kind(run: Run) -> str:
+    """The document the Business Analyst writes and the spec gate reviews: spec.md, or SRS.md for an SRS run."""
+    return "srs" if run.kind == RunKind.SRS else "spec"
+
+
+def _apply_srs(session: Session, run: Run, result: dict) -> None:
+    srs = Srs.model_validate(result["srs"])
+    blocking = [q for q in srs.questions if q.blocking]
+    if blocking:
+        for question in blocking:
+            session.add(Clarification(run_id=run.id, question=question.question, blocking=True))
+        transition_run(session, run, RunStatus.NEEDS_CLARIFICATION, actor=TeamRole.BUSINESS_ANALYST.value,
+                       reason=f"{len(blocking)} blocking question(s) for the Product Owner")
+        return
+    document = add_document(session, run.id, "srs", render_srs(srs, author="Business Analyst (AI)"),
+                            author_kind="ai", author=TeamRole.BUSINESS_ANALYST.value, data=result["srs"])
+    # The SRS gate cannot be skipped: the customer signs this document.
+    transition_run(session, run, RunStatus.WAITING_SPEC_APPROVAL, actor=TeamRole.BUSINESS_ANALYST.value,
+                   reason=f"SRS v{document.version} ready")
+
+
 def _apply_specify(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    if run.kind == RunKind.SRS:
+        _apply_srs(session, run, result)
+        return
     spec = Spec.model_validate(result["spec"])
     blocking = [q for q in spec.questions if q.blocking]
     if blocking:
@@ -399,6 +436,16 @@ def _apply_specify(session: Session, run: Run, execution: Execution, result: dic
 
 
 def accept_spec(session: Session, run: Run, document, *, actor: str, acting_role: str | None = None) -> None:
+    if run.kind == RunKind.SRS:
+        # SRS.md goes to the repository root through a draft PR; no plan or code follows.
+        if run.commit_artifacts:
+            project = session.get(Project, run.project_id)
+            document.commit_sha = worktree_for(project, run).commit_file(
+                SRS_PATH, document.content, f"sdlc: SRS v{document.version} accepted")
+        transition_run(session, run, RunStatus.PR_OPEN, actor=actor, acting_role=acting_role,
+                       reason=f"SRS v{document.version} accepted")
+        queue(session, run, "release")
+        return
     document.commit_sha = commit_thread(session, run, "spec", document.content,
                                         f"sdlc: spec v{document.version} accepted")
     enter_stage(session, run, "plan", actor=actor, acting_role=acting_role)
@@ -497,10 +544,11 @@ def execution_report(session: Session, run: Run) -> str:
     lines = [f"# Execution report: {run.title}", "", f"- Project: {project.key}",
              f"- Base commit: `{run.base_commit}`", f"- Branch: `{run.branch}`", "", "## Artifact thread", "",
              "| Artifact | Version | SHA-256 | Author |", "|---|---|---|---|"]
-    for kind in ("intent", "spec", "review"):
+    for kind in ("intent", "spec", "srs", "review"):
         document = latest_document(session, run.id, kind)
         if document:
-            lines.append(f"| {kind}.md | v{document.version} | `{document.sha256[:16]}` | {document.author} |")
+            name = SRS_PATH if kind == "srs" else f"{kind}.md"
+            lines.append(f"| {name} | v{document.version} | `{document.sha256[:16]}` | {document.author} |")
     plan = latest_plan(session, run.id)
     if plan:
         lines.append(f"| plan.md | v{plan.version} | `{plan.sha256[:16]}` | {plan.author} |")

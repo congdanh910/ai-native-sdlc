@@ -116,3 +116,33 @@ def _sentence(value):
     if isinstance(value, dict):
         return "; ".join(f"{key}: {_sentence(item)}" for key, item in value.items())
     return value if value is None or isinstance(value, str) else str(value)
+
+
+def srs(data: dict) -> dict:
+    """Lists the model wrote as one string become lists; a bare question string becomes non-blocking."""
+    data = dict(data)
+
+    def as_list(value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [line.strip().lstrip("-*0123456789. ").strip() for line in value.splitlines() if line.strip()]
+        return value
+
+    for key in ("assumptions", "out_of_scope", "concerns", "definitions", "roles", "entities", "relationships",
+                "business_rules", "states", "features", "qualities", "experience", "flows", "dependencies"):
+        data[key] = as_list(data.get(key))
+    data["questions"] = [{"question": q, "blocking": False} if isinstance(q, str) else q
+                         for q in as_list(data.get("questions"))]
+    for feature in data["features"]:
+        if isinstance(feature, dict):
+            feature["requirements"] = as_list(feature.get("requirements"))
+            for story in as_list(feature.get("stories")):
+                if isinstance(story, dict) and isinstance(story.get("actors"), str):
+                    story["actors"] = [a.strip() for a in story["actors"].split(",") if a.strip()]
+            feature["stories"] = as_list(feature.get("stories"))
+    for flow in data["flows"]:
+        if isinstance(flow, dict):
+            for key in ("steps", "alternatives", "negatives"):
+                flow[key] = as_list(flow.get(key))
+    return data
