@@ -6,14 +6,23 @@ network and a writable mount, before the first validation. No LLM is involved.
 """
 
 from dataclasses import asdict, dataclass
+import functools
 from pathlib import Path
 import uuid
 
 from controller.app.doing.process import CONTAINER_PREFIX, ProcessResult, run_bounded
 from controller.app.projects.config import EffectivePolicy
 
-SETUP_TIMEOUT = 900
 CONTAINER_USER = "1000:1000"
+
+
+@dataclass(frozen=True)
+class Resources:
+    """The container's limits, from the project's limits.container."""
+    cpus: float = 2
+    memory_mb: int = 2048
+    pids: int = 512
+    tmp_mb: int = 256
 
 
 @dataclass(frozen=True)
@@ -28,18 +37,20 @@ class CommandReport:
 
 
 def container_args(image: str, worktree: Path, argv: list[str], *, name: str, network: bool = False,
-                   writable: bool = False) -> list[str]:
+                   writable: bool = False, resources: Resources = Resources()) -> list[str]:
     return ["docker", "run", "--rm", "--name", name, "--network", "bridge" if network else "none",
-            "--cpus", "2", "--memory", "2g", "--pids-limit", "512", "--cap-drop", "ALL",
+            "--cpus", f"{resources.cpus:g}", "--memory", f"{resources.memory_mb}m", "--pids-limit", str(resources.pids),
+            "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges", "--user", CONTAINER_USER,
-            "--tmpfs", "/tmp:rw,size=256m", "-e", "HOME=/tmp", "-e", "CI=1",
+            "--tmpfs", f"/tmp:rw,size={resources.tmp_mb}m", "-e", "HOME=/tmp", "-e", "CI=1",
             "-v", f"{worktree}:/work:{'rw' if writable else 'ro'}", "-w", "/work", image, *argv]
 
 
 def run_in_container(image: str, worktree: Path, argv: list[str], timeout: float, *, network: bool = False,
-                     writable: bool = False) -> ProcessResult:
+                     writable: bool = False, resources: Resources = Resources()) -> ProcessResult:
     name = f"{CONTAINER_PREFIX}{uuid.uuid4().hex[:12]}"
-    result = run_bounded(container_args(image, worktree, argv, name=name, network=network, writable=writable),
+    result = run_bounded(container_args(image, worktree, argv, name=name, network=network, writable=writable,
+                                        resources=resources),
                          timeout=timeout, container=name)
     if result.timed_out:  # killing the docker client does not stop the container
         run_bounded(["docker", "rm", "-f", name], timeout=30)
@@ -49,8 +60,11 @@ def run_in_container(image: str, worktree: Path, argv: list[str], timeout: float
 class ValidationGate:
     """Runs the project's validation commands for one run worktree and keeps their logs as files."""
 
-    def __init__(self, policy: EffectivePolicy, worktree: Path, log_dir: Path, runner=run_in_container):
-        self.policy, self.worktree, self.log_dir, self.runner = policy, worktree, log_dir, runner
+    def __init__(self, policy: EffectivePolicy, worktree: Path, log_dir: Path, runner=None):
+        resources = Resources(policy.container_cpus, policy.container_memory_mb, policy.container_pids,
+                              policy.container_tmp_mb)
+        self.policy, self.worktree, self.log_dir = policy, worktree, log_dir
+        self.runner = runner or functools.partial(run_in_container, resources=resources)
 
     def _log(self, label: str, result: ProcessResult) -> str:
         self.log_dir.mkdir(parents=True, exist_ok=True)
@@ -64,7 +78,8 @@ class ValidationGate:
         marker = self.log_dir / "setup.done"
         if not self.policy.setup or marker.exists():
             return None
-        result = self.runner(self.policy.validation_image, self.worktree, list(self.policy.setup), SETUP_TIMEOUT,
+        result = self.runner(self.policy.validation_image, self.worktree, list(self.policy.setup),
+                             self.policy.setup_timeout_seconds,
                              network=True, writable=True)
         log = self._log("setup", result)
         if not result.ok:

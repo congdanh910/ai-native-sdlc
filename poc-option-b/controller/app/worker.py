@@ -16,6 +16,7 @@ import time
 from sqlalchemy import select
 
 from controller.app import coordinator, joblog, jobs
+from controller.app.config import get_settings
 from controller.app.doing import process
 from controller.app.db import session_scope
 from controller.app.models import Execution, Run
@@ -26,19 +27,16 @@ from controller.app.team.base import CapacityBusy, Team
 
 log = logging.getLogger("sdlc.worker")
 WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
-CAPACITY_WAIT_SECONDS = 120
-RETRY_BASE_SECONDS = 10
-PR_POLL_SECONDS = 60  # without a public webhook, GitHub is polled for CI, review and merge
 
 
-CANCEL_CHECK_SECONDS = 5
 
 
 def _heartbeat(execution_id, stop: threading.Event) -> None:
     """Renew the lease, and stop the job's sessions and containers as soon as its run is cancelled."""
-    renew_every = max(1, int(jobs.LEASE.total_seconds() / 3 / CANCEL_CHECK_SECONDS))
+    settings = get_settings()
+    renew_every = max(1, int(settings.job_lease_seconds / 3 / settings.cancel_check_seconds))
     ticks = 0
-    while not stop.wait(CANCEL_CHECK_SECONDS):
+    while not stop.wait(settings.cancel_check_seconds):
         ticks += 1
         with session_scope() as session:
             execution = session.get(Execution, execution_id)
@@ -90,11 +88,11 @@ def _fail(execution_id, exc: Exception) -> None:
         run = session.get(Run, execution.run_id, with_for_update=True)
         message = f"{type(exc).__name__}: {exc}"[:500]
         if isinstance(exc, CapacityBusy):
-            jobs.postpone(session, execution, exc.wait_seconds or CAPACITY_WAIT_SECONDS, message)
+            jobs.postpone(session, execution, exc.wait_seconds or get_settings().capacity_wait_seconds, message)
             return
         retryable = not execution.side_effects and not isinstance(exc, InvalidModelOutput)
-        if retryable and execution.attempts < jobs.MAX_ATTEMPTS:
-            jobs.postpone(session, execution, RETRY_BASE_SECONDS * 2 ** execution.attempts, message)
+        if retryable and execution.attempts < get_settings().job_max_attempts:
+            jobs.postpone(session, execution, get_settings().job_retry_base_seconds * 2 ** execution.attempts, message)
             execution.attempts += 1  # postpone does not count capacity waits; failures do count
             return
         jobs.finish(session, execution, "failed", error=message)
@@ -166,7 +164,7 @@ def run_forever(poll_seconds: float = 1.0) -> None:
             except Exception:
                 log.exception("eval scoring failed")
             if time.monotonic() >= next_pr_poll:
-                next_pr_poll = time.monotonic() + PR_POLL_SECONDS
+                next_pr_poll = time.monotonic() + get_settings().pr_poll_seconds
                 try:
                     with session_scope() as session:
                         coordinator.poll_pull_requests(session)

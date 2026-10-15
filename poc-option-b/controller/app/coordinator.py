@@ -48,7 +48,6 @@ from controller.app.team.base import ReleaseResult, RunContext, StepResult, Team
 from controller.app.team.tidy import tidy_plan, tidy_spec, tidy_tests
 
 log = logging.getLogger("sdlc.coordinator")
-MAX_REMEDIATIONS = 2
 
 # kind -> (role, has side effects, run status the job belongs to)
 KINDS: dict[str, tuple[TeamRole, bool, RunStatus]] = {
@@ -511,7 +510,7 @@ def _work_task(team: Team, loaded: Loaded) -> list[dict]:
     """QA Engineer writes tests, Validation Gate red-checks, Developer implements, Validation Gate validates.
 
     A failed red check goes back to the QA Engineer once with the result. Validation failures go back to the
-    Developer with the failing output, at most MAX_REMEDIATIONS times.
+    Developer with the failing output, at most limits.max_remediations times (.sdlc/project.yaml).
     """
     task = PlanTask.model_validate(loaded.task_payload)
     context, tests = loaded.context, loaded.tests
@@ -543,12 +542,13 @@ def _work_task(team: Team, loaded: Loaded) -> list[dict]:
     upheld = (f"You disputed a test earlier: {ruling['dispute']}\nThe Tech Lead kept the tests: {ruling['reason']}\n"
               f"Make the code pass them.") if ruling and ruling["decision"] == "keep_tests" else ""
     steps.append(step(TaskStatus.CODING, TeamRole.DEVELOPER, team.implement(context, task, 1, tests, feedback=upheld)))
-    for remediation in range(MAX_REMEDIATIONS + 1):
+    max_remediations = context.policy.max_remediations
+    for remediation in range(max_remediations + 1):
         if not steps[-1]["ok"] or steps[-1]["dispute"]:
             return steps
         steps.append(step(TaskStatus.VALIDATING, TeamRole.VALIDATION_GATE,
                           team.validate(context, task, attempt=remediation + 1)))
-        if steps[-1]["ok"] or remediation == MAX_REMEDIATIONS:
+        if steps[-1]["ok"] or remediation == max_remediations:
             return steps
         failure = steps[-1]["evidence"].get("failures") or steps[-1]["detail"]
         steps.append(step(TaskStatus.REMEDIATING, TeamRole.DEVELOPER,
@@ -822,7 +822,9 @@ def _apply_code_task(session: Session, run: Run, execution: Execution, result: d
     else:
         transition_task(session, task, TaskStatus.FAILED, actor=TeamRole.VALIDATION_GATE.value,
                         reason="validation still failing after remediation")
-        to_needs_human(session, run, f"{task.external_task_id}: validation failed after {MAX_REMEDIATIONS} remediations")
+        policy = EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy"))
+        to_needs_human(session, run, f"{task.external_task_id}: validation failed after {policy.max_remediations} "
+                                     "remediations")
 
 
 def _apply_review(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:

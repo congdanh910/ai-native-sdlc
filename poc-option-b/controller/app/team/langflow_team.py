@@ -18,15 +18,13 @@ from controller.app.integrations.langflow import (InvalidModelOutput, LangflowCl
                                                   extract_json, role_prompt)
 from controller.app.project_docs import Sds, Srs, srs_features
 from controller.app.projects.config import matches_any
-from controller.app.schemas import Intent, PlanPayload, Review, Spec, TestPlan, parse_criteria
+from controller.app.schemas import NOTES_HEADING, Intent, PlanPayload, Review, Spec, TestPlan, parse_criteria
 from controller.app.team import normalize
 from controller.app.team.base import CallRecord, CapacityBusy, RunContext
 from controller.app.team.mock import MockTeam
 from controller.app.tunnel import ensure_tunnel, tunnel_status
 
-MAX_FORMAT_RETRIES = 2
 UI_SUFFIXES = (".html", ".htm", ".css", ".scss", ".sass", ".less", ".vue", ".svelte")
-CAPACITY_CACHE_SECONDS = 120
 Model = TypeVar("Model", bound=BaseModel)
 
 
@@ -79,14 +77,17 @@ class LangflowTeam(MockTeam):
             raise CapacityBusy(f"cannot read GX10 capacity: {exc}") from exc
         if reasons:
             raise CapacityBusy("GX10 is busy: " + "; ".join(reasons))
-        self._capacity_ok_until = time.monotonic() + CAPACITY_CACHE_SECONDS
+        self._capacity_ok_until = time.monotonic() + self.settings.gx10_capacity_cache_seconds
 
     def _ask(self, role: str, payload: dict, contract: type[Model], repair: Callable[[dict], dict],
-             session_id: str) -> Model:
+             session_id: str, retries: int | None = None) -> Model:
+        """Ask a role; an answer that breaks the contract is sent back with the error, up to `retries` times
+        (limits.max_format_retries of the project, or the platform default without a project)."""
+        retries = self.settings.max_format_retries if retries is None else retries
         prompt = role_prompt(role)
         started = time.monotonic()
         problems: list[str] = []
-        for attempt in range(1, MAX_FORMAT_RETRIES + 2):
+        for attempt in range(1, retries + 2):
             self._ensure_capacity()
             live = self.engine.endswith("-readonly")
             joblog.note(f"{role}: asking {self.engine}, attempt {attempt}"
@@ -104,7 +105,7 @@ class LangflowTeam(MockTeam):
                 joblog.note(f"{role}: answer rejected: {_describe(exc)[:400]}")
                 problems = [f"Your previous answer was rejected: {_describe(exc)}",
                             "Answer again with one JSON object that follows the output keys exactly."]
-        raise InvalidModelOutput(f"{role}: no valid answer after {MAX_FORMAT_RETRIES + 1} attempts: {problems[0]}", raw)
+        raise InvalidModelOutput(f"{role}: no valid answer after {retries + 1} attempts: {problems[0]}", raw)
 
     def _constitution(self, context: RunContext) -> str:
         """The project's rules. Qwen3's context window is small, so a long constitution is cut to the budget; the
@@ -135,13 +136,15 @@ class LangflowTeam(MockTeam):
                    "answers": [{"question": q, "answer": a} for q, a in context.answers],
                    "repository": {"files": context.repository.get("files", []),
                                   "symbols": context.repository.get("symbols", {})}}
-        return self._ask("spec", payload, Spec, normalize.spec, context.session_id)
+        return self._ask("spec", payload, Spec, normalize.spec, context.session_id,
+                         retries=context.policy.max_format_retries)
 
     def write_srs(self, context: RunContext) -> Srs:
         payload = {"brief": context.intent_md, "current_srs": context.srs_md or "",
                    "answers": [{"question": q, "answer": a} for q, a in context.answers],
                    "agents_md": context.agents_md, "constitution": self._constitution(context), "feedback": context.feedback}
-        return self._ask("srs", payload, Srs, normalize.srs, context.session_id)
+        return self._ask("srs", payload, Srs, normalize.srs, context.session_id,
+                         retries=context.policy.max_format_retries)
 
     def write_sds(self, context: RunContext) -> Sds:
         stories = [{"id": s.id, "feature": f.prefix, "title": s.title, "actors": s.actors}
@@ -151,7 +154,8 @@ class LangflowTeam(MockTeam):
                    "agents_md": context.agents_md, "constitution": self._constitution(context), "repository": {"files": context.repository.get("files", []),
                                                                   "symbols": context.repository.get("symbols", {})},
                    "feedback": context.feedback}
-        return self._ask("sds", payload, Sds, normalize.sds, context.session_id)
+        return self._ask("sds", payload, Sds, normalize.sds, context.session_id,
+                         retries=context.policy.max_format_retries)
 
     def plan(self, context: RunContext) -> PlanPayload:
         validations = [command.name for command in context.policy.validation]
@@ -166,7 +170,8 @@ class LangflowTeam(MockTeam):
         payload = {"spec": context.spec_md, "agents_md": context.agents_md, "constitution": self._constitution(context), "repository": repository,
                    "policy": self._policy(context), "feedback": context.feedback}
         return self._ask("plan", payload, PlanPayload, lambda data: normalize.plan(data, validations),
-                         context.session_id)
+                         context.session_id,
+                         retries=context.policy.max_format_retries)
 
     def design_tests(self, context: RunContext, plan: PlanPayload) -> TestPlan:
         criteria = [{"id": c.id, "text": c.full} for c in parse_criteria(context.spec_md or "")]
@@ -179,7 +184,8 @@ class LangflowTeam(MockTeam):
         payload = {"spec": context.spec_md, "criteria": criteria, "plan": plan.model_dump(),
                    "agents_md": context.agents_md, "constitution": self._constitution(context), "repository": repository, "policy": self._policy(context),
                    "feedback": context.feedback}
-        return self._ask("test-design", payload, TestPlan, normalize.test_plan, context.session_id)
+        return self._ask("test-design", payload, TestPlan, normalize.test_plan, context.session_id,
+                         retries=context.policy.max_format_retries)
 
     def review(self, context: RunContext, plan: PlanPayload, tests: TestPlan, diff: str = "",
                validation: str = "") -> Review:
@@ -187,10 +193,19 @@ class LangflowTeam(MockTeam):
         # test plan overflowed Qwen3's 8192-token window (inventory run, 2026-10-14).
         cases = [{"id": c.id, "task_id": c.task_id, "criterion": c.criterion, "target_file": c.target_file}
                  for c in tests.cases]
-        payload = {"spec": context.spec_md, "plan": plan.model_dump(), "test_plan": {"cases": cases},
+        # The design sections the reviewer checks code against; sequence diagrams and domain tables are for humans
+        # and overflowed Qwen3 on the attendance run (12,306 tokens, 2026-10-15). The BA's notes are not criteria.
+        design = plan.design
+        reviewed_plan = {"summary": plan.summary, "tasks": [t.model_dump() for t in plan.tasks],
+                         "business_rules": [r.model_dump() for r in design.business_rules],
+                         "error_flows": [r.model_dump() for r in design.error_flows],
+                         "rule_notes": [r.model_dump() for r in design.rule_notes]}
+        spec = (context.spec_md or "").split(NOTES_HEADING)[0]
+        payload = {"spec": spec, "plan": reviewed_plan, "test_plan": {"cases": cases},
                    "diff": diff, "validation": validation or "coding was simulated; no validation ran",
                    "agents_md": context.agents_md, "constitution": self._constitution(context), "review_md": context.review_md}
-        return self._ask("review", payload, Review, normalize.review, context.session_id)
+        return self._ask("review", payload, Review, normalize.review, context.session_id,
+                         retries=context.policy.max_format_retries)
 
 
 def _describe(exc: Exception) -> str:

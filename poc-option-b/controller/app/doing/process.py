@@ -16,9 +16,8 @@ import threading
 import time
 
 from controller.app import joblog
-from controller.app.config import DATA_DIR
+from controller.app.config import DATA_DIR, get_settings
 
-MAX_OUTPUT = 200_000  # characters kept from the end of the combined output
 SECRET = re.compile(
     r"(gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|"
     r"(?i:(?:api[_-]?key|token|secret|password)\s*[=:]\s*)\S+)")
@@ -98,7 +97,7 @@ def run_bounded(args: list[str], *, cwd: Path | None = None, timeout: float, inp
     finally:
         reader.join(timeout=10)
         cancelled = _untrack(process, container)
-    output = redact("".join(lines))[-MAX_OUTPUT:]
+    output = redact("".join(lines))[-get_settings().process_output_max_chars:]
     joblog.note(f"{program} {'timed out' if timed_out else 'cancelled' if cancelled else f'exited {process.returncode}'} "
                 f"after {round(time.monotonic() - started)}s")
     if cancelled:

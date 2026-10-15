@@ -12,9 +12,8 @@ from pathlib import Path
 import threading
 import uuid
 
-from controller.app.config import DATA_DIR
+from controller.app.config import DATA_DIR, get_settings
 
-MAX_READ = 64_000
 _current: ContextVar[Path | None] = ContextVar("job_log", default=None)
 _lock = threading.Lock()
 
@@ -61,7 +60,7 @@ def read(run_id, execution_id, offset: int = 0) -> tuple[str, int]:
         return "", 0
     with path.open("rb") as handle:
         handle.seek(max(0, offset))
-        data = handle.read(MAX_READ)
+        data = handle.read(get_settings().job_log_read_bytes)
     return data.decode("utf-8", errors="replace"), max(0, offset) + len(data)
 
 

@@ -67,9 +67,23 @@ class Context(Strict):
         return [_check_pattern(pattern) for pattern in value]
 
 
+class ContainerLimits(Strict):
+    """Resources of the validation container (red check, validation, setup)."""
+    cpus: float = Field(default=2, gt=0, le=16)
+    memory_mb: int = Field(default=2048, ge=256, le=65536)
+    pids: int = Field(default=512, ge=64, le=8192)
+    tmp_mb: int = Field(default=256, ge=16, le=8192)  # size of the writable /tmp inside the container
+
+
 class Limits(Strict):
     max_tasks: int = Field(default=8, ge=1, le=50)
     max_changed_files: int = Field(default=30, ge=1, le=500)
+    session_timeout_minutes: int = Field(default=20, ge=1, le=180)  # one QA Engineer or Developer CLI session
+    thinking_timeout_minutes: int = Field(default=10, ge=1, le=60)  # one call of a read-only CLI thinking role
+    setup_timeout_minutes: int = Field(default=15, ge=1, le=120)  # the project's setup commands in the container
+    max_remediations: int = Field(default=2, ge=0, le=5)  # Developer retries after a failed validation
+    max_format_retries: int = Field(default=2, ge=0, le=5)  # thinking-role retries after an answer breaks the contract
+    container: ContainerLimits = ContainerLimits()
 
 
 class Stages(Strict):
@@ -149,6 +163,16 @@ class EffectivePolicy(Strict):
     validation_image: str = ""  # container image; empty when the platform does not provide the toolchain
     setup: list[str] = []
     red_check: bool = True
+    # Defaults match Limits, so policies stored by runs before these fields existed keep working.
+    session_timeout_seconds: int = 1200
+    thinking_timeout_seconds: int = 600
+    setup_timeout_seconds: int = 900
+    max_remediations: int = 2
+    max_format_retries: int = 2
+    container_cpus: float = 2
+    container_memory_mb: int = 2048
+    container_pids: int = 512
+    container_tmp_mb: int = 256
 
 
 def effective_policy(config: ProjectConfig, defaults: PlatformDefaults = PlatformDefaults()) -> EffectivePolicy:
@@ -170,6 +194,15 @@ def effective_policy(config: ProjectConfig, defaults: PlatformDefaults = Platfor
         validation_image=dict(defaults.validation_images).get(config.validation_image, ""),
         setup=list(config.setup),
         red_check=config.testing.red_check,
+        session_timeout_seconds=config.limits.session_timeout_minutes * 60,
+        thinking_timeout_seconds=config.limits.thinking_timeout_minutes * 60,
+        setup_timeout_seconds=config.limits.setup_timeout_minutes * 60,
+        max_remediations=config.limits.max_remediations,
+        max_format_retries=config.limits.max_format_retries,
+        container_cpus=config.limits.container.cpus,
+        container_memory_mb=config.limits.container.memory_mb,
+        container_pids=config.limits.container.pids,
+        container_tmp_mb=config.limits.container.tmp_mb,
     )
 
 

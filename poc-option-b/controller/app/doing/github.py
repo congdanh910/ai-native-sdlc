@@ -14,11 +14,10 @@ import os
 from pathlib import Path
 import re
 
+from controller.app.config import get_settings
 from controller.app.doing.process import run_bounded
 
 GITHUB = re.compile(r"(?:https://github\.com/|git@github\.com:)([A-Za-z0-9-]+/[A-Za-z0-9._-]+?)(?:\.git)?/?")
-GH_TIMEOUT = 60
-PUSH_TIMEOUT = 300
 
 
 class GitHubError(RuntimeError):
@@ -31,7 +30,7 @@ def repo_slug(repo_url: str) -> str | None:
 
 
 def _gh(*args: str, input_text: str | None = None, runner=run_bounded) -> str:
-    result = runner(["gh", *args], timeout=GH_TIMEOUT, input_text=input_text)
+    result = runner(["gh", *args], timeout=get_settings().gh_timeout_seconds, input_text=input_text)
     if not result.ok:
         raise GitHubError(f"gh {args[0]} {args[1] if len(args) > 1 else ''}: {result.tail(5)}")
     return result.output
@@ -56,7 +55,7 @@ def check_access(slug: str, runner=run_bounded) -> str:
 
 def push(worktree: Path, branch: str, runner=run_bounded) -> None:
     result = runner(["git", "-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential",
-                     "push", "--quiet", "origin", f"HEAD:refs/heads/{branch}"], cwd=worktree, timeout=PUSH_TIMEOUT,
+                     "push", "--quiet", "origin", f"HEAD:refs/heads/{branch}"], cwd=worktree, timeout=get_settings().git_push_timeout_seconds,
                     env=os.environ | {"GIT_TERMINAL_PROMPT": "0"})
     if not result.ok:
         raise GitHubError(f"push of {branch} failed: {result.tail(5)}")

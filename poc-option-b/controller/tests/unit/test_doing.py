@@ -394,3 +394,10 @@ def test_widening_an_import_is_not_an_edit_of_existing_tests(worktree):
     (worktree / "test" / "tasks.test.js").write_text(
         "import { filterTasks } from '../src/tasks.js';\n// existing tests\n")  # drops a name: an edit
     assert "existing line" in changes.check_tests(worktree, changes.stage_changes(worktree), policy())[0]
+
+
+def test_session_timeout_comes_from_the_project_limits(worktree, tmp_path):
+    dev = FakeExecutor("codex", edits={"src/tasks.js": "export const due = 1;\n"})
+    team, _ = doing(tmp_path, dev=dev)
+    team.implement(context(worktree, session_timeout_seconds=2700), TASK, 1, TESTS)
+    assert dev.sessions[-1].timeout == 2700

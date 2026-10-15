@@ -40,7 +40,7 @@ def tunnel_status(settings: Settings) -> TunnelStatus:
     return TunnelStatus("down")
 
 
-def ensure_tunnel(settings: Settings, wait_seconds: float = 15) -> TunnelStatus:
+def ensure_tunnel(settings: Settings, wait_seconds: float | None = None) -> TunnelStatus:
     status = tunnel_status(settings)
     if status.state != "down":
         return status
@@ -48,7 +48,7 @@ def ensure_tunnel(settings: Settings, wait_seconds: float = 15) -> TunnelStatus:
     if problems:
         raise RuntimeError("; ".join(problems))
     TUNNEL.start(tunnel_argv(settings), cwd=PROJECT_ROOT)
-    deadline = time.monotonic() + wait_seconds
+    deadline = time.monotonic() + (settings.tunnel_wait_seconds if wait_seconds is None else wait_seconds)
     while time.monotonic() < deadline:
         if port_listening(settings.ollama_tunnel_port):
             return tunnel_status(settings)

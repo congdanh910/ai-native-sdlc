@@ -317,6 +317,22 @@ Trước khi mở PR, controller tick các task đã xong trong `tasks.md` và c
 
 Tắt: `./sdlc down` (dữ liệu vẫn giữ). Mẹo: ⌘K để nhảy tới run hoặc trang bất kỳ; nút mặt trăng đổi sáng/tối.
 
+## Cấu hình giới hạn
+
+Không có giới hạn nào cố định trong code. Mỗi dự án đặt trong `.sdlc/project.yaml`, mục `limits` (bỏ trống thì dùng mặc định):
+
+| Khoá | Mặc định | Ý nghĩa |
+| --- | --- | --- |
+| `session_timeout_minutes` | 20 | Một session CLI của QA Engineer hoặc Developer |
+| `thinking_timeout_minutes` | 10 | Một lần gọi vai suy nghĩ qua CLI chỉ đọc (BA, Architect, Tech Lead, QA Analyst) |
+| `setup_timeout_minutes` | 15 | Các lệnh `setup` trong container |
+| `max_remediations` | 2 | Số lần Developer sửa lại khi validation trượt |
+| `max_format_retries` | 2 | Số lần gửi lại khi câu trả lời của vai suy nghĩ sai contract |
+| `container` | `cpus 2, memory_mb 2048, pids 512, tmp_mb 256` | Tài nguyên container validation |
+| `max_tasks`, `max_changed_files` | 8, 30 | Số task và số file một plan được đổi |
+
+Thông số của nền tảng (worker, GitHub, Ollama, hạn mức subscription…) đặt trong `.env`; danh sách và giá trị mặc định ở `.env.example`. Đổi `.env` thì chạy lại `./sdlc up`; đổi `project.yaml` thì commit lên repo dự án rồi **Check again**, run mới sẽ dùng giá trị mới (run đang chạy giữ giá trị lúc tạo).
+
 ## Lưu ý và giới hạn
 
 - Branch `sdlc/run-xxxx` của mỗi run được push lên repo demo; PR #1 trên `inventory-demo` đang chờ quyết định merge hoặc đóng.

@@ -24,6 +24,13 @@ default_executor: codex
 limits:
   max_tasks: 6
   max_changed_files: 15
+  # Optional; the values below are the defaults.
+  # session_timeout_minutes: 20        # one QA Engineer or Developer CLI session
+  # thinking_timeout_minutes: 10       # one call of a read-only CLI thinking role (BA, Tech Lead, ...)
+  # setup_timeout_minutes: 15          # the setup commands in the container
+  # max_remediations: 2                # Developer retries after a failed validation
+  # max_format_retries: 2              # thinking-role retries after an answer breaks the contract
+  # container: {cpus: 2, memory_mb: 2048, pids: 512, tmp_mb: 256}   # validation container resources
 stages:                              # manual | gated | auto
   spec: gated
   plan: gated                        # always gated (or manual)

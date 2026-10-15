@@ -22,7 +22,6 @@ from controller.app.team.langflow_team import LangflowTeam
 
 ENGINES = ("qwen3", "claude-readonly", "codex-readonly")
 THINKING_ROLES = ("business_analyst", "tech_lead", "qa_analyst", "code_reviewer")
-SESSION_TIMEOUT = 600
 READONLY_NOTE = ("You may read the repository in the current directory to check file names, functions and tests. "
                  "Do not change, create or run anything. The input JSON follows.")
 
@@ -30,9 +29,10 @@ READONLY_NOTE = ("You may read the repository in the current directory to check 
 class CliReasoningClient:
     """Stands in for the Langflow client: the same endpoint and payload, answered by a read-only CLI session."""
 
-    def __init__(self, cli: str, runner=run_bounded):
+    def __init__(self, cli: str, runner=run_bounded, timeout: float = 600):
         self.cli, self.runner = cli, runner
         self.cwd: str | None = None
+        self.timeout = timeout  # set per call from the project's limits.thinking_timeout_minutes
         self.last_usage: dict = {}
 
     def args(self, cwd: str, last_message: Path) -> list[str]:
@@ -50,7 +50,7 @@ class CliReasoningClient:
         with tempfile.TemporaryDirectory(prefix="sdlc-readonly-") as tmp:
             cwd = self.cwd if self.cwd and Path(self.cwd).is_dir() else tmp
             last = Path(tmp) / "last-message.txt"
-            result = self.runner(self.args(cwd, last), cwd=Path(cwd), timeout=SESSION_TIMEOUT, input_text=prompt,
+            result = self.runner(self.args(cwd, last), cwd=Path(cwd), timeout=self.timeout, input_text=prompt,
                                  env=_base_env())
             message = last.read_text() if last.exists() else ""
         self.last_usage = {"seconds": result.seconds}
@@ -84,15 +84,16 @@ class ReadonlyTeam(LangflowTeam):
     """LangflowTeam's contracts and retries, with a read-only CLI in place of Langflow and Qwen3."""
 
     def __init__(self, settings: Settings, cli: str, client: CliReasoningClient | None = None):
-        super().__init__(settings, client=client or CliReasoningClient(cli), check_capacity=lambda: [],
+        super().__init__(settings, client=client or CliReasoningClient(cli, timeout=settings.thinking_timeout_seconds),
+                         check_capacity=lambda: [],
                          check_ollama=lambda: None)
         self.engine = f"{cli}-readonly"
 
     def _ensure_capacity(self) -> None:  # no GX10 involved
         return None
 
-    def _ask(self, role, payload, contract, repair, session_id):
-        result = super()._ask(role, payload, contract, repair, session_id)
+    def _ask(self, role, payload, contract, repair, session_id, retries=None):
+        result = super()._ask(role, payload, contract, repair, session_id, retries=retries)
         call = self.last_call
         self.last_call = CallRecord(self.engine, call.prompt_version, call.attempts, usage=dict(self.client.last_usage))
         return result
@@ -102,6 +103,8 @@ class ReadonlyTeam(LangflowTeam):
 
     def _in(self, context: RunContext):
         self.client.cwd = context.worktree or None
+        if hasattr(self.client, "timeout") and context.policy is not None:
+            self.client.timeout = context.policy.thinking_timeout_seconds
 
     def specify(self, context):
         self._in(context)

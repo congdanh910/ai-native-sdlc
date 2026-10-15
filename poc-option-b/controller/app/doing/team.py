@@ -17,7 +17,6 @@ from controller.app.schemas import PlanTask, TestPlan, parse_criteria
 from controller.app.team.base import RunContext, StepResult, SubscriptionLimit
 
 PROMPTS = Path(__file__).with_name("prompts")
-SESSION_TIMEOUT = 1200
 
 
 def _prompt(name: str, **values: str) -> str:
@@ -61,7 +60,7 @@ class CliDoing:
         self.last_executor = executor
         session = Session(role=role, prompt=prompt, worktree=self._worktree(context), writable=writable,
                           protected=list(context.policy.protected_paths), commands=self._commands(context, task),
-                          timeout=SESSION_TIMEOUT, log_path=self._log_dir(context) / f"{label}.log")
+                          timeout=context.policy.session_timeout_seconds, log_path=self._log_dir(context) / f"{label}.log")
         result = self.executors[executor].run(session)
         if result.limited:
             raise SubscriptionLimit(f"{executor} subscription limit reached during {label}: {result.message[-200:]}")

@@ -55,7 +55,10 @@ class CapacityBusy(RuntimeError):
 
 class SubscriptionLimit(CapacityBusy):
     """A CLI's subscription usage window is exhausted; committed work is kept and the job runs later."""
-    wait_seconds = 900
+    @property
+    def wait_seconds(self) -> int:  # type: ignore[override]
+        from controller.app.config import get_settings
+        return get_settings().subscription_wait_seconds
 
 
 @dataclass(frozen=True)

@@ -5,14 +5,17 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from controller.app.config import get_settings
 from controller.app.events import record_event
 from controller.app.models import Execution, Run, Task
 from controller.app.state_machine import transition_run, transition_task
 from controller.app.states import RUN_TRANSITIONS, TASK_TRANSITIONS, RunStatus, TaskStatus
 
-LEASE = timedelta(seconds=120)
-MAX_ATTEMPTS = 3
 COORDINATOR = "delivery_coordinator"
+
+
+def lease() -> timedelta:
+    return timedelta(seconds=get_settings().job_lease_seconds)
 
 
 def now() -> datetime:
@@ -45,7 +48,7 @@ def claim(session: Session, worker_id: str) -> Execution | None:
     execution.worker_id = worker_id
     execution.attempts += 1
     execution.started_at = now()
-    execution.lease_until = now() + LEASE
+    execution.lease_until = now() + lease()
     return execution
 
 
@@ -63,7 +66,7 @@ def postpone(session: Session, execution: Execution, seconds: float, reason: str
 def heartbeat(session: Session, execution_id) -> None:
     execution = session.get(Execution, execution_id)
     if execution and execution.status == "running":
-        execution.lease_until = now() + LEASE
+        execution.lease_until = now() + lease()
 
 
 def finish(session: Session, execution: Execution, status: str, *, result: dict | None = None,
@@ -85,7 +88,7 @@ def reconcile_expired(session: Session) -> list[Execution]:
                               .with_for_update(skip_locked=True)).all()
     for execution in expired:
         run = session.get(Run, execution.run_id)
-        if not execution.side_effects and execution.attempts < MAX_ATTEMPTS:
+        if not execution.side_effects and execution.attempts < get_settings().job_max_attempts:
             execution.status, execution.worker_id, execution.lease_until = "queued", None, None
             record_event(session, "job.requeued", actor=COORDINATOR, run_id=run.id,
                          payload={"kind": execution.kind, "execution": str(execution.id), "reason": "lease expired"})

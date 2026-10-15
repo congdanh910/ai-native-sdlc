@@ -56,6 +56,25 @@ class Settings(BaseSettings):
     gx10_ssh_identity_file: str = PLACEHOLDER
     gx10_min_available_mib: int = 65536
     gx10_max_gpu_util: int = Field(default=20, ge=0, le=100)
+    tunnel_wait_seconds: int = Field(default=15, ge=1)  # how long `sdlc up` waits for the GX10 tunnel to open
+    gx10_capacity_cache_seconds: int = Field(default=120, ge=0)  # how long a good GX10 capacity reading is trusted
+
+    # Worker and integrations. Per-project limits (session timeouts, retries, container) are in .sdlc/project.yaml.
+    job_lease_seconds: int = Field(default=120, ge=10)  # a claimed job is renewed while it runs; expiry frees it
+    job_max_attempts: int = Field(default=3, ge=1, le=10)  # retries of a job without side effects
+    job_retry_base_seconds: int = Field(default=10, ge=1)  # back-off doubles on each retry
+    capacity_wait_seconds: int = Field(default=120, ge=5)  # GX10 busy: wait this long, then try again
+    subscription_wait_seconds: int = Field(default=900, ge=60)  # a CLI subscription window is used up
+    cancel_check_seconds: int = Field(default=5, ge=1)  # how often a running job checks for a cancellation
+    pr_poll_seconds: int = Field(default=60, ge=10)  # GitHub CI, review and merge polling without a webhook
+    gh_timeout_seconds: int = Field(default=60, ge=5)
+    git_push_timeout_seconds: int = Field(default=300, ge=10)
+    ollama_timeout_seconds: int = Field(default=300, ge=10)  # one Qwen3 answer through Langflow
+    thinking_timeout_seconds: int = Field(default=600, ge=30)  # read-only CLI call outside a project's limits
+    max_format_retries: int = Field(default=2, ge=0, le=5)  # thinking-role retries outside a project's limits
+    process_output_max_chars: int = Field(default=200_000, ge=10_000)  # output kept from each subprocess
+    job_log_read_bytes: int = Field(default=64_000, ge=4_000)  # one poll of a job's live log
+    langflow_max_response_bytes: int = Field(default=2_000_000, ge=100_000)
 
     @field_validator("sdlc_db_port", "langflow_port", "sdlc_api_port", "ollama_tunnel_port",
                      "ollama_remote_port", "gx10_ssh_port")
