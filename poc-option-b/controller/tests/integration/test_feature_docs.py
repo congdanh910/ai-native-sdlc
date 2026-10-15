@@ -81,6 +81,9 @@ def test_story_run_writes_spec_plan_tasks_and_test_cases_in_the_feature_folder(d
 
     plan = client.get(f"/api/runs/{run['id']}").json()["plans"][-1]
     post(f"/api/runs/{run['id']}/approve-plan", {"plan_id": plan["id"], "sha256": plan["sha256"]})
+    tests = [d for d in client.get(f"/api/runs/{run['id']}").json()["documents"] if d["kind"] == "tests"][-1]
+    assert tests["content"].startswith("## CIW-US-01: Check in with the camera (EMPLOYEE)")
+    post(f"/api/runs/{run['id']}/approve-tests", {"document_id": tests["id"], "sha256": tests["sha256"]})
     drain()
     plan_md = show(worktree, f"{folder}/plan.md")
     assert plan_md.startswith("# Plan: Check in with the camera (CIW)")

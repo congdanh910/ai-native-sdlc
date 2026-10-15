@@ -9,6 +9,7 @@ while a role works:
 """
 
 from dataclasses import dataclass, field
+import dataclasses
 import json
 import logging
 import re
@@ -54,6 +55,7 @@ KINDS: dict[str, tuple[TeamRole, bool, RunStatus]] = {
     "specify": (TeamRole.BUSINESS_ANALYST, False, RunStatus.SPECIFYING),
     "plan": (TeamRole.TECH_LEAD, False, RunStatus.PLANNING),
     "ground": (TeamRole.COORDINATOR, False, RunStatus.GROUNDING),
+    "design_tests": (TeamRole.QA_ANALYST, False, RunStatus.DESIGNING_TESTS),
     "code_task": (TeamRole.DEVELOPER, True, RunStatus.CODING),
     "review": (TeamRole.CODE_REVIEWER, False, RunStatus.REVIEWING),
     "release": (TeamRole.RELEASE_ENGINEER, True, RunStatus.PR_OPEN),
@@ -323,6 +325,10 @@ def load(session: Session, execution: Execution) -> Loaded:
         feedback = [f"Reviewer asked for changes: {reason}" for reason in session.scalars(
             select(Approval.reason).where(Approval.run_id == run.id, Approval.stage == "spec",
                                           Approval.decision == "reject").order_by(Approval.created_at)) if reason]
+    if execution.kind == "design_tests":
+        feedback = [f"QC asked for changes: {reason}" for reason in session.scalars(
+            select(Approval.reason).where(Approval.run_id == run.id, Approval.stage == "tests",
+                                          Approval.decision == "reject").order_by(Approval.created_at)) if reason]
     loaded.extra["run_kind"] = run.kind
     loaded.context = build_context(session, run, kind=execution.kind, feedback=feedback)
     if plan:
@@ -367,10 +373,15 @@ def compute(team: Team, loaded: Loaded) -> dict:
     elif loaded.kind == "plan":
         plan, tidied = tidy_plan(team.plan(context), context.policy)
         record()
-        tests, tidied_tests = tidy_tests(team.design_tests(context, plan), plan)
+        # The grounding feedback is the Tech Lead's; the QA Analyst gets the QC's feedback only on a redesign.
+        tests, tidied_tests = tidy_tests(team.design_tests(dataclasses.replace(context, feedback=[]), plan), plan)
         record()
         result = {"plan": plan.model_dump(), "tests": tests.model_dump(), "tidied": tidied + tidied_tests,
                   "regenerated_from": loaded.extra.get("regenerated_from"), "feedback": context.feedback}
+    elif loaded.kind == "design_tests":
+        tests, tidied = tidy_tests(team.design_tests(context, loaded.plan), loaded.plan)
+        record()
+        result = {"tests": tests.model_dump(), "tidied": tidied, "feedback": context.feedback}
     elif loaded.kind == "code_task":
         steps = _work_task(team, loaded)
         executors = sorted({s["evidence"]["executor"] for s in steps if s["evidence"].get("executor")})
@@ -452,7 +463,7 @@ def apply(session: Session, loaded: Loaded, result: dict, team: Team) -> None:
     if calls:
         execution.prompt_version = ",".join(sorted({c["prompt_version"] for c in calls if c["prompt_version"]}))
     handler = {"preflight": _apply_preflight, "specify": _apply_specify, "plan": _apply_plan,
-               "ground": _apply_ground, "code_task": _apply_code_task, "review": _apply_review,
+               "ground": _apply_ground, "design_tests": _apply_design_tests, "code_task": _apply_code_task, "review": _apply_review,
                "release": _apply_release}[loaded.kind]
     handler(session, run, execution, result, team)
     if execution.status == "running":
@@ -627,6 +638,43 @@ def _apply_ground(session: Session, run: Run, execution: Execution, result: dict
     note = "passed" if report["status"] == "pass" else f"failed with {len(report['findings'])} finding(s)"
     transition_run(session, run, RunStatus.WAITING_PLAN_APPROVAL, actor=COORDINATOR,
                    reason=f"plan v{plan.version} ready; grounding {note}")
+
+
+def tests_markdown(session: Session, run: Run, plan) -> str:
+    """The plan version's test cases as the story's section of test_cases.md, for the Quality gate."""
+    ref = feature_ref(session, run) or FeatureRef(
+        story_id="", story_title=run.title, actors="", statement="", srs_section="", feature_section="",
+        feature_name=run.title, prefix="", feature_id="", slug="")
+    existing = None
+    if ref.story_id and run.commit_artifacts and run.worktree_path:
+        existing = worktree_for(session.get(Project, run.project_id), run).read(f"{ref.folder}/test_cases.md")
+    tests = TestPlan.model_validate(plan.test_plan)
+    criteria = parse_criteria(latest_document(session, run.id, "spec").content)
+    return test_cases_section(ref, tests, criteria, tc_numbers(tests, existing, ref.story_id))
+
+
+def enter_quality_gate(session: Session, run: Run, plan, *, actor: str, acting_role: str | None = None) -> None:
+    """The QC reviews the test cases of this plan version before any code is written."""
+    document = add_tests_document(session, run, plan)
+    transition_run(session, run, RunStatus.WAITING_TEST_APPROVAL, actor=actor, acting_role=acting_role,
+                   reason=f"test cases v{document.version} ready for QC")
+
+
+def add_tests_document(session: Session, run: Run, plan):
+    report = plan.grounding_report or {}
+    return add_document(session, run.id, "tests", tests_markdown(session, run, plan), author_kind=plan.author_kind,
+                            author=plan.author if plan.author_kind == "human" else TeamRole.QA_ANALYST.value,
+                            data={"plan_id": str(plan.id), "plan_version": plan.version,
+                                  "sync_findings": [*report.get("findings", []), *report.get("warnings", [])]})
+
+
+def _apply_design_tests(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    """The QA Analyst redesigned the tests after QC asked for changes: same plan, new test plan version."""
+    approved = latest_plan(session, run.id)
+    plan = add_plan(session, run.id, approved.payload, result["tests"], author_kind="ai",
+                    author=TeamRole.QA_ANALYST.value)
+    ground(session, run, plan)
+    enter_quality_gate(session, run, plan, actor=TeamRole.QA_ANALYST.value)
 
 
 def plan_markdown(run: Run, plan) -> str:

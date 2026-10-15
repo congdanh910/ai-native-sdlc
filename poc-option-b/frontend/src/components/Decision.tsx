@@ -45,6 +45,8 @@ export function DecisionPanel({ run, onDone }: { run: RunDetail; onDone: () => v
   const [specDraft, setSpecDraft] = useState(spec?.content ?? "");
   const plan = run.plans[run.plans.length - 1];
   const [planDraft, setPlanDraft] = useState(plan ? JSON.stringify({ plan: plan.plan, test_plan: plan.test_plan }, null, 2) : "");
+  const tests = [...run.documents].reverse().find((d) => d.kind === "tests");
+  const [testsDraft, setTestsDraft] = useState(plan ? JSON.stringify(plan.test_plan, null, 2) : "");
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [classification, setClassification] = useState({ category: "", stage: "", role: "", note: "" });
   if (!need) return null;
@@ -115,7 +117,7 @@ export function DecisionPanel({ run, onDone }: { run: RunDetail; onDone: () => v
         ) : null}
         <Reason value={reason} onChange={setReason} placeholder="Required to reject, optional to revise" />
         <div className="flex flex-wrap items-center gap-2">
-          <ActionButton variant="primary" success="Plan approved; coding starts" action={() => post("approve-plan", { plan_id: plan.id, sha256: plan.sha256 })}>
+          <ActionButton variant="primary" success="Plan approved; the QC reviews the test cases next" action={() => post("approve-plan", { plan_id: plan.id, sha256: plan.sha256 })}>
             Approve plan v{plan.version}
           </ActionButton>
           <Button onClick={() => setEditing(!editing)}>{editing ? "Hide editor" : "Edit JSON"}</Button>
@@ -129,6 +131,43 @@ export function DecisionPanel({ run, onDone }: { run: RunDetail; onDone: () => v
           <ActionButton variant="danger" action={() => post("reject-plan", { reason, next: "redo" })}>Reject: replan</ActionButton>
           <ActionButton variant="danger" action={() => post("reject-plan", { reason, next: "cancel" })}>Reject: cancel run</ActionButton>
           <span className="ml-auto text-xs text-muted">Approves exactly plan v{plan.version} (<Mono>{short(plan.sha256, 12)}</Mono>); a newer version is refused.</span>
+        </div>
+      </Panel>
+    );
+  }
+
+  if (need.action === "waiting_test_approval" && tests && plan) {
+    return (
+      <Panel run={run} title={`Test cases v${tests.version}`}>
+        <p className="m-0 text-sm text-muted">The plan is approved. Check that every acceptance criterion and edge case has the right tests before any code is written; approving creates the tasks and starts coding.</p>
+        {tests.findings?.length ? (
+          <div className="rounded-lg border border-warn/40 bg-warn-soft p-3 text-sm">
+            <b>Grounding: {tests.findings.length} finding(s)</b>
+            <ul className="mb-0 mt-1 pl-5">{tests.findings.map((f) => <li key={f}>{f}</li>)}</ul>
+          </div>
+        ) : null}
+        <div className="max-h-[520px] overflow-y-auto rounded-lg border border-line bg-side p-4"><Markdown source={tests.content} /></div>
+        {editing ? (
+          <Field label="Edit the test plan (JSON)" hint="cases keep the approved plan's task ids" htmlFor="tests-edit">
+            <Textarea id="tests-edit" className="min-h-80 font-mono text-[12px]" value={testsDraft} onChange={(e) => setTestsDraft(e.target.value)} />
+          </Field>
+        ) : null}
+        <Reason value={reason} onChange={setReason} placeholder="Required to reject, optional to revise" />
+        <div className="flex flex-wrap items-center gap-2">
+          <ActionButton variant="primary" success="Test cases approved; coding starts" action={() => post("approve-tests", { document_id: tests.id, sha256: tests.sha256 })}>
+            Approve test cases v{tests.version}
+          </ActionButton>
+          <Button onClick={() => setEditing(!editing)}>{editing ? "Hide editor" : "Edit JSON"}</Button>
+          {editing ? (
+            <ActionButton action={async () => {
+              let parsed: unknown;
+              try { parsed = JSON.parse(testsDraft); } catch (e) { throw new Error(`invalid JSON: ${(e as Error).message}`); }
+              await post("revise-tests", { test_plan: parsed, reason: reason || null });
+            }}>Save as new version</ActionButton>
+          ) : null}
+          <ActionButton variant="danger" action={() => post("reject-tests", { reason, next: "redo" })}>Reject: redesign tests</ActionButton>
+          <ActionButton variant="danger" action={() => post("reject-tests", { reason, next: "replan" })}>Reject: replan</ActionButton>
+          <ActionButton variant="danger" action={() => post("reject-tests", { reason, next: "cancel" })}>Reject: cancel run</ActionButton>
         </div>
       </Panel>
     );

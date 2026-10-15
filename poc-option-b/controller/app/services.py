@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from controller.app import coordinator
 from controller.app.documents import add_document, add_plan, latest_document, latest_plan
 from controller.app.events import record_event
-from controller.app.models import Approval, Clarification, Project, PullRequest, Run, Task
+from controller.app.models import Approval, Clarification, Plan, Project, PullRequest, Run, Task
 from controller.app.project_docs import (SRS_PATH, ArchitectureBrief, ProjectBrief, check_sds_markdown,
                                          check_srs_markdown, render_architecture_brief, render_brief, srs_features)
 from controller.app.projects.registry import mirror_for
@@ -21,6 +21,7 @@ from controller.app.config import get_settings
 from controller.app.states import TASK_TRANSITIONS, TERMINAL, HumanRole, RunKind, RunStatus, TaskStatus, TeamRole
 
 PO, TL, CO = HumanRole.PRODUCT_OWNER.value, HumanRole.TECH_LEAD.value, HumanRole.CODE_OWNER.value
+QC = HumanRole.QC.value
 
 FAILURE_CATEGORIES = ("AMBIGUOUS_SPEC", "MISSING_CONTEXT", "BAD_GROUNDING", "WEAK_TESTS", "MODEL_LIMITATION",
                       "INFRASTRUCTURE", "OTHER")
@@ -188,17 +189,82 @@ def approve_plan(session: Session, run: Run, plan_id: uuid.UUID, sha256: str, *,
     _approval(session, run, "plan", "approve", actor, TL, plan_id=plan.id)
     plan.commit_sha = coordinator.commit_thread(session, run, "plan", coordinator.plan_markdown(run, plan),
                                                 f"sdlc: plan v{plan.version} approved")
+    coordinator.enter_quality_gate(session, run, plan, actor=actor, acting_role=TL)
+
+
+# ---------------------------------------------------------------- QC (Quality gate)
+
+def _current_tests(session: Session, run: Run, document_id: uuid.UUID, sha256: str):
+    document = latest_document(session, run.id, "tests")
+    if document is None or document.id != document_id or document.sha256 != sha256:
+        raise DecisionError("these are not the latest test cases; reload and review them again")
+    return document
+
+
+def _approved_payload(session: Session, run: Run) -> dict:
+    """The plan payload the Tech Lead approved; a test change at the Quality gate must keep it."""
+    approval = session.scalar(select(Approval).where(Approval.run_id == run.id, Approval.stage == "plan",
+                                                     Approval.decision == "approve").order_by(Approval.created_at.desc()))
+    return session.get(Plan, approval.plan_id).payload
+
+
+def approve_tests(session: Session, run: Run, document_id: uuid.UUID, sha256: str, *, actor: str) -> None:
+    _require(run, RunStatus.WAITING_TEST_APPROVAL)
+    document = _current_tests(session, run, document_id, sha256)
+    plan = latest_plan(session, run.id)
+    if document.data.get("plan_id") != str(plan.id) or plan.payload != _approved_payload(session, run):
+        raise DecisionError("the test cases do not belong to the approved plan; reload the run")
+    _approval(session, run, "tests", "approve", actor, QC, document_id=document.id, plan_id=plan.id)
+    document.commit_sha = coordinator.commit_thread(session, run, "tests", document.content,
+                                                    f"sdlc: test cases v{document.version} approved")
     plan.commit_sha = coordinator.write_plan_files(session, run, plan) or plan.commit_sha
     for task in PlanPayload.model_validate(plan.payload).tasks:
         session.add(Task(run_id=run.id, plan_id=plan.id, external_task_id=task.id, payload=task.model_dump(),
                          status=TaskStatus.PENDING.value))
     session.flush()
-    transition_run(session, run, RunStatus.READY, actor=actor, acting_role=TL)
+    transition_run(session, run, RunStatus.READY, actor=actor, acting_role=QC)
     project = session.get(Project, run.project_id)
     if project.readiness != "ready" and not get_settings().coding_is_mocked:
         coordinator.to_needs_human(session, run, f"project {project.key} is {project.readiness}; coding needs ready")
         return
-    coordinator.enter_stage(session, run, "coding", actor=actor, acting_role=TL)
+    coordinator.enter_stage(session, run, "coding", actor=actor, acting_role=QC)
+
+
+def revise_tests(session: Session, run: Run, test_plan: dict, *, actor: str, reason: str | None) -> None:
+    """QC edits the test plan; the plan stays as approved."""
+    _require(run, RunStatus.WAITING_TEST_APPROVAL)
+    try:
+        tests = TestPlan.model_validate(test_plan)
+    except ValidationError as exc:
+        error = exc.errors()[0]
+        raise DecisionError(f"{'.'.join(str(p) for p in error['loc'])}: {error['msg']}") from exc
+    payload = _approved_payload(session, run)
+    known = {t["id"] for t in payload["tasks"]}
+    unknown = sorted({c.task_id for c in tests.cases} - known)
+    if unknown:
+        raise DecisionError(f"test cases name tasks {', '.join(unknown)} that the approved plan does not have")
+    plan = add_plan(session, run.id, payload, tests.model_dump(), author_kind="human", author=actor)
+    coordinator.ground(session, run, plan)
+    document = coordinator.add_tests_document(session, run, plan)
+    _approval(session, run, "tests", "revise", actor, QC, reason=reason, document_id=document.id, plan_id=plan.id)
+    _corrected(run)
+
+
+def reject_tests(session: Session, run: Run, *, actor: str, reason: str, next_step: str) -> None:
+    """redo: the QA Analyst designs the tests again; replan: back to the Tech Lead; cancel: stop the run."""
+    _require(run, RunStatus.WAITING_TEST_APPROVAL)
+    if not reason.strip():
+        raise DecisionError("a rejection needs a reason")
+    _approval(session, run, "tests", "reject", actor, QC, reason=reason)
+    _corrected(run)
+    if next_step == "cancel":
+        transition_run(session, run, RunStatus.CANCELLED, actor=actor, acting_role=QC, reason=reason)
+    elif next_step == "replan":
+        transition_run(session, run, RunStatus.PLANNING, actor=actor, acting_role=QC, reason=reason)
+        coordinator.queue(session, run, "plan")
+    else:
+        transition_run(session, run, RunStatus.DESIGNING_TESTS, actor=actor, acting_role=QC, reason=reason)
+        coordinator.queue(session, run, "design_tests")
 
 
 def revise_plan(session: Session, run: Run, payload: dict, test_plan: dict, *, actor: str,
@@ -272,6 +338,7 @@ def resume(session: Session, run: Run, *, actor: str, decision: str, reason: str
         return
     target = RunStatus(run.resume_status or RunStatus.PREFLIGHT)
     kinds = {RunStatus.PREFLIGHT: "preflight", RunStatus.SPECIFYING: "specify", RunStatus.PLANNING: "plan",
+             RunStatus.DESIGNING_TESTS: "design_tests",
              RunStatus.REVIEWING: "review", RunStatus.PR_OPEN: "release"}
     if target == RunStatus.GROUNDING:
         target = RunStatus.PLANNING

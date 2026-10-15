@@ -77,7 +77,12 @@ class PlanRevision(Body):
 
 class Rejection(Body):
     reason: str
-    next: Literal["redo", "cancel"] = "redo"
+    next: Literal["redo", "cancel", "replan"] = "redo"  # replan: only at the Quality gate
+
+
+class TestsRevision(Body):
+    test_plan: dict
+    reason: str | None = None
 
 
 class StageStart(Body):
@@ -254,6 +259,22 @@ def revise_plan(run_id: uuid.UUID, body: PlanRevision) -> dict:
 def reject_plan(run_id: uuid.UUID, body: Rejection) -> dict:
     return _decide(run_id, lambda s, r: services.reject_plan(s, r, actor=operator(), reason=body.reason,
                                                              next_step=body.next))
+
+
+@router.post("/runs/{run_id}/approve-tests")
+def approve_tests(run_id: uuid.UUID, body: DocumentChoice) -> dict:
+    return _decide(run_id, lambda s, r: services.approve_tests(s, r, body.document_id, body.sha256, actor=operator()))
+
+
+@router.post("/runs/{run_id}/revise-tests")
+def revise_tests(run_id: uuid.UUID, body: TestsRevision) -> dict:
+    return _decide(run_id, lambda s, r: services.revise_tests(s, r, body.test_plan, actor=operator(), reason=body.reason))
+
+
+@router.post("/runs/{run_id}/reject-tests")
+def reject_tests(run_id: uuid.UUID, body: Rejection) -> dict:
+    return _decide(run_id, lambda s, r: services.reject_tests(s, r, actor=operator(), reason=body.reason,
+                                                              next_step=body.next))
 
 
 @router.post("/runs/{run_id}/start-stage")

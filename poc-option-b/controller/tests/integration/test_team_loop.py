@@ -58,11 +58,21 @@ def approve_spec(run_id) -> None:
         services.approve_spec(session, run, spec.id, spec.sha256, actor=OPERATOR)
 
 
-def approve_plan(run_id) -> None:
+def approve_plan(run_id, *, tests: bool = True) -> None:
+    """The Tech Lead approves the plan and, unless tests=False, the QC approves its test cases."""
     with session_scope() as session:
         run = services.get_run(session, run_id)
         plan = latest_plan(session, run_id)
         services.approve_plan(session, run, plan.id, plan.sha256, actor=OPERATOR)
+    if tests:
+        approve_tests(run_id)
+
+
+def approve_tests(run_id) -> None:
+    with session_scope() as session:
+        run = services.get_run(session, run_id)
+        document = latest_document(session, run_id, "tests")
+        services.approve_tests(session, run, document.id, document.sha256, actor=OPERATOR)
 
 
 def set_stages(repo, **stages) -> None:

@@ -166,7 +166,8 @@ class LangflowTeam(MockTeam):
                       "selected_files": [f for f in context.repository.get("selected_files", [])
                                          if matches_any(f["path"], test_paths)]}
         payload = {"spec": context.spec_md, "criteria": criteria, "plan": plan.model_dump(),
-                   "agents_md": context.agents_md, "repository": repository, "policy": self._policy(context)}
+                   "agents_md": context.agents_md, "repository": repository, "policy": self._policy(context),
+                   "feedback": context.feedback}
         return self._ask("test-design", payload, TestPlan, normalize.test_plan, context.session_id)
 
     def review(self, context: RunContext, plan: PlanPayload, tests: TestPlan, diff: str = "",

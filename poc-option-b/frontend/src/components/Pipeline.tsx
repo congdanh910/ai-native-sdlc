@@ -21,6 +21,7 @@ export function stages(run: RunDetail): Stage[] {
     approved("spec") || run.plans.length > 0,
     run.plans.length > 0 && !!plan?.grounding,
     approved("plan") || run.tasks.length > 0,
+    approved("tests") || run.tasks.length > 0,
     run.tasks.length > 0 && passed === run.tasks.length,
     !!review,
     !!pr && (pr.merged_sha !== null || run.status === "COMPLETED"),
@@ -31,7 +32,8 @@ export function stages(run: RunDetail): Stage[] {
     { key: "gate1", label: "Gate 1", detail: approved("spec") ? "spec approved" : "approve spec", gate: true },
     { key: "plan", label: "Plan", detail: plan ? `${plan.plan.tasks.length} tasks · grounding ${plan.grounding?.status ?? "…"}` : "not yet" },
     { key: "gate2", label: "Gate 2", detail: approved("plan") ? "plan approved" : "approve plan", gate: true },
-    { key: "coding", label: "Coding", detail: run.tasks.length ? `${passed}/${run.tasks.length} tasks passed` : "after gate 2" },
+    { key: "quality", label: "Quality", detail: approved("tests") ? "test cases approved" : "QC reviews test cases", gate: true },
+    { key: "coding", label: "Coding", detail: run.tasks.length ? `${passed}/${run.tasks.length} tasks passed` : "after the Quality gate" },
     { key: "review", label: "Review", detail: review ? `verdict ${verdict ?? "?"}` : "after coding" },
     { key: "gate3", label: "Gate 3", detail: pr?.merged_sha ? "merged" : pr ? (pr.simulated ? "simulated PR" : `PR #${pr.number}`) : "merge PR", gate: true },
   ];

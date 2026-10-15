@@ -46,6 +46,10 @@ def test_operator_walks_the_loop_in_the_web_api(db, sample_repo):
     plan = revised["plans"][-1]
     assert plan["version"] == 2 and plan["author_kind"] == "human"
     post(f"/api/runs/{run['id']}/approve-plan", {"plan_id": plan["id"], "sha256": plan["sha256"]})
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    assert detail["waiting"] == {"role": "qc", "action": "waiting_test_approval"}
+    tests = [d for d in detail["documents"] if d["kind"] == "tests"][-1]
+    post(f"/api/runs/{run['id']}/approve-tests", {"document_id": tests["id"], "sha256": tests["sha256"]})
     drain()
 
     detail = client.get(f"/api/runs/{run['id']}").json()

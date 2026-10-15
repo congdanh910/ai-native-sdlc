@@ -330,7 +330,8 @@ def _label(cases) -> str:
 
 
 def test_cases_section(ref: FeatureRef, tests: TestPlan, criteria: list[Criterion], numbers: dict[str, str]) -> str:
-    lines = [f"## {ref.story_id}: {ref.story_title} ({ref.actors})", "", "> **Jira Story:** TBD", "",
+    heading = f"## {ref.story_id}: {ref.story_title} ({ref.actors})" if ref.story_id else f"## {ref.story_title}"
+    lines = [heading, "", "> **Jira Story:** TBD", "",
              "### Coverage Matrix", "", "| AC | Label | Integration TC(s) | E2E TC(s) |", "|---|---|---|---|"]
     for criterion in criteria:
         cases = [c for c in tests.cases if c.criterion == criterion.id]
@@ -344,7 +345,7 @@ def test_cases_section(ref: FeatureRef, tests: TestPlan, criteria: list[Criterio
     for case in tests.cases:
         given, when, then = _split_scenario(case.description, case.expected)
         lines += [f"### {numbers[case.id]}: {case.name or _cell(case.description)[:60]}", "",
-                  f"- **US**: {ref.story_id}", f"- **Given**: {given}", f"- **When**: {when}", f"- **Then**: {then}",
+                  f"- **US**: {ref.story_id or '—'}", f"- **Given**: {given}", f"- **When**: {when}", f"- **Then**: {then}",
                   f"- **AC**: {case.criterion}", f"- **Type**: {case.type}", f"- **Severity**: {case.severity}",
                   f"- **File**: `{case.target_file}`", ""]
     return "\n".join(lines).rstrip()

@@ -8,6 +8,8 @@ export function cn(...inputs: ClassValue[]) {
 export const ROLE_LABEL: Record<string, string> = {
   product_owner: "Product Owner",
   tech_lead: "Tech Lead",
+  qc: "QC",
+  architect: "Architect",
   code_owner: "Code Owner",
   platform_admin: "Platform Admin",
   business_analyst: "Business Analyst",
@@ -24,14 +26,15 @@ export const ROLE_LABEL: Record<string, string> = {
 export const ACTION_LABEL: Record<string, string> = {
   needs_clarification: "Answer the Business Analyst's questions",
   waiting_spec_approval: "Review spec.md",
-  waiting_plan_approval: "Review the plan and test plan",
+  waiting_plan_approval: "Review the plan",
+  waiting_test_approval: "Review the test cases",
   waiting_pr_approval: "Review the pull request",
   needs_human: "Decide how to continue",
   start: "Start a manual stage",
   classify: "Classify what went wrong",
 };
 
-export const ACTIVE_WORK = ["RECEIVED", "PREFLIGHT", "SPECIFYING", "PLANNING", "GROUNDING", "READY", "CODING",
+export const ACTIVE_WORK = ["RECEIVED", "PREFLIGHT", "SPECIFYING", "PLANNING", "GROUNDING", "DESIGNING_TESTS", "READY", "CODING",
   "REVIEWING", "PR_OPEN"];
 export const TERMINAL = ["COMPLETED", "CANCELLED", "FAILED", "CLOSED_UNMERGED"];
 
@@ -82,6 +85,7 @@ export function humanStatus(status: string) {
   const map: Record<string, string> = {
     WAITING_SPEC_APPROVAL: "Waiting for spec approval",
     WAITING_PLAN_APPROVAL: "Waiting for plan approval",
+    WAITING_TEST_APPROVAL: "Waiting for test approval",
     WAITING_PR_APPROVAL: "Waiting for merge",
     NEEDS_CLARIFICATION: "Waiting for answers",
     NEEDS_HUMAN: "Needs a human",
