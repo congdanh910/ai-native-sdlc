@@ -279,11 +279,9 @@ class DecisionVerdict(Body):
 
 
 def _discovery(run_id: uuid.UUID, action) -> dict:
-    """A discovery decision, then questions.md and decisions.md as they stand."""
-    def run(session, r):
-        action(session, r)
-        discovery.refresh_documents(session, r)
-    return _decide(run_id, run)
+    """A question or decision of a discovery. Each one is an event; questions.md and decisions.md get their next
+    version at the next extraction and at the baseline, not at every answer (17 deferrals made 21 versions)."""
+    return _decide(run_id, action)
 
 
 @router.post("/runs/{run_id}/questions/{question_id}/answer")

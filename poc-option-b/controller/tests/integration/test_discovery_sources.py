@@ -134,9 +134,7 @@ def test_a_round_of_questions_answers_minutes_and_extract_again(db, sample_repo)
     post(f"/api/runs/{run}/questions/{q2}/reassign", {"role": "dpo", "reason": "export of personal data"})
     assert client.post(f"/api/runs/{run}/questions/{q2}/reassign", json={"role": "cfo"}).status_code == 409
     detail = client.get(f"/api/runs/{run}").json()
-    assert [d["kind"] for d in detail["documents"]].count("decisions") >= 1
-    decisions_md = [d for d in detail["documents"] if d["kind"] == "decisions"][-1]["content"]
-    assert "| D-001 | CSV and PDF |" in decisions_md and "answer to Q-001" in decisions_md
+    assert [d["kind"] for d in detail["documents"]].count("decisions") == 1  # a new version comes with the next round
 
     post(f"/api/runs/{run}/sources/text", {"title": "Workshop 17-10", "purpose": "minutes",
                                            "text": f"- Decision: only managers export (Q-002) {items['Customers export reports']}"})
@@ -146,6 +144,8 @@ def test_a_round_of_questions_answers_minutes_and_extract_again(db, sample_repo)
     assert detail["status"] == "CLARIFYING" and "1 decision(s) from minutes to accept" in detail["reason"]
     inventory = [d for d in detail["documents"] if d["kind"] == "inventory"][-1]["inventory"]
     assert {i["name"]: i["id"] for i in inventory["items"]} == items  # ids stay across rounds
+    decisions_md = [d for d in detail["documents"] if d["kind"] == "decisions"][-1]["content"]
+    assert "| D-001 | CSV and PDF |" in decisions_md and "answer to Q-001" in decisions_md
     assert "chunks" not in inventory and inventory["decisions_applied"] == ["D-001"]
     proposed = detail["decisions"][1]
     assert (proposed["id"], proposed["basis"], proposed["status"], proposed["role"], proposed["question"]) == (

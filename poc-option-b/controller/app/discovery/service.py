@@ -227,6 +227,7 @@ def approve_baseline(session: Session, run: Run, document_id: uuid.UUID, checked
         f"{baseline.BASELINE_DIR}/sources.md": baseline.sources_md(current, config.commit_sources),
         **baseline.source_files(current, config.commit_sources),
     }
+    refresh_documents(session, run)  # questions.md and decisions.md of the thread as the baseline has them
     project = session.get(Project, run.project_id)
     document.commit_sha = coordinator.worktree_for(project, run).commit_files(
         files, f"sdlc: requirement baseline on inventory v{document.data['inventory_version']}")
