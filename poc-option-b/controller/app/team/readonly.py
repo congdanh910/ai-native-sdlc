@@ -42,7 +42,8 @@ class CliReasoningClient:
             return ["claude", "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "dontAsk",
                     "--no-session-persistence", "--setting-sources", "local", "--strict-mcp-config",
                     "--tools", ",".join(tools), "--allowedTools", *tools]
-        return ["codex", "exec", "--sandbox", "read-only", "--cd", cwd, "--ephemeral",
+        # A discovery reads its sources folder, which is not a git repository; the sandbox stays read-only.
+        return ["codex", "exec", "--sandbox", "read-only", "--cd", cwd, "--ephemeral", "--skip-git-repo-check",
                 "-c", 'approval_policy="never"', "--json", "--output-last-message", str(last_message), "-"]
 
     def run(self, endpoint: str, payload: dict, *, session_id: str) -> str:
