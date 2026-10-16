@@ -157,3 +157,15 @@ def test_an_inventory_from_before_rounds_becomes_chunks_per_source():
     assert list(chunks) == ["s1"] and chunks["s1"][0]["read"] == ["page 1"]
     again = merge_chunks([("s1", ChunkResult.model_validate(chunks["s1"][0]))], Inventory.model_validate(data))
     assert [(i.id, i.name) for i in again.items] == [("REQ-001", "Operator")] and again.gaps[0].question == "Who approves?"
+
+
+def test_the_srs_trace_check_finds_unused_and_unknown_items():
+    from controller.app.project_docs import check_srs_trace
+    baseline = {"items": [{"id": "REQ-001", "type": "feature", "name": "Reports"},
+                          {"id": "REQ-002", "type": "option", "name": "Cloud"}]}
+    table = lambda rows: "## Appendix A. Requirement traceability\n\n| REQ | Type | Name | In this SRS |\n|---|---|---|---|\n" + rows
+    assert check_srs_trace(table("| REQ-001 | feature | Reports | RE-FR-01 |\n"), baseline) == []
+    assert "not used" in check_srs_trace(table("| REQ-001 | feature | Reports | — |\n"), baseline)[0]
+    assert "not in the baseline" in check_srs_trace(table("| REQ-001 | feature | Reports | RE-US-01 |\n| REQ-009 | ? | x | 1.2 Scope |\n"),
+                                                    baseline)[0]
+    assert check_srs_trace("# SRS", baseline) == ["'Appendix A. Requirement traceability' is missing"]

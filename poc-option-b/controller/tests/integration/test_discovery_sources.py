@@ -1,6 +1,8 @@
 """A discovery run collects raw requirement sources before anything is extracted."""
 
 import io
+import json
+from pathlib import Path
 import uuid
 import zipfile
 
@@ -211,3 +213,52 @@ def detail_worktree(run: str) -> str:
     from controller.app.models import Run
     with session_scope() as session:
         return session.get(Run, uuid.UUID(run)).worktree_path
+
+
+def merged_baseline(sample_repo) -> dict:
+    """A discovery run up to its approved baseline, merged into main of the sample repo as GitHub would."""
+    import subprocess
+    run = start(sample_repo)
+    post(f"/api/runs/{run}/sources/text", {"title": "Reports", "text": "- Customers export reports\n- Admins see every report"})
+    post(f"/api/runs/{run}/extract", {})
+    drain()
+    detail = post(f"/api/runs/{run}/baseline", {"scope": "Phase 1"})
+    baseline = [d for d in detail["documents"] if d["kind"] == "baseline"][-1]
+    post(f"/api/runs/{run}/baseline/approve", {"document_id": baseline["id"],
+                                               "checked": [h["id"] for h in detail["checklist"]["human"]]})
+    drain()
+    worktree = detail_worktree(run)
+    branch = client.get(f"/api/runs/{run}").json()["branch"]
+    subprocess.run(["git", "-C", str(sample_repo), "pull", "--quiet", "--no-rebase", "--no-edit", worktree, branch],
+                   check=True, env={"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+                                    "GIT_COMMITTER_EMAIL": "t@t", "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"})
+    post(f"/api/runs/{run}/pr-decision", {"decision": "approve", "checked": [h["id"] for h in client.get(
+        f"/api/runs/{run}").json()["checklist"]["human"]]})
+    return baseline
+
+
+def test_an_srs_run_builds_on_the_merged_baseline_and_traces_every_item(db, sample_repo):
+    baseline = merged_baseline(sample_repo)
+    run = post("/api/runs", {"project": "task-board", "brief": {"title": "Reports", "from_baseline": True},
+                             "idempotency_key": str(uuid.uuid4())}, status=201)
+    drain()
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    assert detail["status"] == "WAITING_SPEC_APPROVAL", detail["reason"]
+    srs = [d for d in detail["documents"] if d["kind"] == "srs"][-1]["content"]
+    assert "## Appendix A. Requirement traceability" in srs
+    trace = {c["id"]: c for c in detail["checklist"]["controller"]}["trace"]
+    assert trace["ok"], trace
+    items = [i["id"] for i in json.loads(open(Path(sample_repo) / "requirements" / "baseline.json").read())["items"]]
+    assert items and all(f"| {i} |" in srs for i in items)
+
+
+def test_an_srs_from_baseline_needs_the_baseline_on_main(db, sample_repo):
+    post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
+    run = post("/api/runs", {"project": "task-board", "brief": {"title": "Reports", "from_baseline": True},
+                             "idempotency_key": str(uuid.uuid4())}, status=201)
+    drain()
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    assert detail["status"] == "NEEDS_HUMAN" and "merge the discovery pull request first" in detail["reason"]
+    refused = client.post("/api/runs", json={"project": "task-board", "brief": {"title": "Reports"},
+                                             "idempotency_key": str(uuid.uuid4())})
+    assert refused.status_code == 422

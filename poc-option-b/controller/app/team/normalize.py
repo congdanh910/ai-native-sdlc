@@ -204,7 +204,24 @@ def srs(data: dict) -> dict:
         if isinstance(flow, dict):
             for key in ("steps", "alternatives", "negatives"):
                 flow[key] = as_list(flow.get(key))
+    data["trace_notes"] = [n for n in as_list(data.get("trace_notes")) if isinstance(n, dict)]
+    _refs(data)
     return data
+
+
+def _refs(value) -> None:
+    """refs written as "REQ-001, REQ-004" become a list of ids, at any depth."""
+    if isinstance(value, dict):
+        if "refs" in value:
+            refs = value["refs"]
+            if isinstance(refs, str):
+                refs = re.findall(r"REQ-\d+", refs)
+            value["refs"] = [str(r).strip() for r in refs or [] if str(r).strip()]
+        for child in value.values():
+            _refs(child)
+    elif isinstance(value, list):
+        for child in value:
+            _refs(child)
 
 
 def sds(data: dict) -> dict:
@@ -267,7 +284,7 @@ SRS_ROWS = ("definitions", "roles", "entities", "relationships", "business_rules
 SDS_ROWS = ("traceability", "objects", "screens", "components", "stack", "modules", "tables", "deployment",
             "errors", "threats", "authorization", "nfr", "metrics", "conventions", "integrations")
 KEEP_LISTS = {"actors", "steps", "alternatives", "negatives", "stories", "requirements", "states", "changes",
-              "options"}
+              "options", "refs"}
 
 
 def _flatten_rows(rows) -> list:

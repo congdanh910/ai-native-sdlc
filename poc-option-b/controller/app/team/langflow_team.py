@@ -142,7 +142,7 @@ class LangflowTeam(MockTeam):
                          retries=context.policy.max_format_retries)
 
     def write_srs(self, context: RunContext) -> Srs:
-        payload = {"brief": context.intent_md, "current_srs": context.srs_md or "",
+        payload = {"brief": context.intent_md, "current_srs": context.srs_md or "", "baseline": _baseline_input(context.baseline),
                    "answers": [{"question": q, "answer": a} for q, a in context.answers],
                    "agents_md": context.agents_md, "constitution": self._constitution(context), "feedback": context.feedback}
         return self._ask("srs", payload, Srs, normalize.srs, context.session_id,
@@ -240,6 +240,17 @@ class LangflowTeam(MockTeam):
                    "feedback": context.feedback}
         return self._ask("minutes", payload, MinutesResult, lambda data: repair_minutes(data, part), context.session_id,
                          retries=context.policy.max_format_retries)
+
+def _baseline_input(baseline: dict | None) -> dict | None:
+    """What the Business Analyst needs of the baseline: items in scope with ids, what is out, decisions, deferrals."""
+    if not baseline:
+        return None
+    return {"scope": baseline.get("scope", ""),
+            "items": [{k: i.get(k, "") for k in ("id", "type", "name", "text", "parent", "phase", "status")}
+                      for i in baseline.get("items", [])],
+            "out_of_scope": [{"id": i["id"], "type": i["type"], "name": i["name"]} for i in baseline.get("out_of_scope", [])],
+            "decisions": baseline.get("decisions", []), "deferred": baseline.get("deferred", [])}
+
 
 def _describe(exc: Exception) -> str:
     if isinstance(exc, ValidationError):

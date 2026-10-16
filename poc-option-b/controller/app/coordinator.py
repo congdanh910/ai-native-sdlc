@@ -35,7 +35,7 @@ from controller.app.feature_docs import (PHASE_HEADING, FeatureRef, link_once, p
                                          tasks_header, tasks_section, tc_numbers, test_cases_header, test_cases_section,
                                          upsert_section)
 from controller.app import analysis, checklists, joblog
-from controller.app.project_docs import (SDS_PATH, SRS_PATH, Sds, Srs, check_sds_markdown, check_srs_markdown,
+from controller.app.project_docs import (SDS_PATH, SRS_PATH, Sds, Srs, check_sds_markdown, check_srs_markdown, check_srs_trace,
                                          render_sds, render_srs, sds_sync_findings, srs_features)
 from controller.app.projects.config import EffectivePolicy, effective_policy, matches_any
 from controller.app.projects.registry import mirror_for, read_snapshot
@@ -260,8 +260,14 @@ def evaluate_gate(session: Session, run: Run, gate: str | None = None) -> dict |
     if gate == "baseline":
         controller = baseline_checks(session, run)
     elif gate == "srs":
-        problems = check_srs_markdown(latest_document(session, run.id, "srs").content)
+        content = latest_document(session, run.id, "srs").content
+        problems = check_srs_markdown(content)
         controller = [checklists._result("outline", "SRS sections 1-8 are present and story ids are unique", problems)]
+        baseline = json.loads(artifact(session, run.id, "baseline") or "null")
+        if baseline:
+            controller.append(checklists._result(
+                "trace", "Every baseline item in scope is used by an FR, a story or a section, and no unknown REQ is cited",
+                check_srs_trace(content, baseline)))
     elif gate == "sds":
         srs_text = mirror_for(session.get(Project, run.project_id)).read_file(run.base_commit, SRS_PATH)
         problems = check_sds_markdown(latest_document(session, run.id, "sds").content, srs_text)
@@ -410,7 +416,8 @@ def build_context(session: Session, run: Run, *, kind: str = "", feedback: list[
                       answers=answers, story=_story_context(session, run),
                       repository=bundle.as_input(), feedback=feedback or [], session_id=f"{run.id}:{kind}",
                       run_id=str(run.id), worktree=run.worktree_path or "", base_commit=run.base_commit or "",
-                      engines=json.loads(artifact(session, run.id, "engines") or "{}"))
+                      engines=json.loads(artifact(session, run.id, "engines") or "{}"),
+                      baseline=json.loads(artifact(session, run.id, "baseline") or "null"))
 
 
 def _story_context(session: Session, run: Run) -> dict | None:
@@ -623,7 +630,18 @@ def _apply_preflight(session: Session, run: Run, execution: Execution, result: d
         to_needs_human(session, run, f"SRS.md is not on {project.default_branch} at {base[:12]}; "
                                      "merge the SRS pull request first, then resume")
         return
-    story = (latest_document(session, run.id, "intent").data or {}).get("story") if run.kind == RunKind.FEATURE else None
+    intent_data = latest_document(session, run.id, "intent").data or {}
+    if run.kind in (RunKind.SRS, RunKind.SDS) and (intent_data.get("from_baseline") or run.kind == RunKind.SDS):
+        from controller.app.discovery.baseline import BASELINE_JSON
+        raw_baseline = mirror.read_file(base, BASELINE_JSON)
+        if raw_baseline is None and intent_data.get("from_baseline"):
+            finish(session, execution, "failed", error=f"{BASELINE_JSON} is missing")
+            to_needs_human(session, run, f"{BASELINE_JSON} is not on {project.default_branch} at {base[:12]}; "
+                                         "merge the discovery pull request first, then resume")
+            return
+        if raw_baseline is not None:
+            store_artifact(session, run, "baseline", TeamRole.COORDINATOR, raw_baseline)
+    story = intent_data.get("story") if run.kind == RunKind.FEATURE else None
     if story:
         try:
             ref = resolve_feature(mirror.read_file(base, SRS_PATH) or "", mirror.list_files(base),
@@ -681,7 +699,8 @@ def _apply_project_doc(session: Session, run: Run, result: dict) -> None:
     srs_text = None
     if run.kind == RunKind.SRS:
         model = Srs.model_validate(result["srs"])
-        content, findings = render_srs(model, author="Business Analyst (AI)"), []
+        baseline = json.loads(artifact(session, run.id, "baseline") or "null")
+        content, findings = render_srs(model, author="Business Analyst (AI)", baseline=baseline), []
     else:
         model = Sds.model_validate(result["sds"])
         srs_text = mirror_for(session.get(Project, run.project_id)).read_file(run.base_commit, SRS_PATH) or ""

@@ -80,8 +80,27 @@ class MockTeam:
                              "requirements": [{"function": line[:40], "requirement": f"The system shall support: {line}"}],
                              "stories": [{"title": line[:60], "actors": [roles[0]["role"]], "goal": line[0].lower() + line[1:],
                                           "reason": "the brief asks for it"}]})
+        trace_notes = []
+        if context.baseline:  # one feature per baseline feature, its functions as requirements; the rest in prose
+            items = [i for i in context.baseline["items"] if i["type"] != "option"]
+            used_ids: set[str] = set()
+            features, used = [], set()
+            for index, feature in enumerate([i for i in items if i["type"] == "feature"] or items[:1], start=1):
+                prefix = f"F{chr(64 + index % 26 or 26)}"
+                functions = [i for i in items if i["type"] == "function" and i["parent"] == feature["name"]]
+                requirements = [{"function": f["name"][:40], "requirement": f"The system shall {f['text'] or f['name']}",
+                                 "refs": [f["id"]]} for f in functions] or [
+                    {"function": feature["name"][:40], "requirement": f"The system shall support {feature['name']}",
+                     "refs": [feature["id"]]}]
+                features.append({"name": feature["name"][:60], "prefix": prefix, "summary": feature["text"] or feature["name"],
+                                 "requirements": requirements,
+                                 "stories": [{"title": feature["name"][:60] if len(feature["name"]) >= 3 else f"Use {feature['name']}",
+                                              "actors": [roles[0]["role"]], "goal": f"use {feature['name']}",
+                                              "reason": "the baseline asks for it", "refs": [feature["id"]]}]})
+                used_ids |= {feature["id"], *(f["id"] for f in functions)}
+            trace_notes = [{"req": i["id"], "section": "1.2 Scope", "note": "mock"} for i in items if i["id"] not in used_ids]
         return Srs.model_validate({
-            "product": title, "purpose": _section(brief, "Summary") or title,
+            "product": title, "purpose": _section(brief, "Summary") or title, "trace_notes": trace_notes,
             "scope": "; ".join(f["name"] for f in features), "roles": roles,
             "assumptions": [f"Answer to '{q}': {a}" for q, a in context.answers],
             "entities": [{"name": f["name"].split()[0].capitalize(), "description": f["summary"]} for f in features],

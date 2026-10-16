@@ -30,15 +30,28 @@ class Contract(BaseModel):
 # ---------------------------------------------------------------- project brief (the SRS run's input)
 
 class ProjectBrief(Contract):
+    """The SRS run's input: a brief typed in, or the discovery baseline merged into the repository."""
     title: str = Field(min_length=3, max_length=200)
-    summary: str = Field(min_length=1)
-    users: str = Field(min_length=1)
-    features: str = Field(min_length=1)
+    summary: str = ""
+    users: str = ""
+    features: str = ""
     constraints: str = ""
     sources: str = ""
+    from_baseline: bool = False  # build on requirements/baseline.json of the default branch
+
+    @model_validator(mode="after")
+    def _filled(self) -> "ProjectBrief":
+        if not self.from_baseline and not (self.summary.strip() and self.users.strip() and self.features.strip()):
+            raise ValueError("a brief needs a summary, users and wanted features, or build on the discovery baseline")
+        return self
 
 
 def render_brief(brief: ProjectBrief) -> str:
+    if brief.from_baseline:
+        notes = "\n\n".join(f"## {h}\n\n{t.strip()}" for h, t in (("Notes", brief.summary), ("Constraints", brief.constraints))
+                            if t.strip())
+        return (f"# Project brief: {brief.title}\n\nThe SRS is built on the discovery baseline "
+                f"(requirements/baseline.json on the default branch).\n" + (f"\n{notes}\n" if notes else ""))
     sections = [("Summary", brief.summary), ("Users and roles", brief.users), ("Wanted features", brief.features),
                 ("Constraints", brief.constraints), ("Sources", brief.sources)]
     body = "\n\n".join(f"## {heading}\n\n{text.strip() or '_None._'}" for heading, text in sections)
@@ -50,12 +63,14 @@ def render_brief(brief: ProjectBrief) -> str:
 class Term(Contract):
     term: str
     meaning: str
+    refs: list[str] = []  # baseline REQ ids this element comes from (an SRS built on a discovery baseline)
 
 
 class Role(Contract):
     role: str
     description: str
     persona: str = ""
+    refs: list[str] = []  # baseline REQ ids this element comes from (an SRS built on a discovery baseline)
 
     @field_validator("role")
     @classmethod
@@ -71,6 +86,7 @@ class Entity(Contract):
     description: str
     attributes: str = ""
     lifecycle: str = ""
+    refs: list[str] = []  # baseline REQ ids this element comes from (an SRS built on a discovery baseline)
 
 
 class Relationship(Contract):
@@ -86,6 +102,7 @@ class BusinessRule(Contract):
     id: str = ""
     statement: str
     entities: str = ""
+    refs: list[str] = []  # baseline REQ ids this element comes from (an SRS built on a discovery baseline)
 
 
 class StateChange(Contract):
@@ -105,6 +122,7 @@ class Requirement(Contract):
     function: str
     requirement: str
     rules: str = ""
+    refs: list[str] = []  # baseline REQ ids this element comes from (an SRS built on a discovery baseline)
 
 
 class Story(Contract):
@@ -113,6 +131,7 @@ class Story(Contract):
     actors: list[str] = Field(min_length=1)
     goal: str
     reason: str
+    refs: list[str] = []  # baseline REQ ids this element comes from (an SRS built on a discovery baseline)
 
 
 class Feature(Contract):
@@ -135,6 +154,7 @@ class Quality(Contract):
     category: str
     metric: str
     target: str
+    refs: list[str] = []  # baseline REQ ids this element comes from (an SRS built on a discovery baseline)
 
     @field_validator("category")
     @classmethod
@@ -150,6 +170,7 @@ class Flow(Contract):
     steps: list[str] = Field(min_length=2)
     alternatives: list[str] = []
     negatives: list[str] = []
+    refs: list[str] = []  # baseline REQ ids this element comes from (an SRS built on a discovery baseline)
 
 
 class Dependency(Contract):
@@ -157,6 +178,7 @@ class Dependency(Contract):
     name: str
     purpose: str
     trigger: str = ""
+    refs: list[str] = []  # baseline REQ ids this element comes from (an SRS built on a discovery baseline)
 
     @field_validator("kind")
     @classmethod
@@ -165,6 +187,13 @@ class Dependency(Contract):
         if value not in DEPENDENCY_KINDS:
             raise ValueError(f"kind must be one of {', '.join(DEPENDENCY_KINDS)}")
         return value
+
+
+class TraceNote(Contract):
+    """A baseline item the SRS covers in prose (purpose, scope, assumptions, out of scope, experience)."""
+    req: str
+    section: str  # such as "1.2 Scope"
+    note: str = ""
 
 
 class Srs(Contract):
@@ -186,6 +215,7 @@ class Srs(Contract):
     dependencies: list[Dependency] = []
     questions: list[Question] = []
     concerns: list[str] = []
+    trace_notes: list[TraceNote] = []
 
     @model_validator(mode="after")
     def _consistent(self) -> "Srs":
@@ -259,7 +289,78 @@ def story_statement(story: Story) -> str:
     return f"{lead} {_actor_inline(story.actors)}, **I want to** {story.goal} **so that** {story.reason}."
 
 
-def render_srs(srs: Srs, *, author: str, today: date | None = None) -> str:
+TRACE_HEADING = "Appendix A. Requirement traceability"
+NOT_IN_SRS = ("option",)  # architecture options go to the SDS Options step
+
+
+def srs_trace(srs: Srs) -> dict[str, list[str]]:
+    """REQ id -> where the SRS uses it, by the ids and names the SRS shows."""
+    srs = number_srs(srs)
+    where: dict[str, list[str]] = {}
+
+    def add(refs: list[str], label: str) -> None:
+        for ref in refs:
+            where.setdefault(ref.strip(), []).append(label)
+    for term in srs.definitions:
+        add(term.refs, f"1.4 {term.term}")
+    for role in srs.roles:
+        add(role.refs, f"1.5 {role.role}")
+    for entity in srs.entities:
+        add(entity.refs, f"2 {entity.name}")
+    for rule in srs.business_rules:
+        add(rule.refs, rule.id)
+    for feature in srs.features:
+        for requirement in feature.requirements:
+            add(requirement.refs, requirement.id)
+        for story in feature.stories:
+            add(story.refs, story.id)
+    for quality in srs.qualities:
+        add(quality.refs, f"4 {quality.category}: {quality.metric}")
+    for term in srs.experience:
+        add(term.refs, f"5 {term.term}")
+    for flow in srs.flows:
+        add(flow.refs, f"6 {flow.name}")
+    for dependency in srs.dependencies:
+        add(dependency.refs, f"8 {dependency.name}")
+    for note in srs.trace_notes:
+        add([note.req], note.section + (f" ({note.note})" if note.note else ""))
+    return where
+
+
+def render_trace(srs: Srs, baseline: dict) -> list[str]:
+    where = srs_trace(srs)
+    known = {i["id"]: i for i in baseline.get("items", [])}
+    rows = [[i["id"], i["type"], i["name"], "; ".join(where.get(i["id"], [])) or "—"]
+            for i in baseline.get("items", []) if i["type"] not in NOT_IN_SRS]
+    rows += [[ref, "?", "not in the baseline", "; ".join(labels)] for ref, labels in where.items() if ref not in known]
+    return [f"## {TRACE_HEADING} <a id=\"{_slug(TRACE_HEADING)}\"></a>", "",
+            f"Built on the requirement baseline (inventory v{baseline.get('inventory_version', '?')}, requirements/baseline.json). "
+            "Every item in scope is used at least once; architecture options go to the SDS.", "",
+            *_table(["REQ", "Type", "Name", "In this SRS"], rows), ""]
+
+
+def check_srs_trace(content: str, baseline: dict) -> list[str]:
+    """Every baseline item in scope (but options) has a row with a place in the SRS; no row cites an unknown REQ."""
+    if f"## {TRACE_HEADING}" not in content:
+        return [f"'{TRACE_HEADING}' is missing"]
+    section = content.split(f"## {TRACE_HEADING}", 1)[1]
+    rows = {}
+    for line in section.splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) >= 4 and re.fullmatch(r"REQ-\d+", cells[0]):
+            rows[cells[0]] = cells
+    problems = []
+    unused = [i["id"] for i in baseline.get("items", []) if i["type"] not in NOT_IN_SRS
+              and rows.get(i["id"], ["", "", "", "—"])[3] in ("", "—")]
+    if unused:
+        problems.append(f"{len(unused)} baseline item(s) are not used by any FR, story or section: {', '.join(unused[:12])}")
+    unknown = [r for r, cells in rows.items() if cells[1] == "?"]
+    if unknown:
+        problems.append(f"the SRS cites REQ ids that are not in the baseline: {', '.join(unknown[:12])}")
+    return problems
+
+
+def render_srs(srs: Srs, *, author: str, today: date | None = None, baseline: dict | None = None) -> str:
     """Markdown in the company SRS outline. Section numbers stay fixed so other documents can cite them."""
     srs = number_srs(srs)
     today = today or date.today()
@@ -361,6 +462,8 @@ def render_srs(srs: Srs, *, author: str, today: date | None = None) -> str:
         heading(3, title)
         out += [*_table(["Name", "Purpose", "Trigger"], [[d.name, d.purpose, d.trigger]
                                                           for d in srs.dependencies if d.kind == kind]), ""]
+    if baseline:
+        out += render_trace(srs, baseline)
     return "\n".join(out).rstrip() + "\n"
 
 

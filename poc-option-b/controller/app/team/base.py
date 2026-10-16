@@ -31,6 +31,7 @@ class RunContext:
     base_commit: str = ""
     engines: dict = field(default_factory=dict)  # thinking role -> engine, experiments only
     sources_dir: str = ""  # discovery: the folder of the raw requirement files the Business Analyst reads
+    baseline: dict | None = None  # an SRS (or SDS) run built on requirements/baseline.json
 
 
 @dataclass(frozen=True)
