@@ -228,6 +228,7 @@ export interface Meta {
   team_mode: string;
   doing_mode: string;
   engines: Record<string, string>;
+  discovery_engine?: string;  // the Business Analyst of new discovery runs
   roles: string[];
   failure_categories: string[];
   failure_stages: string[];

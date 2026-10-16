@@ -74,6 +74,12 @@ function TeamCard() {
           <span className="font-mono text-ink">{roles.map((r) => engines[r] ?? "qwen3").filter((v, i, a) => a.indexOf(v) === i).join(", ")}</span>
         </div>
       ))}
+      {meta.data?.discovery_engine && meta.data.discovery_engine !== engines.business_analyst ? (
+        <div className="flex flex-col">
+          <span className="text-muted">BA in discovery</span>
+          <span className="font-mono text-ink">{meta.data.discovery_engine}</span>
+        </div>
+      ) : null}
       <div className="flex flex-col">
         <span className="text-muted">QA Engineer · Developer</span>
         <span className="font-mono text-ink">{meta.data?.doing_mode === "cli" ? "codex" : "mock"}</span>

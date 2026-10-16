@@ -9,6 +9,7 @@ import { DecisionPanel } from "../components/Decision";
 import { CoverageMatrix, GroundingSummary } from "../components/Coverage";
 import { JobLog } from "../components/JobLog";
 import { DecisionsTab, QuestionsTab } from "../components/Questions";
+import { rememberProject } from "./Runs";
 import { RequirementsTab } from "../components/Requirements";
 import { SourcesTab } from "../components/Sources";
 import { PlanSummary } from "../components/PlanSummary";
@@ -347,7 +348,9 @@ export function RunView({ id }: { id: string }) {
     : !discovery && ["sources", "requirements", "questions", "decisions"].includes(tab) ? "tasks" : tab;
   return (
     <>
-      <nav aria-label="Breadcrumb" className="text-sm text-muted"><Link href="/runs">Runs</Link> / {r.project} / <Mono>{r.id.slice(0, 8)}</Mono></nav>
+      <nav aria-label="Breadcrumb" className="text-sm text-muted">
+        <Link href="/runs" onClick={() => rememberProject("")}>Runs</Link> / <Link href="/runs" onClick={() => rememberProject(r.project)} title={`Runs of ${r.project}`}>{r.project}</Link> / <Mono>{r.id.slice(0, 8)}</Mono>
+      </nav>
       <PageHeader
         title={<span className="inline-flex flex-wrap items-center gap-3">{r.title}<StatusBadge status={r.status} human /></span>}
         subtitle={<>Project <b className="text-ink">{r.project}</b> · base <Mono>{short(r.base_commit)}</Mono> · branch <Mono>{r.branch ?? "not yet"}</Mono> · updated {ago(r.updated_at)}{r.experiment ? " · eval experiment" : ""}</>}

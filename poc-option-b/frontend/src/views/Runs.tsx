@@ -7,6 +7,11 @@ import { ago, cn, role } from "../lib/utils";
 
 const ALL = "";
 
+/** Open the Runs page filtered to one project (the breadcrumb of a run links here). */
+export function rememberProject(project: string): void {
+  try { localStorage.setItem("runsProject", project); } catch { /* private mode */ }
+}
+
 function remembered(): string {
   try { return localStorage.getItem("runsProject") ?? ALL; } catch { return ALL; }
 }
