@@ -28,7 +28,7 @@ function Reason({ value, onChange, placeholder }: { value: string; onChange: (v:
   );
 }
 
-export function DecisionPanel({ run, onDone }: { run: RunDetail; onDone: () => void }) {
+export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; onDone: () => void; onShowSources?: () => void }) {
   const need = run.waiting;
   const [reason, setReason] = useState("");
   const [editing, setEditing] = useState(false);
@@ -70,7 +70,7 @@ export function DecisionPanel({ run, onDone }: { run: RunDetail; onDone: () => v
       <Panel run={run} title={need.action === "ingesting" ? "Add the sources, then start the extraction" : "Review the requirement inventory"}>
         <p className="m-0 text-muted">
           {need.action === "ingesting"
-            ? `The Business Analyst reads every source (${sources} now) part by part and writes the requirement inventory; every item cites the page, slide or cell it comes from.`
+            ? `Add the raw requirements in the Sources tab (drag and drop, or paste text); ${sources} added so far. The Business Analyst then reads every source part by part and writes the requirement inventory; every item cites the page, slide or cell it comes from.`
             : `Inventory v${rounds} is in the Requirements tab. Answer the questions (Questions tab), add sources or minutes, then extract again: only what is new is read.`}
         </p>
         {need.action === "clarifying" ? (
@@ -83,7 +83,9 @@ export function DecisionPanel({ run, onDone }: { run: RunDetail; onDone: () => v
             {run.decisions?.some((d) => d.status === "proposed") ? <Badge tone="warn">{run.decisions.filter((d) => d.status === "proposed").length} decision(s) to accept</Badge> : null}
           </div>
         ) : null}
-        <div className="flex flex-wrap gap-2"><ActionButton variant="primary" disabled={!sources} success="Extraction started" action={() => post("extract", {})}>
+        <div className="flex flex-wrap gap-2">
+          {onShowSources ? <Button variant={sources ? "default" : "primary"} onClick={onShowSources}>{sources ? "Add more files" : "Add files"}</Button> : null}
+          <ActionButton variant={sources ? "primary" : "default"} disabled={!sources} success="Extraction started" action={() => post("extract", {})}>
           {need.action === "ingesting" ? "Start extraction" : "Extract again"}</ActionButton>
           {need.action === "clarifying" ? <ActionButton success="The Business Analyst checks the inventory again" action={() => post("extract?again=true", {})}>Check the inventory again</ActionButton> : null}</div>
         {need.action === "clarifying" ? (

@@ -331,15 +331,18 @@ export function RunView({ id }: { id: string }) {
     },
   });
   const [tab, setTab] = useState<Tab>(() => (sessionStorage.getItem("runTab") as Tab) || "tasks");
+  const [picked, setPicked] = useState(false);  // the operator chose a tab on this page
   if (run.isLoading) return <Loading />;
   if (run.error || !run.data) return <ErrorBox error={run.error} />;
   const r = run.data;
   const refresh = () => { client.invalidateQueries({ queryKey: ["run", id] }); client.invalidateQueries({ queryKey: ["inbox"] }); };
-  const select = (t: Tab) => { setTab(t); try { sessionStorage.setItem("runTab", t); } catch { /* ignore */ } };
+  const select = (t: Tab) => { setTab(t); setPicked(true); try { sessionStorage.setItem("runTab", t); } catch { /* ignore */ } };
   const spec = [...r.documents].reverse().find((d) => d.kind === "spec");
   const srs = r.kind !== "feature";  // an SRS, SDS or discovery run has no tasks, plan or code
   const discovery = r.kind === "discovery";
-  const shown: Tab = discovery && ["tasks", "plan", "diff"].includes(tab) ? "sources"
+  // A discovery waiting for its sources opens on the Sources tab, whatever tab was open before.
+  const ingesting = discovery && r.status === "INGESTING" && !(r.sources?.length) && !picked;
+  const shown: Tab = ingesting ? "sources" : discovery && ["tasks", "plan", "diff"].includes(tab) ? "sources"
     : srs && ["tasks", "plan", "diff", "sources", "requirements", "questions", "decisions"].includes(tab) ? "thread"
     : !discovery && ["sources", "requirements", "questions", "decisions"].includes(tab) ? "tasks" : tab;
   return (
@@ -364,9 +367,13 @@ export function RunView({ id }: { id: string }) {
           {r.reason}
         </div>
       ) : null}
-      <DecisionPanel key={`${r.id}:${r.version}`} run={r} onDone={refresh} />
+      <DecisionPanel key={`${r.id}:${r.version}`} run={r} onDone={refresh} onShowSources={() => {
+        select("sources");
+        document.getElementById("run-tabs")?.scrollIntoView({ behavior: "smooth" });
+      }} />
       <div className="flex flex-wrap items-start gap-5">
         <div className="flex min-w-0 flex-[999_1_620px] flex-col gap-4">
+          <div id="run-tabs" />
           <Tabs<Tab> value={shown} onChange={select} tabs={[
             ...(srs ? [] : [{ id: "tasks" as Tab, label: "Tasks", count: r.tasks.length }, { id: "plan" as Tab, label: "Plan", count: r.plans.length }]),
             ...(discovery ? [{ id: "sources" as Tab, label: "Sources", count: r.sources?.length ?? 0 },
