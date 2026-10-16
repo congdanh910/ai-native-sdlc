@@ -6,7 +6,7 @@ This repository is the **AI-Native SDLC** platform: a controller (Python + Postg
 
 ## Before starting work
 
-1. Read `docs/PROJECT.md`, `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`, `docs/PROGRESS.md`.
+1. Read `docs/PROJECT.md`, `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`, `docs/PROGRESS.md` and `docs/BACKLOG.md` (what was deferred).
 2. Read `docs/DATABASE.md` when the data model or migrations are involved.
 3. Run `git status` and `git log --oneline -15` (branch `feature/option-b-v2`, draft PR #2).
 4. Check the platform: `cd poc-option-b && ./sdlc doctor`; the control room is http://127.0.0.1:8770.
