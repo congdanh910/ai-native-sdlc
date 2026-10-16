@@ -1063,16 +1063,23 @@ def _load_extract(session: Session, run: Run, loaded: Loaded) -> Loaded:
     if previous and "chunks" not in data:
         data["chunks"] = _chunks_from(data)
     reused, parts, minutes = {}, [], []
+    engines = json.loads(artifact(session, run.id, "engines") or "{}")
+    reads_files = engines.get("business_analyst", get_settings().sdlc_default_engine) == "claude-readonly"
     for source in sources(session, run.id):
         if source.purpose == "requirements" and str(source.id) in data.get("chunks", {}):
             reused[str(source.id)] = data["chunks"][str(source.id)]
             continue
         if source.purpose == "minutes" and str(source.id) in data.get("minutes_read", []):
             continue
-        text = None
-        if source.kind not in ("pdf", "image"):
+        text, kind = None, source.kind
+        if source.kind == "pdf" and not reads_files:
+            text, kind = _pdf_text_view(source), "pdf-text"
+        elif source.kind == "image" and not reads_files:
+            raise JobAborted(f"{source.filename} is an image; only claude-readonly reads images. Remove it, or put the "
+                             "discovery's Business Analyst on claude-readonly")
+        elif source.kind not in ("pdf", "image"):
             text = Path(source.text_path or source.path).read_text(errors="replace")
-        planned = plan_parts(str(source.id), source.filename, source.kind, source.path, source.pages, text,
+        planned = plan_parts(str(source.id), source.filename, kind, source.path, source.pages, text,
                              pages_per_read=limits.pages_per_read, chars_per_read=limits.chars_per_read)
         (minutes if source.purpose == "minutes" else parts).extend(planned)
     run_questions = q.questions(session, run.id)
@@ -1095,6 +1102,22 @@ def _load_extract(session: Session, run: Run, loaded: Loaded) -> Loaded:
         run_id=str(run.id), base_commit=run.base_commit or "", engines=json.loads(artifact(session, run.id, "engines") or "{}"),
         sources_dir=str(source_dir(session.get(Project, run.project_id), run)))
     return loaded
+
+
+def _pdf_text_view(source) -> str:
+    """The PDF's text with [page N] markers, made once with pdftotext and kept next to the file."""
+    from controller.app.discovery.sources import pdf_text
+    if source.text_path and Path(source.text_path).is_file():
+        return Path(source.text_path).read_text(errors="replace")
+    settings = get_settings()
+    text = pdf_text(Path(source.path), tool=settings.pdftotext_path, timeout=settings.pdftotext_timeout_seconds)
+    if not text:
+        raise JobAborted(f"{source.filename}: no text could be read with {settings.pdftotext_path} (not installed, "
+                         "or a scanned PDF without a text layer); only claude-readonly reads such a PDF")
+    target = Path(source.path).with_name(Path(source.path).name + ".md")
+    target.write_text(text)
+    source.text_path = str(target)
+    return text
 
 
 def _chunks_from(data: dict) -> dict[str, list[dict]]:

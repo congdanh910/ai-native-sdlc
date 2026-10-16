@@ -265,3 +265,22 @@ def test_an_srs_from_baseline_needs_the_baseline_on_main(db, sample_repo):
     refused = client.post("/api/runs", json={"project": "task-board", "brief": {"title": "Reports"},
                                              "idempotency_key": str(uuid.uuid4())})
     assert refused.status_code == 422
+
+
+def test_a_codex_business_analyst_reads_pdfs_as_text(db, sample_repo, monkeypatch):
+    from controller.app import config as config_module
+    from controller.app.discovery import sources as sources_module
+    settings = config_module.get_settings().model_copy(update={"sdlc_discovery_engine": "codex-readonly"})
+    for module in ("controller.app.services", "controller.app.coordinator"):
+        monkeypatch.setattr(f"{module}.get_settings", lambda: settings)
+    monkeypatch.setattr(sources_module, "pdf_text", lambda path, tool, timeout: "[page 1] - Customers export reports\n")
+    run = start(sample_repo)
+    upload(run, "deck.pdf", PDF)
+    post(f"/api/runs/{run}/extract", {})
+    drain()
+    detail = client.get(f"/api/runs/{run}").json()
+    inventory = [d for d in detail["documents"] if d["kind"] == "inventory"][-1]["inventory"]
+    assert [p["covers"] for p in inventory["parts"]] == ["lines 1-1 of 1"]
+    item = inventory["items"][0]
+    assert (item["name"], item["sources"][0]["location"]) == ("Customers export reports", "page 1")
+    assert detail["sources"][0]["has_text"]  # the text view is kept next to the PDF

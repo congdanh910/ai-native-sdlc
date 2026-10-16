@@ -104,7 +104,12 @@ def create_run(session: Session, project: Project, intent: Intent | ProjectBrief
     session.add(run)
     session.flush()
     if not experiment:  # pinned at creation, so a later .env change never alters a run in flight
-        engines = json.dumps(get_settings().default_engines)
+        pinned = dict(get_settings().default_engines)
+        if kind == RunKind.DISCOVERY and get_settings().sdlc_discovery_engine:
+            from controller.app.team.readonly import validate_engines
+            pinned["business_analyst"] = validate_engines(
+                {"business_analyst": get_settings().sdlc_discovery_engine})["business_analyst"]
+        engines = json.dumps(pinned)
         coordinator.store_artifact(session, run, "engines", TeamRole.COORDINATOR, engines)
     render = {RunKind.SRS: render_brief, RunKind.SDS: render_architecture_brief,
               RunKind.DISCOVERY: render_request}.get(kind, render_intent)

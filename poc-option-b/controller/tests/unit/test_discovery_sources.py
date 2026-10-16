@@ -76,3 +76,12 @@ def test_bad_sources_are_refused_with_a_reason():
     with pytest.raises(SourceError, match="cannot be read as DOCX"):
         prepare("broken.docx", b"not a zip", **LIMITS)
     assert prepare("../../etc/passwd.md", b"x", **LIMITS).filename == "passwd.md"
+
+
+def test_a_pdf_text_view_marks_each_page(tmp_path):
+    from controller.app.discovery.sources import pdf_text
+    tool = tmp_path / "fake-pdftotext"
+    tool.write_text("#!/bin/sh\nprintf 'Goals\\n\\n  Faster checks\\fActors\\n'\n")
+    tool.chmod(0o755)
+    assert pdf_text(tmp_path / "x.pdf", tool=str(tool), timeout=5) == "[page 1] Goals\n[page 1]   Faster checks\n[page 2] Actors\n"
+    assert pdf_text(tmp_path / "x.pdf", tool="no-such-tool", timeout=5) is None

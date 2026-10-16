@@ -36,6 +36,27 @@ class Prepared:
     text: str | None  # Markdown with locations for docx/xlsx/pptx/text; None for pdf and images
 
 
+def pdf_text(path: Path, *, tool: str, timeout: float) -> str | None:
+    """The text of a PDF with a [page N] marker on each page's lines, for engines that cannot read a PDF themselves
+    (codex-readonly). None when the tool is not installed or fails; scanned pages without a text layer stay empty."""
+    import shutil
+    import subprocess
+    if not shutil.which(tool):
+        return None
+    try:
+        result = subprocess.run([tool, "-layout", "-enc", "UTF-8", str(path), "-"], capture_output=True, timeout=timeout)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    lines = []
+    for number, page in enumerate(result.stdout.decode("utf-8", "replace").split("\f"), start=1):
+        for line in page.splitlines():
+            if line.strip():
+                lines.append(f"[page {number}] {line.rstrip()}")
+    return "\n".join(lines) + "\n" if lines else None
+
+
 def safe_filename(name: str) -> str:
     name = Path(name.replace("\\", "/")).name.strip()
     name = SAFE_NAME.sub("_", name)[:200]

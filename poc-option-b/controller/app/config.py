@@ -83,6 +83,11 @@ class Settings(BaseSettings):
     job_log_read_bytes: int = Field(default=64_000, ge=4_000)  # one poll of a job's live log
     # Discovery: file types a source may have (the project's limits decide sizes and page counts).
     discovery_accepted_types: str = "pdf,docx,xlsx,pptx,png,jpg,jpeg,webp,md,txt,csv,eml"
+    # The Business Analyst's engine for discovery runs, when it differs from SDLC_ENGINES (empty: the same).
+    # codex-readonly reads PDFs as text made by pdftotext; it cannot read images.
+    sdlc_discovery_engine: str = ""
+    pdftotext_path: str = "pdftotext"
+    pdftotext_timeout_seconds: int = Field(default=120, ge=5)
     langflow_max_response_bytes: int = Field(default=2_000_000, ge=100_000)
 
     @field_validator("sdlc_db_port", "langflow_port", "sdlc_api_port", "ollama_tunnel_port",
