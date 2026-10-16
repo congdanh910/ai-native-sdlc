@@ -1085,7 +1085,9 @@ def _load_extract(session: Session, run: Run, loaded: Loaded) -> Loaded:
                       for x in run_questions if x.status == q.OPEN],
         "asked": [x.question for x in run_questions],
         "decisions": [{"id": q.decision_id(d), "text": d.text, "items": d.items}
-                      for d in q.decisions(session, run.id) if d.status == "accepted"]})
+                      for d in q.decisions(session, run.id) if d.status == "accepted"],
+        "effects": [{"id": q.decision_id(d), "items": d.items, "effect": d.effect, "new_text": d.new_text or ""}
+                    for d in q.decisions(session, run.id) if d.status == "accepted" and d.effect]})
     loaded.context = RunContext(
         title=run.title, policy=EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy")),
         agents_md=artifact(session, run.id, "agents_md") or "", review_md=None,
@@ -1136,7 +1138,7 @@ def _read_parts(team: Team, context: RunContext, parts: list, read, record, what
 
 def _extract(team: Team, loaded: Loaded) -> dict:
     """New sources part by part, new minutes, then one consolidation pass over the merged inventory."""
-    from controller.app.discovery.inventory import ChunkResult, Inventory, apply_consolidation, merge_chunks
+    from controller.app.discovery.inventory import ChunkResult, Inventory, Update, apply_consolidation, merge_chunks
     context, extra = loaded.context, loaded.extra
     calls: list[dict] = []
 
@@ -1177,6 +1179,12 @@ def _extract(team: Team, loaded: Loaded) -> dict:
     if inventory.items:
         consolidation = team.consolidate(context, dumped["items"], dumped["gaps"], extra["decisions"], extra["asked"])
         record()
+        # A decision with a stated effect is applied as stated, after (and over) what the model read into decisions.
+        stated = [{"id": item, "decision": e["id"], "status": e["effect"],
+                   "text": e["new_text"] if e["effect"] == "changed" else ""}
+                  for e in extra.get("effects", []) for item in e["items"]]
+        consolidation = consolidation.model_copy(
+            update={"updates": consolidation.updates + [Update.model_validate(u) for u in stated]})
         before = len(inventory.items)
         inventory = apply_consolidation(inventory, consolidation, {d["id"] for d in extra["decisions"]})
         joblog.note(f"consolidation merged {before - len(inventory.items)} item(s), "

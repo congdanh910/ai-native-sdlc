@@ -308,13 +308,16 @@ class NewDecision(Body):
     text: str = Field(min_length=1)
     items: list[str] = []
     role: str = "po"
+    effect: str = ""  # confirmed, out_of_scope or changed: applied to the items exactly
+    new_text: str = ""
 
 
 @router.post("/runs/{run_id}/decisions")
 def record_decision(run_id: uuid.UUID, body: NewDecision) -> dict:
     """A decision taken directly (for example REQ-002 out of scope); Extract again applies it to the inventory."""
     return _discovery(run_id, lambda s, r: questions.record(s, r, body.text, body.items, body.role,
-                                                            discovery.discovery_config(s, r), actor=operator()))
+                                                            discovery.discovery_config(s, r), actor=operator(),
+                                                            effect=body.effect, new_text=body.new_text))
 
 
 @router.post("/runs/{run_id}/decisions/{number}")

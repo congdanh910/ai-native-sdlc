@@ -81,7 +81,7 @@ export interface Question {
 export interface DiscoveryDecision {
   number: number; id: string; text: string; basis: "answer" | "minutes" | "direct"; question: string | null; source: string | null;
   location: string | null; items: string[]; role: string; status: "proposed" | "accepted" | "rejected";
-  proposed_by: string; decided_by: string | null; reason: string | null;
+  proposed_by: string; decided_by: string | null; reason: string | null; effect: string | null; new_text: string | null;
 }
 
 export type Waiting = { role: string; action: string; stage?: string | null } | null;

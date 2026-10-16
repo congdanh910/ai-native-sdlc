@@ -143,18 +143,28 @@ def reassign(session: Session, run: Run, question_id: uuid.UUID, role: str, conf
     question.owner_role, question.status_reason = role, reason.strip() or None
 
 
+EFFECTS = ("confirmed", "out_of_scope", "changed")
+
+
 def record(session: Session, run: Run, text: str, items: list[str], role: str, config: Discovery, *,
-           actor: str) -> Decision:
-    """A decision a role takes directly, such as putting an item out of scope; it counts at once."""
+           actor: str, effect: str = "", new_text: str = "") -> Decision:
+    """A decision a role takes directly, such as putting an item out of scope; it counts at once. With an effect,
+    the controller applies it to the items at the next extraction exactly as stated."""
     _require(run)
     if not text.strip():
         raise ValueError("write the decision first")
+    if effect and effect not in EFFECTS:
+        raise ValueError(f"effect must be one of {', '.join(EFFECTS)}")
+    if effect and not [i for i in items if i.strip()]:
+        raise ValueError("name the REQ ids the effect applies to")
+    if effect == "changed" and not new_text.strip():
+        raise ValueError("give the new requirement text of a changed item")
     if role not in {r.id for r in config.roles}:
         raise ValueError(f"{role} is not a role of discovery.roles")
     now = datetime.now(timezone.utc)
     decision = Decision(run_id=run.id, number=_next_number(session, run.id), text=text.strip(), basis="direct",
                         items=[i.strip() for i in items if i.strip()], role=role, status="accepted", proposed_by=actor,
-                        decided_by=actor, decided_at=now)
+                        decided_by=actor, decided_at=now, effect=effect or None, new_text=new_text.strip() or None)
     session.add(decision)
     session.flush()
     record_event(session, "decision.recorded", actor=actor, acting_role=role, run_id=run.id,
@@ -273,5 +283,5 @@ def as_dicts(session: Session, run_id: uuid.UUID) -> tuple[list[dict], list[dict
            "question": number(run_questions, by_id[d.question_id]) if d.question_id in by_id else None,
            "source": str(d.source_id) if d.source_id else None, "location": d.location, "items": d.items,
            "role": d.role, "status": d.status, "proposed_by": d.proposed_by, "decided_by": d.decided_by,
-           "reason": d.reason} for d in decisions(session, run_id)]
+           "reason": d.reason, "effect": d.effect, "new_text": d.new_text} for d in decisions(session, run_id)]
     return qs, ds

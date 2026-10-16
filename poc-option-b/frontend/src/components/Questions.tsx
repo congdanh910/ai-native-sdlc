@@ -124,21 +124,28 @@ function DecisionRow({ run, d, onChange }: { run: RunDetail; d: DiscoveryDecisio
 
 /** The decision log: answers to questions and decisions read from minutes, which their owner accepts or rejects. */
 function NewDecision({ run, onChange }: { run: RunDetail; onChange: () => void }) {
-  const [form, setForm] = useState({ text: "", items: "", role: run.roles?.[0]?.id ?? "po" });
+  const [form, setForm] = useState({ text: "", items: "", role: run.roles?.[0]?.id ?? "po", effect: "", new_text: "" });
   return (
     <details className="rounded-xl border border-line bg-panel p-3">
       <summary className="cursor-pointer text-sm font-semibold">Record a decision</summary>
       <div className="mt-2 flex flex-col gap-2">
-        <span className="text-xs text-muted">For example "REQ-002 is out of scope for phase 1". It counts at once; Extract again applies it to the inventory.</span>
+        <span className="text-xs text-muted">For example "REQ-002 is out of scope for phase 1". It counts at once. With an effect, Extract again applies it to the named items exactly; without one, the Business Analyst reads what it changes.</span>
         <Textarea aria-label="Decision" className="min-h-14" value={form.text} onChange={(e) => setForm({ ...form, text: e.target.value })} placeholder="What was decided" />
+        {form.effect === "changed" ? <Textarea aria-label="New requirement text" className="min-h-14" value={form.new_text} onChange={(e) => setForm({ ...form, new_text: e.target.value })} placeholder="The requirement as it now reads" /> : null}
         <div className="flex flex-wrap gap-2">
           <input aria-label="Items" className="h-9 min-w-56 flex-1 rounded-md border border-line bg-panel px-2 text-sm" value={form.items} onChange={(e) => setForm({ ...form, items: e.target.value })} placeholder="REQ ids, comma-separated" />
           <Select aria-label="Owner" className="h-9 w-auto" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
             {run.roles?.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
           </Select>
+          <Select aria-label="Effect on the items" className="h-9 w-auto" value={form.effect} onChange={(e) => setForm({ ...form, effect: e.target.value })}>
+            <option value="">Effect: let the Business Analyst read it</option>
+            <option value="confirmed">Confirm the items</option>
+            <option value="out_of_scope">Put the items out of scope</option>
+            <option value="changed">Change the item text</option>
+          </Select>
           <ActionButton variant="primary" disabled={!form.text.trim()} success="Decision recorded" action={async () => {
-            await api(`/api/runs/${run.id}/decisions`, { method: "POST", body: { text: form.text, items: form.items.split(",").map((i) => i.trim()).filter(Boolean), role: form.role } });
-            setForm({ ...form, text: "", items: "" });
+            await api(`/api/runs/${run.id}/decisions`, { method: "POST", body: { text: form.text, items: form.items.split(",").map((i) => i.trim()).filter(Boolean), role: form.role, effect: form.effect, new_text: form.new_text } });
+            setForm({ ...form, text: "", items: "", effect: "", new_text: "" });
             onChange();
           }}>Record</ActionButton>
         </div>

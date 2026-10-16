@@ -184,7 +184,10 @@ def test_the_baseline_gate_then_requirements_in_the_repository(db, sample_repo):
     assert refused.status_code == 409 and "controller checks fail" in refused.json()["detail"]
     post(f"/api/runs/{run}/baseline/reject", {"reason": "the title is not a feature"})
 
-    post(f"/api/runs/{run}/decisions", {"text": "The brief title is out of scope", "items": [items["Brief"]]})
+    bad = client.post(f"/api/runs/{run}/decisions", json={"text": "Drop it", "effect": "out_of_scope"})
+    assert "name the REQ ids" in bad.json()["detail"]
+    post(f"/api/runs/{run}/decisions", {"text": "The pasted title is not a feature", "items": [items["Brief"]],
+                                        "effect": "out_of_scope"})  # applied by the controller, whatever the model reads
     post(f"/api/runs/{run}/extract", {})
     drain()
     detail = post(f"/api/runs/{run}/baseline", {"scope": "Phase 1: reports"})

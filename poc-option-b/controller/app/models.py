@@ -272,5 +272,8 @@ class Decision(Base):
     decided_by: Mapped[str | None] = mapped_column(String(64))
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reason: Mapped[str | None] = mapped_column(Text)
+    # A decision taken directly may state what it does to its items; the controller applies it without a model.
+    effect: Mapped[str | None] = mapped_column(String(16))  # confirmed / out_of_scope / changed
+    new_text: Mapped[str | None] = mapped_column(Text)  # the requirement text when effect is changed
     created_at: Mapped[datetime] = _created()
     __table_args__ = (UniqueConstraint("run_id", "number", name="uq_decisions_run_number"),)
