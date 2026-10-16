@@ -136,7 +136,7 @@ discovery:
   approvers: {baseline: po, srs: po, options: sa, sds: ta}
   commit_sources: true         # file thô vào repo cùng baseline (tài liệu được audit trước khi tải lên)
   limits:
-    max_rounds: 5              # số vòng re-extract trước khi cần PO xác nhận tiếp tục
+    max_rounds: 10             # số vòng extract trước khi cần PO xác nhận tiếp tục
     max_questions_per_round: 30
     max_source_mb: 50
     max_pages_per_source: 300

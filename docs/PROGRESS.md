@@ -70,9 +70,9 @@ sinh phiên bản theo vòng.
   đọc PDF qua `pdftotext` (text có `[page N]`), không đọc được ảnh và PDF scan. Run discovery `9735e5fd` của người
   dùng (VMS, vòng 1 trên Claude: 145 mục) đã được ghim lại BA = codex-readonly cho các vòng sau (event
   `engines.repinned`). Codex CLI cho vai viết code (model trong `~/.codex/config.toml`).
-- Dữ liệu: đã clean slate ngày 16/10. Chỉ còn dự án `attendance` (chưa run). Ba dự án thử Discovery
-  (`discovery-trial*`, kết quả: đạo văn 67 mục, VMS 155, OCR 281) đã xoá hẳn theo yêu cầu người dùng tối 16/10;
-  để thử tiếp D3–D6 cần tạo lại một dự án thử (repo cục bộ có `.sdlc/project.yaml` với `project:` trùng key).
+- Dữ liệu: dọn lần 2 ngày 17/10 theo yêu cầu: chỉ còn dự án `attendance` (chưa có run). Dự án thử `discovery-trial`
+  và 4 run (Discovery 160d89d8 và 9735e5fd, SRS f7ca490c, SDS 9111958c) đã xoá khỏi database và `.data/`; kết quả chạy
+  thử chỉ còn ghi lại ở mục trên.
 - Test lần cuối: 211 pass (bỏ test docker, test đó pass khi chạy riêng).
 
 ## Việc treo, chờ người dùng

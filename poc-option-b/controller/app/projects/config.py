@@ -92,7 +92,7 @@ class Role(Strict):
 
 
 class DiscoveryLimits(Strict):
-    max_rounds: int = Field(default=5, ge=1, le=50)  # re-extractions before the PO confirms another round
+    max_rounds: int = Field(default=10, ge=1, le=50)  # extraction rounds before the PO confirms another round
     max_questions_per_round: int = Field(default=30, ge=1, le=200)
     max_source_mb: int = Field(default=50, ge=1, le=500)
     max_pages_per_source: int = Field(default=300, ge=1, le=5000)
