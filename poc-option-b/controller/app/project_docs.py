@@ -330,9 +330,13 @@ def srs_trace(srs: Srs) -> dict[str, list[str]]:
 def render_trace(srs: Srs, baseline: dict) -> list[str]:
     where = srs_trace(srs)
     known = {i["id"]: i for i in baseline.get("items", [])}
+    out = {i["id"]: i for i in baseline.get("out_of_scope", [])}
     rows = [[i["id"], i["type"], i["name"], "; ".join(where.get(i["id"], [])) or "—"]
             for i in baseline.get("items", []) if i["type"] not in NOT_IN_SRS]
-    rows += [[ref, "?", "not in the baseline", "; ".join(labels)] for ref, labels in where.items() if ref not in known]
+    rows += [[ref, f"{out[ref]['type']} (out of scope)", out[ref]["name"], "; ".join(labels)]
+             for ref, labels in where.items() if ref in out]
+    rows += [[ref, "?", "not in the baseline", "; ".join(labels)] for ref, labels in where.items()
+             if ref not in known and ref not in out]
     return [f"## {TRACE_HEADING} <a id=\"{_slug(TRACE_HEADING)}\"></a>", "",
             f"Built on the requirement baseline (inventory v{baseline.get('inventory_version', '?')}, requirements/baseline.json). "
             "Every item in scope is used at least once; architecture options go to the SDS.", "",

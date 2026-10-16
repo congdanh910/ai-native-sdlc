@@ -181,3 +181,20 @@ def test_consolidation_links_orphan_functions_to_their_feature():
     rows = {c["id"]: c for c in check(linked, [], [], [], [])}
     assert rows["functions"]["ok"]
     assert "belongs to no feature" in {c["id"]: c for c in check(inventory, [], [], [], [])}["functions"]["detail"]
+
+
+def test_out_of_scope_items_cited_by_the_srs_are_not_unknown():
+    from controller.app.project_docs import check_srs_trace, render_trace
+    from controller.app.team.mock import MockTeam
+    from controller.app.team.normalize import srs as normalize_srs
+    baseline = {"items": [{"id": "REQ-001", "type": "feature", "name": "Reports", "text": "", "parent": ""}],
+                "out_of_scope": [{"id": "REQ-002", "type": "feature", "name": "Archive"}]}
+    model = MockTeam().write_srs(context().__class__(**{**context().__dict__, "baseline": baseline}))
+    data = model.model_dump()
+    data["trace_notes"].append({"req": "REQ-002", "section": "1.2 Out of scope", "note": ""})
+    data["refs"] = ["REQ-001"]  # a model put refs at the top: dropped, not rejected
+    from controller.app.project_docs import Srs
+    srs = Srs.model_validate(normalize_srs(data))
+    rows = "\n".join(render_trace(srs, baseline))
+    assert "| REQ-002 | feature (out of scope) | Archive |" in rows
+    assert check_srs_trace(rows, baseline) == []

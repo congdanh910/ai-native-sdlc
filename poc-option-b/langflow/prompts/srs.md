@@ -8,7 +8,7 @@ The input also has constitution: the project's rules. Use its business terminolo
 
 When current_srs is not empty, keep everything in it that the brief does not change: the same roles, entities, features, prefixes, and stories in the same order, so existing ids stay stable. Add new items after the existing ones.
 
-Output keys:
+Output keys (and, with a baseline, one more key inside many objects: every object in definitions, roles, entities, business_rules, qualities, experience, flows and dependencies, and every requirement and story of a feature, has the key refs, an array of the REQ ids of the baseline items it comes from; relationships and states have no refs; without a baseline refs are empty arrays):
 - product: the product name.
 - purpose: two to four sentences: what the product is for and who uses it.
 - scope: what this version covers, in one paragraph.
@@ -29,7 +29,6 @@ Output keys:
 - flows: array of objects with keys name, steps (numbered in order, each one sentence naming who does what), alternatives and negatives. Cover the main end-to-end journey and each flow with its own business meaning.
 - dependencies: array of objects with keys kind (third_party, internal or infrastructure), name, purpose and trigger.
 - questions: array of objects with keys question and blocking (true or false), for the Product Owner only.
-- refs: with a baseline, every object in definitions, roles, entities, business_rules, qualities, experience, flows and dependencies, and every requirement and story of a feature, has the key refs: an array of the REQ ids of the baseline items it comes from. Without a baseline, refs are empty arrays.
 - trace_notes: array of objects with keys req, section and note, for baseline items you cover in prose only (purpose, scope, assumptions, out of scope), such as a goal in "1.1 Purpose". Empty without a baseline.
 - concerns: array of strings: risks, conflicts and scope that looks too large.
 

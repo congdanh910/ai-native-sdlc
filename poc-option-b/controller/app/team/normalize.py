@@ -205,6 +205,17 @@ def srs(data: dict) -> dict:
             for key in ("steps", "alternatives", "negatives"):
                 flow[key] = as_list(flow.get(key))
     data["trace_notes"] = [n for n in as_list(data.get("trace_notes")) if isinstance(n, dict)]
+    data.pop("refs", None)  # refs belong to the elements, not to the document
+    for rel in data.get("relationships", []):
+        if isinstance(rel, dict):
+            rel.pop("refs", None)
+    for states in data.get("states", []):
+        if isinstance(states, dict):
+            states.pop("refs", None)
+            for key in ("states", "changes"):
+                for row in states.get(key) or []:
+                    if isinstance(row, dict) and key == "changes":
+                        row.pop("refs", None)
     _refs(data)
     return data
 
