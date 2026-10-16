@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Check, FileCode2, GitCommit, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, FileCode2, GitCommit, X } from "lucide-react";
 import { api, projectDoc, type Doc, type PlanVersion, type RunDetail, type RunEvent, type Step } from "../lib/api";
 import { ACTIVE_WORK, TERMINAL, ago, cn, duration, role, short, when, parseCriteria } from "../lib/utils";
 import { Pipeline } from "../components/Pipeline";
@@ -13,7 +13,7 @@ import { rememberProject } from "./Runs";
 import { RequirementsTab } from "../components/Requirements";
 import { SourcesTab } from "../components/Sources";
 import { PlanSummary } from "../components/PlanSummary";
-import { ActionButton, Badge, Card, Empty, ErrorBox, Loading, Markdown, Mono, PageHeader, Select, StatusBadge, Tabs } from "../components/ui";
+import { ActionButton, Badge, Button, Card, Empty, ErrorBox, Loading, Markdown, Mono, PageHeader, Select, StatusBadge, Tabs } from "../components/ui";
 
 type Tab = "sources" | "requirements" | "questions" | "decisions" | "tasks" | "plan" | "thread" | "diff" | "events" | "work";
 
@@ -161,14 +161,42 @@ function ThreadTab({ run }: { run: RunDetail }) {
   const kinds = doc ? ["intent", doc.kind, "report"] : run.kind === "discovery" ? ["intent", "inventory", "questions", "decisions", "baseline", "report"]
     : ["intent", "spec", "tests", "analysis", "review", "report"];
   const name = (kind: string) => (doc && kind === doc.kind ? doc.name : (doc || run.kind === "discovery") && kind === "intent" ? "brief.md" : kind === "tests" ? "test_cases.md" : `${kind}.md`);
+  // A finished run opens with every document folded to its title; an active one with them open.
+  const [closed, setClosed] = useState<Set<string>>(() => new Set(TERMINAL.includes(run.status) ? kinds : []));
+  const toggle = (kind: string) => setClosed((now) => {
+    const next = new Set(now);
+    if (next.has(kind)) next.delete(kind); else next.add(kind);
+    return next;
+  });
+  const present = kinds.filter((k) => run.documents.some((d) => d.kind === k));
+  const allClosed = present.every((k) => closed.has(k));
   return (
     <div className="flex flex-col gap-3">
-      {kinds.map((kind) => (
-        <Card key={kind} className="p-5">
-          <h3 className="mt-0 mb-3 flex items-center gap-2 text-base font-semibold"><FileCode2 className="size-4 text-muted" aria-hidden />{name(kind)}</h3>
-          <VersionPicker items={run.documents.filter((d) => d.kind === kind)}>{(doc) => <DocBody doc={doc} />}</VersionPicker>
-        </Card>
-      ))}
+      {present.length > 1 ? (
+        <div className="flex justify-end">
+          <Button className="h-8 px-2 text-xs" onClick={() => setClosed(new Set(allClosed ? [] : kinds))}>
+            {allClosed ? <ChevronsUpDown className="size-3.5" aria-hidden /> : <ChevronsDownUp className="size-3.5" aria-hidden />}{allClosed ? "Expand all" : "Collapse all"}
+          </Button>
+        </div>
+      ) : null}
+      {kinds.map((kind) => {
+        const versions = run.documents.filter((d) => d.kind === kind);
+        const latest = versions[versions.length - 1];
+        const isClosed = closed.has(kind) && versions.length > 0;
+        return (
+          <Card key={kind} className="p-5">
+            <h3 className={cn("mt-0 flex items-center gap-2 text-base font-semibold", isClosed ? "mb-0" : "mb-3")}>
+              <button type="button" className="flex min-w-0 flex-1 items-center gap-2 text-left" aria-expanded={!isClosed} disabled={!versions.length}
+                onClick={() => toggle(kind)}>
+                {versions.length ? (isClosed ? <ChevronRight className="size-4 text-muted" aria-hidden /> : <ChevronDown className="size-4 text-muted" aria-hidden />) : null}
+                <FileCode2 className="size-4 text-muted" aria-hidden />{name(kind)}
+                {latest ? <span className="text-xs font-normal text-muted">v{latest.version}{versions.length > 1 ? ` · ${versions.length} versions` : ""} · {latest.content.split("\n").length} lines</span> : null}
+              </button>
+            </h3>
+            {isClosed ? null : <VersionPicker items={versions}>{(d) => <DocBody doc={d} />}</VersionPicker>}
+          </Card>
+        );
+      })}
     </div>
   );
 }
