@@ -14,7 +14,7 @@ https://claude.ai/code/artifact/770112ad-5c83-4811-90cc-30845b1619c4 (cột Tr�
 | D3 Questions, Decisions, Re-extract | Chờ người dùng duyệt | xem dưới |
 | D4 Baseline + PR `requirements/` | Chờ người dùng duyệt | 2f83992 |
 | D5 SRS từ baseline + phụ lục truy vết | Chờ người dùng duyệt | fd22a94 |
-| D6 Options + SDS (SA chọn phương án) | Chờ người dùng duyệt | xem dưới |
+| D6 Options + SDS (SA chọn phương án) | Chờ người dùng duyệt | 578a4f1 + sửa sau chạy thật |
 
 ### D3: đã làm
 
@@ -46,10 +46,22 @@ https://claude.ai/code/artifact/770112ad-5c83-4811-90cc-30845b1619c4 (cột Tr�
   (`options.md`, prompt `langflow/prompts/options.md`), Solution Architect chọn kèm lý do hoặc yêu cầu so sánh lại;
   SDS §9 mục "Architecture Option" ghi phương án và lý do, cổng SDS kiểm điều đó.
 
-### Còn lại
+### Chạy thật cả luồng (16/10 tối, dự án `discovery-trial`, file đạo văn 11 trang)
 
-- Chạy thật một vòng trên file đạo văn: Discovery → câu hỏi/quyết định → baseline → PR → SRS từ baseline → Options →
-  SDS (đang làm, xem mục Bước tiếp theo).
+Repo thử cục bộ `poc-option-b/.data/demo-repos/discovery-trial` (merge "PR" bằng `git pull` từ worktree của run,
+thay cho GitHub). Ở các cổng, Claude đóng vai người duyệt chỉ để đi tiếp, mọi chỗ đều gắn nhãn THỬ NGHIỆM:
+mọi câu hỏi được hoãn (không bịa câu trả lời); quyết định D-002 đưa REQ-016, REQ-019 ra ngoài phạm vi; chọn PA1.
+
+| Run | Bước | Kết quả |
+|---|---|---|
+| 160d89d8 | Discovery | 88 mục, 17 câu hỏi theo vai, 4 vòng (đọc PDF 1 lần; các vòng sau chỉ consolidate), baseline commit `requirements/` kèm PDF |
+| f7ca490c | SRS từ baseline | SRS 57 KB, Appendix A truy vết đủ mọi REQ trong phạm vi; cổng SRS đạt |
+| 9111958c | SDS + Options | 3 phương án (Cloud / On-premise / Hybrid) đối chiếu NFR; SDS §9.1 ghi PA1 và lý do; **chờ người dùng ở cổng SDS** |
+
+Sửa sau chạy thật (đều chung cho mọi dự án): gắn function "mồ côi" vào feature (`links`); mục NFR không có số thành
+cảnh báo của BA thay vì chặn; nút "Check the inventory again"; quyết định trực tiếp có tác động rõ (controller áp,
+không qua AI); mục ngoài phạm vi trong truy vết SRS; `refs` chỉ nằm trong phần tử; questions.md/decisions.md chỉ
+sinh phiên bản theo vòng.
 
 ## Trạng thái nền tảng
 
@@ -58,7 +70,7 @@ https://claude.ai/code/artifact/770112ad-5c83-4811-90cc-30845b1619c4 (cột Tr�
 - Dữ liệu: đã clean slate ngày 16/10. Chỉ còn dự án `attendance` (chưa run). Ba dự án thử Discovery
   (`discovery-trial*`, kết quả: đạo văn 67 mục, VMS 155, OCR 281) đã xoá hẳn theo yêu cầu người dùng tối 16/10;
   để thử tiếp D3–D6 cần tạo lại một dự án thử (repo cục bộ có `.sdlc/project.yaml` với `project:` trùng key).
-- Test lần cuối: 207 pass (bỏ test docker, test đó pass khi chạy riêng).
+- Test lần cuối: 209 pass (bỏ test docker, test đó pass khi chạy riêng).
 
 ## Việc treo, chờ người dùng
 
@@ -77,5 +89,6 @@ https://claude.ai/code/artifact/770112ad-5c83-4811-90cc-30845b1619c4 (cột Tr�
 
 ## Bước tiếp theo
 
-Chạy thử thật cả luồng trên một dự án thử cục bộ mới với file đạo văn, dừng ở các cổng cho người dùng xem; người
-dùng kiểm tra một lần toàn bộ D1–D6 (đã thống nhất 16/10).
+Người dùng kiểm tra một lần D1–D6 (tracker) và các run thử ở trên trong control room; sau đó: sửa theo góp ý, rồi
+(khi người dùng đồng ý) chạy lại bước Extract trên hai file VMS và OCR để kiểm tính chung. Dự án `discovery-trial`
+giữ lại cho tới khi người dùng xem xong.
