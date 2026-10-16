@@ -16,6 +16,8 @@ from controller.app import capacity, joblog
 from controller.app.config import Settings
 from controller.app.integrations.langflow import (InvalidModelOutput, LangflowClient, client_from_settings,
                                                   extract_json, role_prompt)
+from controller.app.discovery.extract import Part, compact_items, repair_chunk, repair_consolidation
+from controller.app.discovery.inventory import ChunkResult, Consolidation
 from controller.app.project_docs import Sds, Srs, srs_features
 from controller.app.projects.config import matches_any
 from controller.app.schemas import NOTES_HEADING, Intent, PlanPayload, Review, Spec, TestPlan, parse_criteria
@@ -205,6 +207,26 @@ class LangflowTeam(MockTeam):
                    "diff": diff, "validation": validation or "coding was simulated; no validation ran",
                    "agents_md": context.agents_md, "constitution": self._constitution(context), "review_md": context.review_md}
         return self._ask("review", payload, Review, normalize.review, context.session_id,
+                         retries=context.policy.max_format_retries)
+
+    # ------------------------------------------------------------ discovery
+
+    reads_files = False  # Qwen3 through Langflow cannot open a PDF or an image
+
+    def extract_part(self, context: RunContext, part: Part) -> ChunkResult:
+        if part.file and not self.reads_files:
+            raise ValueError(f"{self.engine} cannot read {part.kind.upper()} sources such as {part.filename}; "
+                             "put the business_analyst on claude-readonly (SDLC_ENGINES)")
+        payload = {**part.as_input(), "request": context.intent_md, "known": context.repository.get("known", {}),
+                   "agents_md": context.agents_md, "feedback": context.feedback}
+        return self._ask("extract", payload, ChunkResult, lambda data: repair_chunk(data, part), context.session_id,
+                         retries=context.policy.max_format_retries)
+
+    def consolidate(self, context: RunContext, items: list[dict], gaps: list[dict]) -> Consolidation:
+        payload = {"request": context.intent_md, "items": compact_items(items),
+                   "gaps": [{"kind": g["kind"], "question": g["question"]} for g in gaps],
+                   "agents_md": context.agents_md, "feedback": context.feedback}
+        return self._ask("consolidate", payload, Consolidation, repair_consolidation, context.session_id,
                          retries=context.policy.max_format_retries)
 
 

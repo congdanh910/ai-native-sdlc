@@ -59,6 +59,7 @@ KINDS: dict[str, tuple[TeamRole, bool, RunStatus]] = {
     "code_task": (TeamRole.DEVELOPER, True, RunStatus.CODING),
     "review": (TeamRole.CODE_REVIEWER, False, RunStatus.REVIEWING),
     "release": (TeamRole.RELEASE_ENGINEER, True, RunStatus.PR_OPEN),
+    "extract": (TeamRole.BUSINESS_ANALYST, False, RunStatus.EXTRACTING),
 }
 
 
@@ -421,6 +422,8 @@ def load(session: Session, execution: Execution) -> Loaded:
     loaded = Loaded(execution.id, execution.kind, run.id, run.version)
     if execution.kind in ("preflight", "ground", "release"):
         return loaded
+    if execution.kind == "extract":
+        return _load_extract(session, run, loaded)
     plan = latest_plan(session, run.id)
     feedback: list[str] = []
     if (execution.kind == "plan" and plan and plan.author_kind == "ai" and plan.regenerated_from is None
@@ -476,6 +479,8 @@ def compute(team: Team, loaded: Loaded) -> dict:
              "code_task": "QA Engineer, Validation Gate and Developer work on the task"}
     if loaded.kind in doing:
         joblog.note(doing[loaded.kind])
+    if loaded.kind == "extract":
+        return _extract(team, loaded)
     if loaded.kind == "specify" and loaded.extra.get("run_kind") == RunKind.SRS:
         result = {"srs": team.write_srs(context).model_dump()}
         record()
@@ -583,7 +588,7 @@ def apply(session: Session, loaded: Loaded, result: dict, team: Team) -> None:
         execution.prompt_version = ",".join(sorted({c["prompt_version"] for c in calls if c["prompt_version"]}))
     handler = {"preflight": _apply_preflight, "specify": _apply_specify, "plan": _apply_plan,
                "ground": _apply_ground, "design_tests": _apply_design_tests, "code_task": _apply_code_task, "review": _apply_review,
-               "release": _apply_release}[loaded.kind]
+               "release": _apply_release, "extract": _apply_extract}[loaded.kind]
     handler(session, run, execution, result, team)
     if execution.status == "running":
         finish(session, execution, "succeeded", result=result)
@@ -974,3 +979,88 @@ def poll_pull_requests(session: Session) -> None:
             pull.review_status = "closed"
             transition_run(session, run, RunStatus.CLOSED_UNMERGED, actor="github", acting_role="code_owner",
                            reason=f"PR #{pull.number} closed without merge")
+
+
+# ---------------------------------------------------------------- discovery: extraction
+
+def _load_extract(session: Session, run: Run, loaded: Loaded) -> Loaded:
+    """The parts the Business Analyst reads, in upload order, and the context of a discovery call."""
+    from controller.app.discovery.extract import plan_parts
+    from controller.app.discovery.service import discovery_config, source_dir, sources
+    limits = discovery_config(session, run).limits
+    parts = []
+    for source in sources(session, run.id):
+        text = None
+        if source.kind not in ("pdf", "image"):
+            text = Path(source.text_path or source.path).read_text(errors="replace")
+        parts += plan_parts(str(source.id), source.filename, source.kind, source.path, source.pages, text,
+                            pages_per_read=limits.pages_per_read, chars_per_read=limits.chars_per_read)
+    loaded.extra.update({"parts": parts, "run_kind": run.kind})
+    loaded.context = RunContext(
+        title=run.title, policy=EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy")),
+        agents_md=artifact(session, run.id, "agents_md") or "", review_md=None,
+        intent_md=latest_document(session, run.id, "intent").content, files=[], session_id=f"{run.id}:extract",
+        run_id=str(run.id), base_commit=run.base_commit or "", engines=json.loads(artifact(session, run.id, "engines") or "{}"),
+        sources_dir=str(source_dir(session.get(Project, run.project_id), run)))
+    return loaded
+
+
+def _extract(team: Team, loaded: Loaded) -> dict:
+    """Every part in turn, then one consolidation pass over the merged inventory."""
+    from controller.app.discovery.inventory import apply_consolidation, merge_chunks
+    context, parts = loaded.context, loaded.extra["parts"]
+    calls: list[dict] = []
+
+    def record() -> None:
+        call = getattr(team, "last_call", None)
+        if call:
+            calls.append({"engine": call.engine, "prompt_version": call.prompt_version, "attempts": call.attempts,
+                          "usage": call.usage})
+
+    chunks, known = [], {}
+    for index, part in enumerate(parts, start=1):
+        joblog.note(f"Business Analyst reads {part.filename}, {part.label} (part {index} of {len(parts)})")
+        part_context = dataclasses.replace(context, repository={"known": known}, session_id=f"{context.session_id}:{index}")
+        chunk = team.extract_part(part_context, part)
+        record()
+        joblog.note(f"  {len(chunk.items)} item(s), {len(chunk.gaps)} question(s)")
+        chunks.append((part.source_id, chunk))
+        for item in chunk.items:  # later parts reuse the names of earlier ones
+            if item.type in ("actor", "feature", "term", "data") and item.name not in known.setdefault(item.type, []):
+                known[item.type].append(item.name)
+    inventory = merge_chunks(chunks)
+    joblog.note(f"merged {sum(len(c.items) for _, c in chunks)} item(s) into {len(inventory.items)}; "
+                "the Business Analyst consolidates")
+    if inventory.items:
+        dumped = inventory.model_dump()
+        consolidation = team.consolidate(context, dumped["items"], dumped["gaps"])
+        record()
+        before = len(inventory.items)
+        inventory = apply_consolidation(inventory, consolidation)
+        joblog.note(f"consolidation merged {before - len(inventory.items)} item(s), "
+                    f"{len(inventory.gaps)} question(s) in total")
+    return {"inventory": inventory.model_dump(), "parts": [{"source": p.source_id, "covers": p.label} for p in parts],
+            "_calls": calls, "_engine": ",".join(sorted({c["engine"] for c in calls})) or None}
+
+
+def _apply_extract(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    from controller.app.discovery.inventory import Inventory, check, render
+    from controller.app.discovery.service import sources
+    inventory = Inventory.model_validate(result["inventory"])
+    current = sources(session, run.id)
+    names = {str(s.id): s.filename for s in current}
+    problems = check(inventory, set(names))
+    coarse = sum(1 for item in inventory.items
+                 if all(c.location.startswith(("pages ", "lines ", "the whole")) for c in item.sources))
+    content = render(run.title.removeprefix("Discovery: "), inventory, names)
+    document = add_document(session, run.id, "inventory", content, author_kind="ai",
+                            author=TeamRole.BUSINESS_ANALYST.value,
+                            data={**inventory.model_dump(), "problems": problems, "coarse_citations": coarse,
+                                  "parts": result["parts"], "sources": names})
+    document.commit_sha = commit_thread(session, run, "inventory", content,
+                                        f"sdlc: requirement inventory v{document.version}")
+    detail = f"{len(inventory.items)} item(s), {len(inventory.gaps)} question(s)"
+    if problems:
+        detail += f"; {len(problems)} problem(s) to review"
+    transition_run(session, run, RunStatus.CLARIFYING, actor=TeamRole.BUSINESS_ANALYST.value,
+                   reason=f"requirement inventory v{document.version}: {detail}")

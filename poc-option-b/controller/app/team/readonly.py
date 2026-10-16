@@ -22,7 +22,8 @@ from controller.app.team.langflow_team import LangflowTeam
 
 ENGINES = ("qwen3", "claude-readonly", "codex-readonly")
 THINKING_ROLES = ("business_analyst", "tech_lead", "qa_analyst", "code_reviewer")
-READONLY_NOTE = ("You may read the repository in the current directory to check file names, functions and tests. "
+READONLY_NOTE = ("You may read the files in the current directory: the repository, to check file names, functions and "
+                 "tests, or in discovery the raw requirement source the input names. "
                  "Do not change, create or run anything. The input JSON follows.")
 
 
@@ -130,6 +131,20 @@ class ReadonlyTeam(LangflowTeam):
         self._in(context)
         return super().review(context, plan, tests, diff=diff, validation=validation)
 
+    @property
+    def reads_files(self) -> bool:  # Claude Code's Read tool opens PDFs (20 pages a call) and images
+        return self.engine == "claude-readonly"
+
+    def extract_part(self, context, part):
+        self._in(context)
+        self.client.cwd = context.sources_dir or None  # the raw files, never the repository
+        return super().extract_part(context, part)
+
+    def consolidate(self, context, items, gaps):
+        self._in(context)
+        self.client.cwd = None  # the inventory is in the input; nothing to read
+        return super().consolidate(context, items, gaps)
+
 
 class RoutingTeam:
     """Picks the engine of each thinking role from the run (pinned at creation); everything else goes to the base."""
@@ -182,6 +197,12 @@ class RoutingTeam:
     def review(self, context, plan, tests, diff="", validation=""):
         return self._call(self._for(context, "code_reviewer"), "review", context, plan, tests, diff=diff,
                           validation=validation)
+
+    def extract_part(self, context, part):
+        return self._call(self._for(context, "business_analyst"), "extract_part", context, part)
+
+    def consolidate(self, context, items, gaps):
+        return self._call(self._for(context, "business_analyst"), "consolidate", context, items, gaps)
 
     def __getattr__(self, name):  # doing roles and anything else
         return getattr(self.base, name)

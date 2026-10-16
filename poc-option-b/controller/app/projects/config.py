@@ -97,6 +97,7 @@ class DiscoveryLimits(Strict):
     max_source_mb: int = Field(default=50, ge=1, le=500)
     max_pages_per_source: int = Field(default=300, ge=1, le=5000)
     pages_per_read: int = Field(default=20, ge=1, le=20)  # Claude Code reads at most 20 PDF pages per call
+    chars_per_read: int = Field(default=30_000, ge=2_000, le=200_000)  # text view sent in one Business Analyst call
 
 
 DEFAULT_ROLES = (("po", "Product Owner"), ("ba", "Business Analyst"), ("sa", "Solution Architect"),

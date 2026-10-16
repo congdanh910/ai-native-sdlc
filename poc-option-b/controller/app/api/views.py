@@ -47,6 +47,7 @@ def _document(document: Document) -> dict:
             "author_kind": document.author_kind, "author": document.author, "content": document.content,
             "repo_path": document.repo_path, "commit_sha": document.commit_sha,
             "findings": (document.data or {}).get("sync_findings", []),
+            **({"inventory": document.data} if document.kind == "inventory" else {}),
             "created_at": document.created_at.isoformat()}
 
 

@@ -8,8 +8,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from controller.app.config import DATA_DIR, get_settings
+from controller.app.documents import latest_document
 from controller.app.discovery.sources import SourceError, prepare
 from controller.app.events import record_event
+from controller.app.state_machine import transition_run
 from controller.app.models import Artifact, Project, Run, Source
 from controller.app.projects.config import Discovery, parse_project_config
 from controller.app.states import RunKind, RunStatus
@@ -110,3 +112,21 @@ def sources(session: Session, run_id: uuid.UUID, *, include_removed: bool = Fals
     if not include_removed:
         query = query.where(Source.removed.is_(False))
     return list(session.scalars(query))
+
+
+def start_extraction(session: Session, run: Run, *, actor: str) -> None:
+    """The Business Analyst reads every source and writes the next version of the requirement inventory.
+    From CLARIFYING this is a re-extraction; the project's discovery.limits.max_rounds caps the rounds."""
+    from controller.app import coordinator
+    _require_open(run)
+    if not sources(session, run.id):
+        raise ValueError("add at least one source first")
+    latest = latest_document(session, run.id, "inventory")
+    rounds = latest.version if latest else 0
+    limit = discovery_config(session, run).limits.max_rounds
+    if rounds >= limit:
+        raise ValueError(f"the discovery already had {rounds} extraction round(s), the project's limit "
+                         "(discovery.limits.max_rounds); raise it in .sdlc/project.yaml to continue")
+    transition_run(session, run, RunStatus.EXTRACTING, actor=actor, acting_role="product_owner",
+                   reason=f"extraction round {rounds + 1} of at most {limit}")
+    coordinator.queue(session, run, "extract")

@@ -30,6 +30,7 @@ class RunContext:
     worktree: str = ""  # the run's git worktree, where the doing roles work
     base_commit: str = ""
     engines: dict = field(default_factory=dict)  # thinking role -> engine, experiments only
+    sources_dir: str = ""  # discovery: the folder of the raw requirement files the Business Analyst reads
 
 
 @dataclass(frozen=True)
@@ -89,3 +90,5 @@ class Team(Protocol):
     def review(self, context: RunContext, plan: PlanPayload, tests: TestPlan, diff: str = "",
                validation: str = "") -> Review: ...
     def open_pull_request(self, context: RunContext, branch: str) -> ReleaseResult: ...
+    def extract_part(self, context: RunContext, part) -> "ChunkResult": ...
+    def consolidate(self, context: RunContext, items: list[dict], gaps: list[dict]) -> "Consolidation": ...

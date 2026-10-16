@@ -138,9 +138,13 @@ discovery:
     max_questions_per_round: 30
     max_source_mb: 50
     max_pages_per_source: 300
+    pages_per_read: 20         # số trang PDF trong một lần BA đọc (Claude Code đọc tối đa 20)
+    chars_per_read: 30000      # số ký tự văn bản (DOCX, XLSX, PPTX, MD) gửi trong một lần BA đọc
 ```
 
-Nền tảng (`.env`): loại file nhận (`DISCOVERY_ACCEPTED_TYPES`), engine của BA và Architect cho discovery (theo `SDLC_ENGINES` như các vai khác), số trang đọc trong một lần gọi.
+Thời gian tối đa của một lần BA đọc là `limits.thinking_timeout_minutes` của dự án (mặc định 10 phút); slide dày có thể cần tăng.
+
+Nền tảng (`.env`): loại file nhận (`DISCOVERY_ACCEPTED_TYPES`), engine của BA và Architect cho discovery (theo `SDLC_ENGINES` như các vai khác). PDF và ảnh chỉ đọc được khi BA chạy trên `claude-readonly`; `codex-readonly` và Qwen chỉ đọc nguồn có văn bản.
 
 ## 8. Đọc nguồn
 

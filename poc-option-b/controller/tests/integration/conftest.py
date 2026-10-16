@@ -28,6 +28,8 @@ def db(database, tmp_path, monkeypatch):
     data = tmp_path / "data"
     monkeypatch.setattr(registry, "DATA_DIR", data)
     monkeypatch.setattr(coordinator, "DATA_DIR", data)
+    from controller.app import joblog
     from controller.app.discovery import service as discovery_service
     monkeypatch.setattr(discovery_service, "DATA_DIR", data)
+    monkeypatch.setattr(joblog, "DATA_DIR", data)  # job logs of tests never land in the platform's .data/logs
     return database

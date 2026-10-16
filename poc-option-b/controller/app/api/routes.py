@@ -255,6 +255,12 @@ def paste_source(run_id: uuid.UUID, body: TextSource) -> dict:
     return _decide(run_id, lambda s, r: discovery.add_text_source(s, r, body.title, body.text, actor=operator()))
 
 
+@router.post("/runs/{run_id}/extract")
+def extract(run_id: uuid.UUID) -> dict:
+    """The Business Analyst reads the sources and writes the requirement inventory (again, from CLARIFYING)."""
+    return _decide(run_id, lambda s, r: discovery.start_extraction(s, r, actor=operator()))
+
+
 @router.post("/runs/{run_id}/sources/{source_id}/remove")
 def remove_source(run_id: uuid.UUID, source_id: uuid.UUID, body: Reason) -> dict:
     return _decide(run_id, lambda s, r: discovery.remove_source(s, r, source_id, actor=operator(), reason=body.reason))

@@ -364,7 +364,10 @@ def resume(session: Session, run: Run, *, actor: str, decision: str, reason: str
     target = RunStatus(run.resume_status or RunStatus.PREFLIGHT)
     kinds = {RunStatus.PREFLIGHT: "preflight", RunStatus.SPECIFYING: "specify", RunStatus.PLANNING: "plan",
              RunStatus.DESIGNING_TESTS: "design_tests",
-             RunStatus.REVIEWING: "review", RunStatus.PR_OPEN: "release"}
+             RunStatus.REVIEWING: "review", RunStatus.PR_OPEN: "release", RunStatus.EXTRACTING: "extract"}
+    if target == RunStatus.INGESTING:  # a discovery waiting for sources has no job to queue
+        transition_run(session, run, target, actor=actor, acting_role=TL, reason=reason)
+        return
     if target == RunStatus.GROUNDING:
         target = RunStatus.PLANNING
     if target in (RunStatus.CODING, RunStatus.READY):

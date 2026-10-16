@@ -59,7 +59,7 @@ def run_once(team: Team, worker_id: str = WORKER_ID) -> bool:
             return False
         coordinator.on_claim(session, execution)
         execution_id, kind, run_id = execution.id, execution.kind, execution.run_id
-        joblog.start(run_id, execution_id, f"{kind} ({execution.role}) claimed by {worker_id}, attempt {execution.attempts + 1}")
+        joblog.start(run_id, execution_id, f"{kind} ({execution.role}) claimed by {worker_id}, attempt {execution.attempts}")  # claim counted it
     log.info("claimed %s %s", kind, execution_id)
     process.begin_job()
     stop = threading.Event()

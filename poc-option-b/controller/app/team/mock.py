@@ -165,3 +165,35 @@ class MockTeam:
 
     def open_pull_request(self, context, branch) -> ReleaseResult:
         return ReleaseResult(url=None, number=None, simulated=True)
+
+    def extract_part(self, context: RunContext, part):
+        """Each heading of a text part is a feature and each bullet under it a function, cited at the nearest
+        bracketed location; a file part (PDF, image) gives one goal on its first page. No model is called."""
+        from controller.app.discovery.inventory import ChunkResult, Citation, Gap, Item
+        if part.file:
+            first = part.pages.split("-")[0] if part.pages else ""
+            location = f"page {first}" if first else part.label
+            items = [Item(type="goal", name=f"Goals of {part.filename}", text="Mock Business Analyst: no model read the file.",
+                          sources=[Citation(source=part.source_id, location=location)])]
+            return ChunkResult(items=items, read=[part.label])
+        items, gaps, feature, location = [], [], "", part.label
+        for line in part.text.splitlines():
+            marker = re.match(r"\s*\[([^\]]+)\]", line)
+            if marker:
+                location = marker[1]
+            text = re.sub(r"^\s*\[[^\]]+\]\s*", "", line).strip()
+            cite = [Citation(source=part.source_id, location=location)]
+            if text.startswith("#"):
+                feature = text.lstrip("# ").strip()
+                if feature:
+                    items.append(Item(type="feature", name=feature, sources=cite))
+            elif text.startswith(("- ", "* ")):
+                body = text[2:].strip()
+                items.append(Item(type="function", name=body[:80], text=body, parent=feature, sources=cite))
+                if "?" in body:
+                    gaps.append(Gap(kind="scope", question=body, items=[body[:80]], sources=cite))
+        return ChunkResult(items=items, gaps=gaps, read=[part.label])
+
+    def consolidate(self, context: RunContext, items: list[dict], gaps: list[dict]):
+        from controller.app.discovery.inventory import Consolidation
+        return Consolidation()

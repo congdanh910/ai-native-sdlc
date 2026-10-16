@@ -36,6 +36,12 @@ class CompositeTeam:
     def review(self, *args, **kwargs):
         return self.thinking.review(*args, **kwargs)
 
+    def extract_part(self, *args, **kwargs):
+        return self.thinking.extract_part(*args, **kwargs)
+
+    def consolidate(self, *args, **kwargs):
+        return self.thinking.consolidate(*args, **kwargs)
+
     def write_tests(self, *args, **kwargs):
         return self.doing.write_tests(*args, **kwargs)
 

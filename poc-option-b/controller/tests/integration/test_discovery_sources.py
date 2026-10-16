@@ -73,3 +73,30 @@ def test_one_open_discovery_per_project(db, sample_repo):
     response = client.post("/api/runs", json={"project": "task-board", "discovery": {"title": "Again"},
                                               "idempotency_key": str(uuid.uuid4())})
     assert response.status_code == 409 and "already has an open discovery" in response.json()["detail"]
+
+
+def test_extraction_writes_an_inventory_whose_items_cite_their_sources(db, sample_repo):
+    run = start(sample_repo)
+    assert client.post(f"/api/runs/{run}/extract").json()["detail"] == "add at least one source first"
+    upload(run, "deck.pdf", PDF)
+    post(f"/api/runs/{run}/sources/text", {"title": "Workshop notes",
+                                           "text": "## Reports\n- Customers export reports\n- Which formats?"})
+    detail = post(f"/api/runs/{run}/extract", {})
+    assert detail["status"] == "EXTRACTING"
+    drain()
+    detail = client.get(f"/api/runs/{run}").json()
+    assert detail["status"] == "CLARIFYING" and "requirement inventory v1" in detail["reason"]
+    inventory = next(d for d in detail["documents"] if d["kind"] == "inventory")
+    data = inventory["inventory"]
+    names = {s["id"]: s["filename"] for s in detail["sources"]}
+    assert [(i["id"], i["type"], i["name"]) for i in data["items"]] == [
+        ("REQ-001", "goal", "Goals of deck.pdf"), ("REQ-002", "feature", "Workshop notes"), ("REQ-003", "feature", "Reports"),
+        ("REQ-004", "function", "Customers export reports"), ("REQ-005", "function", "Which formats?")]
+    assert all(i["sources"] and i["sources"][0]["source"] in names for i in data["items"])
+    assert data["problems"] == [] and data["gaps"][0]["question"] == "Which formats?"
+    assert [p["covers"] for p in data["parts"]] == ["pages 1-3 of 3", "lines 1-5 of 5"]
+    assert "| REQ-004 | Customers export reports |" in inventory["content"] and inventory["commit_sha"]
+    detail = post(f"/api/runs/{run}/extract", {})  # a second round from CLARIFYING
+    drain()
+    detail = client.get(f"/api/runs/{run}").json()
+    assert [d["version"] for d in detail["documents"] if d["kind"] == "inventory"] == [1, 2]

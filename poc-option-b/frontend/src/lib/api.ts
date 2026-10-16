@@ -106,6 +106,18 @@ export interface Doc {
   commit_sha: string | null;
   created_at: string;
   findings?: string[];
+  inventory?: Inventory;  // the requirement inventory of a discovery, for kind "inventory"
+}
+
+export interface Citation { source: string; location: string }
+export interface InventoryItem {
+  id: string; type: string; name: string; text: string; parent: string; phase: string; source_ref: string;
+  aliases: string[]; status: string; sources: Citation[];
+}
+export interface Gap { kind: string; question: string; why: string; items: string[]; sources: Citation[]; suggestion: string; blocking: boolean }
+export interface Inventory {
+  items: InventoryItem[]; gaps: Gap[]; coverage: Record<string, string[]>; problems: string[]; coarse_citations: number;
+  parts: { source: string; covers: string }[]; sources: Record<string, string>;
 }
 
 export interface PlanTask {

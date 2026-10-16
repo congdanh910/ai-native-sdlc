@@ -63,6 +63,22 @@ export function DecisionPanel({ run, onDone }: { run: RunDetail; onDone: () => v
     );
   }
 
+  if (need.action === "ingesting" || need.action === "clarifying") {
+    const sources = run.sources?.length ?? 0;
+    const rounds = run.documents.filter((d) => d.kind === "inventory").length;
+    return (
+      <Panel run={run} title={need.action === "ingesting" ? "Add the sources, then start the extraction" : "Review the requirement inventory"}>
+        <p className="m-0 text-muted">
+          {need.action === "ingesting"
+            ? `The Business Analyst reads every source (${sources} now) part by part and writes the requirement inventory; every item cites the page, slide or cell it comes from.`
+            : `Inventory v${rounds} is in the Requirements tab. Add sources or answers, then extract again for the next version.`}
+        </p>
+        <div><ActionButton variant="primary" disabled={!sources} success="Extraction started" action={() => post("extract", {})}>
+          {need.action === "ingesting" ? "Start extraction" : "Extract again"}</ActionButton></div>
+      </Panel>
+    );
+  }
+
   if (need.action === "needs_clarification") {
     const open = run.clarifications.filter((c) => !c.answer);
     return (
