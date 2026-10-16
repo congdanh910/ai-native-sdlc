@@ -343,7 +343,7 @@ export function RunView({ id }: { id: string }) {
   // A discovery waiting for its sources opens on the Sources tab, whatever tab was open before.
   const ingesting = discovery && r.status === "INGESTING" && !(r.sources?.length) && !picked;
   const shown: Tab = ingesting ? "sources" : discovery && ["tasks", "plan", "diff"].includes(tab) ? "sources"
-    : srs && ["tasks", "plan", "diff", "sources", "requirements", "questions", "decisions"].includes(tab) ? "thread"
+    : srs && !discovery && ["tasks", "plan", "diff", "sources", "requirements", "questions", "decisions"].includes(tab) ? "thread"
     : !discovery && ["sources", "requirements", "questions", "decisions"].includes(tab) ? "tasks" : tab;
   return (
     <>
