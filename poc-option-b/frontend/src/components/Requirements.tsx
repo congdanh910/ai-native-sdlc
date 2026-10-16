@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import type { Citation, Doc, Inventory, RunDetail } from "../lib/api";
+import type { Citation, Doc, Inventory, InventoryItem, RunDetail } from "../lib/api";
 import { role, short } from "../lib/utils";
 import { Badge, Card, Empty, Input, Mono, Select } from "./ui";
 
@@ -9,12 +9,53 @@ const TYPES: Record<string, string> = {
   nfr: "Non-functional", constraint: "Constraints", option: "Deployment options", term: "Glossary",
 };
 
-/** A link to the cited place: a PDF opens on its page; other sources open as the stored file. */
+/** A link to the cited place: a PDF opens on its page; other sources open as the stored file. The file name shows
+ * only when the run has more than one source. */
 function CiteLink({ run, inventory, cite }: { run: RunDetail; inventory: Inventory; cite: Citation }) {
+  if (cite.source.startsWith("decision:")) return <Badge tone="accent">{cite.source.slice(9)}</Badge>;
   const source = run.sources?.find((s) => s.id === cite.source);
   const page = /(?:page|p)\s*(\d+)/i.exec(cite.location)?.[1];
   const href = `/api/runs/${run.id}/sources/${cite.source}/file${source?.kind === "pdf" && page ? `#page=${page}` : ""}`;
-  return <a href={href} target="_blank" rel="noopener" className="whitespace-nowrap">{inventory.sources[cite.source] ?? short(cite.source)} · {cite.location}</a>;
+  const name = inventory.sources[cite.source] ?? short(cite.source);
+  const many = Object.keys(inventory.sources).length > 1;
+  const label = page ? `p. ${page}` : cite.location;
+  return (
+    <a href={href} target="_blank" rel="noopener" title={`${name} · ${cite.location}`}
+      className="inline-flex max-w-[16rem] items-center gap-1 rounded-md border border-line px-1.5 py-0.5 text-xs hover:bg-side">
+      {many ? <span className="truncate text-muted">{name.replace(/\.[a-z0-9]+$/i, "")}</span> : null}
+      <span className="whitespace-nowrap">{label}</span>
+    </a>
+  );
+}
+
+function ItemRow({ run, inventory, item }: { run: RunDetail; inventory: Inventory; item: InventoryItem }) {
+  const [open, setOpen] = useState(false);
+  const long = item.text.length > 260;
+  const meta = [
+    item.parent ? ["Of", item.parent] : null, item.phase ? ["Phase", item.phase] : null,
+    item.source_ref ? ["Ref", item.source_ref] : null, item.aliases.length ? ["Also", item.aliases.join(", ")] : null,
+  ].filter(Boolean) as [string, string][];
+  return (
+    <li className="flex list-none flex-col gap-1.5 border-b border-line px-4 py-3 last:border-0">
+      <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+        <Mono className="text-xs text-muted">{item.id}</Mono>
+        <b className="min-w-0 flex-1">{item.name}</b>
+        {item.status !== "proposed" ? <Badge tone={item.status === "out_of_scope" ? "neutral" : item.status === "confirmed" ? "good" : "warn"}>{item.status.replace(/_/g, " ")}</Badge> : null}
+        <span className="flex flex-wrap gap-1">{item.sources.map((c, n) => <CiteLink key={n} run={run} inventory={inventory} cite={c} />)}</span>
+      </div>
+      {item.text ? (
+        <p className={`m-0 text-sm leading-relaxed text-ink-2 ${long && !open ? "line-clamp-3" : ""}`}>
+          {item.text}
+        </p>
+      ) : null}
+      {long ? <button type="button" className="self-start text-xs text-accent-ink hover:underline" onClick={() => setOpen(!open)}>{open ? "Show less" : "Show more"}</button> : null}
+      {meta.length ? (
+        <div className="flex flex-wrap gap-1.5 text-xs">
+          {meta.map(([k, v]) => <span key={k} className="rounded-md bg-side px-1.5 py-0.5"><span className="text-muted">{k}:</span> {v}</span>)}
+        </div>
+      ) : null}
+    </li>
+  );
 }
 
 /** The latest requirement inventory: every item with the place it comes from, the checks, and the open questions. */
@@ -57,25 +98,20 @@ export function RequirementsTab({ run }: { run: RunDetail }) {
           <Input aria-label="Search" className="h-8 max-w-xs" placeholder="Search name, text, feature…" value={query} onChange={(e) => setQuery(e.target.value)} />
         </div>
       </Card>
-      <Card className="overflow-x-auto">
-        <table className="w-full min-w-[820px] border-collapse text-sm">
-          <thead><tr className="bg-side text-left text-xs text-muted">{["ID", "Type", "Name", "Requirement", "Of", "Phase", "Sources"].map((h) => <th key={h} className="border-b border-line px-3 py-2.5 font-semibold">{h}</th>)}</tr></thead>
-          <tbody>
-            {items.map((i) => (
-              <tr key={i.id} className="align-top">
-                <td className="border-b border-line px-3 py-2"><Mono>{i.id}</Mono>{i.source_ref ? <div className="text-xs text-muted">{i.source_ref}</div> : null}</td>
-                <td className="border-b border-line px-3 py-2 text-xs text-muted">{TYPES[i.type] ?? i.type}</td>
-                <td className="border-b border-line px-3 py-2 font-semibold">{i.name}{i.aliases.length ? <div className="text-xs font-normal text-muted">also: {i.aliases.join(", ")}</div> : null}</td>
-                <td className="border-b border-line px-3 py-2">{i.text || <span className="text-muted">—</span>}</td>
-                <td className="border-b border-line px-3 py-2 text-muted">{i.parent || "—"}</td>
-                <td className="border-b border-line px-3 py-2 text-muted">{i.phase || "—"}</td>
-                <td className="border-b border-line px-3 py-2 text-xs"><div className="flex flex-col gap-0.5">{i.sources.map((c, n) => <CiteLink key={n} run={run} inventory={inventory} cite={c} />)}</div></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {!items.length ? <p className="m-0 p-4 text-sm text-muted">No item matches.</p> : null}
-      </Card>
+      {Object.keys(TYPES).filter((kind) => items.some((i) => i.type === kind)).map((kind) => {
+        const group = items.filter((i) => i.type === kind);
+        return (
+          <Card key={kind} className="overflow-hidden">
+            <details open={!!type || !!query || group.length <= 40}>
+              <summary className="flex cursor-pointer items-center gap-2 border-b border-line bg-side px-4 py-2.5 text-sm font-semibold">
+                {TYPES[kind]}<span className="font-normal text-muted">{group.length}</span>
+              </summary>
+              <ul className="m-0 p-0">{group.map((i) => <ItemRow key={i.id} run={run} inventory={inventory} item={i} />)}</ul>
+            </details>
+          </Card>
+        );
+      })}
+      {!items.length ? <Empty>No item matches.</Empty> : null}
       {inventory.gaps.length ? (
         <Card className="flex flex-col gap-2 p-4">
           <h3 className="m-0 text-base font-semibold">Open questions ({inventory.gaps.length})</h3>
