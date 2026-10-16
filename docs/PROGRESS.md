@@ -33,25 +33,24 @@ https://claude.ai/code/artifact/770112ad-5c83-4811-90cc-30845b1619c4 (cột Tr�
 
 ### D3: còn lại
 
-- Người dùng trả lời vài câu trên tab Questions của run 470903ac (có thể thêm một biên bản), rồi bấm Extract again
-  để chạy hết một vòng thật.
+- Chạy hết một vòng thật (trả lời câu hỏi, biên bản, Extract again) trên một discovery thử mới: run 470903ac đã
+  bị xoá cùng dự án thử.
 - Chưa làm: thẻ "Questions for you" trong Inbox gom theo vai (thiết kế mục 9) — làm cùng D4 nếu cần.
 
 ## Trạng thái nền tảng
 
 - `.env`: `SDLC_TEAM_MODE=claude-readonly`, `SDLC_QWEN_ENABLED=false`, `SDLC_DOING_MODE=cli`, mọi vai suy nghĩ
   trên `claude-readonly`. Codex CLI cho vai viết code (model trong `~/.codex/config.toml`).
-- Dữ liệu: đã clean slate ngày 16/10. Có dự án `attendance` (chưa run) và 3 dự án thử Discovery:
-  `discovery-trial` (đạo văn, run 470903ac, inventory v2: 67 mục), `discovery-trial-2` (VMS, d546915a: 155 mục),
-  `discovery-trial-3` (OCR, 70ef00a6: 281 mục). Cả 3 ở CLARIFYING. Người dùng chưa quyết giữ hay xoá.
+- Dữ liệu: đã clean slate ngày 16/10. Chỉ còn dự án `attendance` (chưa run). Ba dự án thử Discovery
+  (`discovery-trial*`, kết quả: đạo văn 67 mục, VMS 155, OCR 281) đã xoá hẳn theo yêu cầu người dùng tối 16/10;
+  để thử tiếp D3–D6 cần tạo lại một dự án thử (repo cục bộ có `.sdlc/project.yaml` với `project:` trùng key).
 - Test lần cuối: 202 pass (bỏ test docker, test đó pass khi chạy riêng).
 
 ## Việc treo, chờ người dùng
 
-- Duyệt D1, D2 trên tracker; xem tab Requirements của 3 run thử.
-- Giữ hay xoá 3 dự án `discovery-trial*`.
-- GX10 (`cdp@118.69.64.152:2222`): container `ai-native-sdlc-ollama-14b` (qwen3:14b, port 11436) vẫn chạy, chưa
-  quyết; `ai-native-sdlc-ollama-30b` đã dừng (khởi động lại: `sudo docker start ai-native-sdlc-ollama-30b`).
+- Duyệt D1, D2, D3 trên tracker.
+- GX10 (`cdp@118.69.64.152:2222`): container `ai-native-sdlc-ollama-14b` (qwen3:14b, port 11436, bản mặc định
+  ban đầu của B1, không dùng từ 12/10) vẫn chạy; em đề xuất tắt, người dùng chưa chọn; `ai-native-sdlc-ollama-30b` đã dừng (khởi động lại: `sudo docker start ai-native-sdlc-ollama-30b`).
   Không đụng container của dự án khác trên GX10.
 - Bàn sau: cấu hình AI provider/tài khoản (model theo vai, tài khoản riêng cho nền tảng).
 - PR #1 cũ của inventory-demo vẫn mở trên GitHub.
