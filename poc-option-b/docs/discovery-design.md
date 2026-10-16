@@ -54,7 +54,7 @@ Trạng thái của discovery run:
 
 - `CLARIFYING` chờ người trả lời. Khi có câu trả lời, biên bản hoặc nguồn mới, người dùng bấm **Re-extract** để BA cập nhật bảng.
 - Chốt baseline sẽ commit thư mục `requirements/` lên branch của run và mở draft PR. Merge PR thì discovery hoàn tất, và run SRS được phép bắt đầu.
-- File thô **không commit vào repo** theo mặc định (`discovery.commit_sources: false`), vì có thể chứa thông tin hợp đồng hoặc khách hàng. Repo chỉ giữ `requirements/sources.md`: danh sách file, hash và trang đã trích.
+- File thô **được commit vào repo** cùng baseline, trong `requirements/sources/` (quyết định 16/10/2026: tài liệu hợp đồng đã được audit trước khi tải lên). `requirements/sources.md` liệt kê từng file, hash và trang đã trích. Dự án nào không muốn đưa file thô vào repo thì đặt `discovery.commit_sources: false`.
 
 ## 3. Schema chung của bảng requirement
 
@@ -132,7 +132,7 @@ discovery:
     acceptance: qc
     customer: sales            # câu hỏi chỉ khách hàng trả lời được
   approvers: {baseline: po, srs: po, options: sa, sds: ta}
-  commit_sources: false        # file thô có vào repo không
+  commit_sources: true         # file thô vào repo cùng baseline (tài liệu được audit trước khi tải lên)
   limits:
     max_rounds: 5              # số vòng re-extract trước khi cần PO xác nhận tiếp tục
     max_questions_per_round: 30
@@ -175,7 +175,15 @@ Inbox có thêm thẻ "Questions for you", gom theo vai.
 | D5 | Run SRS từ baseline, phụ lục truy vết | Mọi REQ trong phạm vi có FR hoặc US |
 | D6 | Options trong run SDS, cổng SA | SDS §9 ghi phương án đã chọn và lý do |
 
-**Kiểm chứng tính chung:** chạy D2–D5 trên ít nhất **hai bộ thử khác domain**: tài liệu VMS (PDF dạng slide) và một bộ khác, ví dụ brief nhân sự dạng DOCX kèm một bảng XLSX. Mỗi bộ đo:
+**Kiểm chứng tính chung:** chạy D2–D5 trên ba bộ thử khác domain và khác cách trình bày:
+
+| Bộ thử | Domain | Dạng |
+|---|---|---|
+| `GTV_DVS_Function_Mappingactor_feature_14102026.pdf` (26 trang) | Quản lý camera, video, nhận diện, biển số | Slide, mỗi chức năng một cụm trang |
+| `GTS_OCR_VN_Brief_Final_10092026.pdf` (20 trang) | Nhập liệu tích hợp OCR, lưu trữ Phông - Hộp - Hồ sơ | Đặc tả dạng văn bản có đánh mục |
+| `GTS_VN_Phanmemchongdaovan_info_07092026.pdf` (11 trang) | Kiểm tra đạo văn, liêm chính học thuật | Playbook phân tích chức năng dạng bảng |
+
+Cả ba bộ đều là PDF; DOCX, XLSX và PPTX được kiểm bằng file mẫu nhỏ trong test tự động. Mỗi bộ đo:
 - tỷ lệ mục có nguồn (mục tiêu 100%);
 - số câu hỏi trùng nhau;
 - tỷ lệ REQ trong phạm vi được SRS dùng tới.
@@ -188,8 +196,10 @@ Nếu prompt hay schema phải sửa riêng cho một domain thì thiết kế c
 - Đồng bộ câu hỏi với Jira hoặc email: làm sau, cùng phần Jira.
 - Đọc video hoặc ghi âm cuộc họp: chỉ nhận biên bản dạng văn bản.
 
-## 12. Cần anh chốt
+## 12. Quyết định (16/10/2026)
 
-1. File thô có được commit vào repo dự án không? Mặc định là **không**; repo chỉ giữ danh sách file và hash.
-2. Danh sách vai và bảng `question_owners` mặc định ở mục 7 đã đủ chưa, hay công ty có vai khác (ví dụ PM, Delivery Manager)?
-3. Bộ thử thứ hai khác domain: anh có sẵn tài liệu nào không, hay em tự soạn một bộ mẫu?
+| # | Câu hỏi | Chốt |
+|---|---|---|
+| 1 | File thô có vào repo không | **Có**, trong `requirements/sources/`; hợp đồng được audit trước khi tải lên. Tắt được theo dự án |
+| 2 | Vai mặc định | PO, BA, SA, TA, QC, DPO, Sales là đủ cho bây giờ. Vai đã là cấu hình theo dự án (`discovery.roles`); thêm hoặc sửa vai trên giao diện làm sau |
+| 3 | Bộ thử | Ba file PDF ở mục 10 |
