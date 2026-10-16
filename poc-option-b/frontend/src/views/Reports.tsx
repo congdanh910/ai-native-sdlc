@@ -47,7 +47,7 @@ export function ReportsView() {
           <div key={engine} className="grid grid-cols-[180px_1fr_auto] items-center gap-3 text-sm">
             <Mono>{engine}</Mono>
             <div className="h-2.5 rounded-full bg-sunken"><div className="h-2.5 rounded-full bg-accent" style={{ width: `${(u.seconds / maxSeconds) * 100}%` }} /></div>
-            <span className="text-muted">{u.calls} call(s) · {Math.round(u.seconds)}s{u.cost_usd ? ` · $${u.cost_usd}` : ""}</span>
+            <span className="text-muted">{u.calls} call(s) · {Math.round(u.seconds)}s{u.cost_usd ? ` · ≈$${u.cost_usd} at API prices (subscription, not billed)` : ""}</span>
           </div>
         ))}
       </Card>

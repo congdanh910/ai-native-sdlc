@@ -11,7 +11,7 @@ def test_cli_events_become_one_readable_line():
                                                            "input": {"file_path": "src/attendance.js"}}]}}
     assert joblog.summarise(json.dumps(read)) == "Read src/attendance.js"
     done = {"type": "result", "is_error": False, "num_turns": 4, "duration_ms": 61000, "total_cost_usd": 0.4}
-    assert joblog.summarise(json.dumps(done)) == "finished (ok): 4 turns, 61s, cost $0.40"
+    assert joblog.summarise(json.dumps(done)) == "finished (ok): 4 turns, 61s, API-price estimate $0.40 (subscription usage, not billed)"
     command = {"type": "item.started", "item": {"type": "command_execution", "command": "node --test"}}
     assert joblog.summarise(json.dumps(command)) == "runs node --test"
     assert joblog.summarise(json.dumps({"type": "user", "message": {}})) is None

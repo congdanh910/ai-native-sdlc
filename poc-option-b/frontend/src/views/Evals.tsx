@@ -154,7 +154,7 @@ export function EvalView({ id }: { id: string }) {
                 <div className="flex flex-wrap gap-1.5">{(c.files ?? []).map((f) => <Badge key={f} tone={(c.missed_files ?? []).includes(f) ? "bad" : "neutral"}><Mono>{f}</Mono></Badge>)}
                   {(c.missed_files ?? []).map((f) => <Badge key={`m-${f}`} tone="bad">missed <Mono>{f}</Mono></Badge>)}</div>
                 {(c.findings_final ?? []).length ? <ul className="m-0 pl-5 text-sm text-bad">{c.findings_final!.map((f) => <li key={f}>{f}</li>)}</ul> : null}
-                {c.usage ? <div className="text-xs text-muted">{Object.entries(c.usage).map(([eng, u]) => `${eng}: ${u.calls} call(s), ${Math.round(u.seconds)}s${u.cost_usd ? `, $${u.cost_usd}` : ""}`).join(" · ")}</div> : null}
+                {c.usage ? <div className="text-xs text-muted">{Object.entries(c.usage).map(([eng, u]) => `${eng}: ${u.calls} call(s), ${Math.round(u.seconds)}s${u.cost_usd ? `, ≈$${u.cost_usd} at API prices (subscription, not billed)` : ""}`).join(" · ")}</div> : null}
               </>
             ) : <div className="text-sm text-muted">{c.reason}{c.blocking_questions.length ? ` · asked: ${c.blocking_questions.join(" | ")}` : ""}</div>}
           </Card>

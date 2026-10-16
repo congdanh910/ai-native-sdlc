@@ -90,7 +90,7 @@ def summarise(line: str) -> str | None:
         return None  # tool results: too long to show, the next assistant step shows what came of them
     if kind == "result":
         return (f"finished ({'error' if event.get('is_error') else 'ok'}): {event.get('num_turns')} turns, "
-                f"{round((event.get('duration_ms') or 0) / 1000)}s, cost ${event.get('total_cost_usd') or 0:.2f}")
+                f"{round((event.get('duration_ms') or 0) / 1000)}s, API-price estimate ${event.get('total_cost_usd') or 0:.2f} (subscription usage, not billed)")
     # Codex CLI (--json)
     item = event.get("item") if isinstance(event.get("item"), dict) else None
     if item:
