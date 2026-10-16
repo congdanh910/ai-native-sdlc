@@ -178,7 +178,7 @@ def test_the_baseline_gate_then_requirements_in_the_repository(db, sample_repo):
     detail = post(f"/api/runs/{run}/baseline", {"scope": "Phase 1: reports"})
     assert detail["status"] == "WAITING_BASELINE_APPROVAL" and detail["checklist"]["gate"] == "baseline"
     failing = {c["id"]: c["detail"] for c in detail["checklist"]["controller"] if not c["ok"]}
-    assert failing == {"functions": f"{items['Brief']} Brief"}  # the pasted title became a feature without functions
+    assert failing == {"functions": f"{items['Brief']} Brief has no function"}  # the pasted title became a feature without functions
     baseline = [d for d in detail["documents"] if d["kind"] == "baseline"][-1]
     refused = client.post(f"/api/runs/{run}/baseline/approve", json={"document_id": baseline["id"], "checked": []})
     assert refused.status_code == 409 and "controller checks fail" in refused.json()["detail"]

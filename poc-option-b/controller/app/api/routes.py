@@ -377,9 +377,10 @@ def workshop(run_id: uuid.UUID, roles: str = "") -> str:
 
 
 @router.post("/runs/{run_id}/extract")
-def extract(run_id: uuid.UUID) -> dict:
-    """The Business Analyst reads the sources and writes the requirement inventory (again, from CLARIFYING)."""
-    return _decide(run_id, lambda s, r: discovery.start_extraction(s, r, actor=operator()))
+def extract(run_id: uuid.UUID, again: bool = False) -> dict:
+    """The Business Analyst reads what is new and writes the next requirement inventory; `again=true` checks the
+    inventory once more with nothing new to read."""
+    return _decide(run_id, lambda s, r: discovery.start_extraction(s, r, actor=operator(), again=again))
 
 
 @router.post("/runs/{run_id}/sources/{source_id}/remove")

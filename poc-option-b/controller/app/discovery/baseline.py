@@ -29,14 +29,9 @@ def check(inventory: Inventory, problems: list[str], questions: list[dict], deci
     open_ = [q for q in questions if q["status"] == "open"]
     in_scope = [i for i in inventory.items if i.status in IN_SCOPE]
     features = [i for i in in_scope if i.type == "feature"]
-    functions = {i.parent.lower() for i in in_scope if i.type == "function"}
     accepted = [d["id"] for d in decisions if d["status"] == "accepted"]
-    numberless = []
-    for item in in_scope:
-        if item.type == "nfr" and not re.search(r"\d", item.text):
-            settled = [q for q in _cited(item.id, questions) if q["status"] in ("answered", "deferred")]
-            if not settled:
-                numberless.append(f"{item.id} {item.name}")
+    feature_names = {n.lower() for f in features for n in [f.name, *f.aliases]}
+    functions = {i.parent.lower() for i in in_scope if i.type == "function"}
     return [
         result("blocking", "No blocking question is open", [f"{q['number']} {q['question'][:80]}" for q in open_ if q["blocking"]]),
         result("conflicts", "Every conflict between sources is resolved",
@@ -47,11 +42,27 @@ def check(inventory: Inventory, problems: list[str], questions: list[dict], deci
                [d for d in accepted if d not in applied]),
         result("inventory", "Every item cites a source or a decision; ids are unique; permissions name known actors",
                problems),
-        result("functions", "Every feature in scope has at least one function",
-               [f"{f.id} {f.name}" for f in features if f.name.lower() not in functions]),
-        result("nfr-targets", "Every quality target in scope has a number, or its question is answered or deferred",
-               numberless),
+        result("functions", "Every feature in scope has at least one function, and every function belongs to a feature",
+               [f"{f.id} {f.name} has no function" for f in features
+                if not ({n.lower() for n in [f.name, *f.aliases]} & functions)]
+               + [f"{i.id} {i.name} belongs to no feature" for i in in_scope if i.type == "function"
+                  and i.parent.lower() not in feature_names]),
     ]
+
+
+def advisories(inventory: Inventory, questions: list[dict]) -> list[dict]:
+    """The Business Analyst's side of the gate (design section 6): quality targets without a number. Shown, not
+    blocking: a qualitative target such as encryption at rest has no number."""
+    numberless = []
+    for item in inventory.items:
+        if item.status in IN_SCOPE and item.type == "nfr" and not re.search(r"\d", item.text):
+            settled = [q for q in _cited(item.id, questions) if q["status"] in ("answered", "deferred")]
+            if not settled:
+                numberless.append(f"{item.id} {item.name}")
+    return [{"id": "nfr-targets", "text": "Quality targets have a number, or a question about them is answered or deferred",
+             "status": "fail" if numberless else "pass",
+             "note": ("no number: " + "; ".join(numberless[:8]) + ". Fine for a qualitative target; ask otherwise.")
+             if numberless else ""}]
 
 
 def snapshot(title: str, scope: str, inventory: Inventory, version: int, questions: list[dict],

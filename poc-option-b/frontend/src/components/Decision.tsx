@@ -83,8 +83,9 @@ export function DecisionPanel({ run, onDone }: { run: RunDetail; onDone: () => v
             {run.decisions?.some((d) => d.status === "proposed") ? <Badge tone="warn">{run.decisions.filter((d) => d.status === "proposed").length} decision(s) to accept</Badge> : null}
           </div>
         ) : null}
-        <div><ActionButton variant="primary" disabled={!sources} success="Extraction started" action={() => post("extract", {})}>
-          {need.action === "ingesting" ? "Start extraction" : "Extract again"}</ActionButton></div>
+        <div className="flex flex-wrap gap-2"><ActionButton variant="primary" disabled={!sources} success="Extraction started" action={() => post("extract", {})}>
+          {need.action === "ingesting" ? "Start extraction" : "Extract again"}</ActionButton>
+          {need.action === "clarifying" ? <ActionButton success="The Business Analyst checks the inventory again" action={() => post("extract?again=true", {})}>Check the inventory again</ActionButton> : null}</div>
         {need.action === "clarifying" ? (
           <details className="rounded-lg border border-line p-3">
             <summary className="cursor-pointer text-sm font-semibold">Prepare the baseline (Product Owner)</summary>

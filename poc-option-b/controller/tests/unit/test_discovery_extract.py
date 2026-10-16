@@ -169,3 +169,15 @@ def test_the_srs_trace_check_finds_unused_and_unknown_items():
     assert "not in the baseline" in check_srs_trace(table("| REQ-001 | feature | Reports | RE-US-01 |\n| REQ-009 | ? | x | 1.2 Scope |\n"),
                                                     baseline)[0]
     assert check_srs_trace("# SRS", baseline) == ["'Appendix A. Requirement traceability' is missing"]
+
+
+def test_consolidation_links_orphan_functions_to_their_feature():
+    first = chunk(({"type": "feature", "name": "Reports"}, "page 2"), ({"type": "function", "name": "Export"}, "page 5"))
+    inventory = merge_chunks([("s1", first)])
+    linked = apply_consolidation(inventory, Consolidation.model_validate(
+        {"links": [{"id": "REQ-002", "parent": "Reports"}, {"id": "REQ-001", "parent": "x"}]}))
+    assert [(i.id, i.parent) for i in linked.items] == [("REQ-001", "x"), ("REQ-002", "Reports")]
+    from controller.app.discovery.baseline import advisories, check
+    rows = {c["id"]: c for c in check(linked, [], [], [], [])}
+    assert rows["functions"]["ok"]
+    assert "belongs to no feature" in {c["id"]: c for c in check(inventory, [], [], [], [])}["functions"]["detail"]

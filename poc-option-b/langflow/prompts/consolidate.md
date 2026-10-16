@@ -12,6 +12,7 @@ Output keys:
   - scope: a feature with no function, or a phase that is not clear.
   items lists the REQ ids the question is about. blocking is true only when the scope or the main flows cannot be decided without the answer.
 
+- links: array of objects with keys id and parent, for items that need a parent and have none: a function, flow, rule, exception or acceptance item gets the exact name of the feature it belongs to, a permission the exact name of its actor. Read the names and texts across all sources: a function described on a flow page often belongs to a feature listed on another page. Leave an item out when no feature fits, and ask a scope question instead.
 - updates: array of objects with keys id, decision, status and text, for what the decisions change: id is the REQ id; decision is the id of the decision that changes it; status is confirmed (the decision agrees with the item), changed (the decision changes it; give the new text), out_of_scope (the decision takes it out of this phase) or empty; text is the new requirement text when the decision changes it, else empty. Only items a decision is about get an update.
 
 Rules:

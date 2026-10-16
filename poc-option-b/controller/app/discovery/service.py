@@ -125,7 +125,7 @@ def sources(session: Session, run_id: uuid.UUID, *, include_removed: bool = Fals
     return list(session.scalars(query))
 
 
-def start_extraction(session: Session, run: Run, *, actor: str) -> None:
+def start_extraction(session: Session, run: Run, *, actor: str, again: bool = False) -> None:
     """The Business Analyst reads what is new (sources, minutes) and applies the accepted decisions, writing the next
     version of the requirement inventory. The project's discovery.limits.max_rounds caps the rounds."""
     from controller.app import coordinator
@@ -144,7 +144,9 @@ def start_extraction(session: Session, run: Run, *, actor: str) -> None:
         accepted = {q.decision_id(d) for d in q.decisions(session, run.id) if d.status == "accepted"}
         new_decisions = accepted - set(data.get("decisions_applied", []))
         written_before_rounds = "chunks" not in data  # its questions are not asked yet
-        if not (new_sources or new_minutes or removed or new_decisions or written_before_rounds):
+        # again: the Product Owner asks the Business Analyst to check the inventory once more (links, merges,
+        # questions) with nothing new to read; only the consolidation pass runs.
+        if not (new_sources or new_minutes or removed or new_decisions or written_before_rounds or again):
             raise ValueError("nothing new since inventory v%d: add a source or minutes, or answer a question first"
                              % latest.version)
     rounds = latest.version if latest else 0
@@ -153,7 +155,7 @@ def start_extraction(session: Session, run: Run, *, actor: str) -> None:
         raise ValueError(f"the discovery already had {rounds} extraction round(s), the project's limit "
                          "(discovery.limits.max_rounds); raise it in .sdlc/project.yaml to continue")
     transition_run(session, run, RunStatus.EXTRACTING, actor=actor, acting_role="product_owner",
-                   reason=f"extraction round {rounds + 1} of at most {limit}")
+                   reason=f"extraction round {rounds + 1} of at most {limit}" + (" (check again)" if again else ""))
     coordinator.queue(session, run, "extract")
 
 

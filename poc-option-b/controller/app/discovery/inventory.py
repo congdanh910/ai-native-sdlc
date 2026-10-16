@@ -107,11 +107,18 @@ class Update(Contract):
         return value
 
 
+class Link(Contract):
+    """An item read without its parent (a function on a flow page, say) and the feature or actor it belongs to."""
+    id: str
+    parent: str = Field(min_length=1)
+
+
 class Consolidation(Contract):
     """The Business Analyst's pass over the whole merged inventory."""
     merges: list[Merge] = []
     gaps: list[Gap] = []
     updates: list[Update] = []  # what the accepted decisions change
+    links: list[Link] = []  # parents of items that have none
 
 
 class Inventory(Contract):
@@ -196,6 +203,10 @@ def apply_consolidation(inventory: Inventory, consolidation: Consolidation, deci
         if merge.name and merge.name != keep.name:
             keep = keep.model_copy(update={"name": merge.name, "aliases": [keep.name, *keep.aliases]})
         by_id[merge.keep] = keep
+    for link in consolidation.links:
+        target = dropped.get(link.id, link.id)
+        if target in by_id and not by_id[target].parent:
+            by_id[target] = by_id[target].model_copy(update={"parent": link.parent.strip()})
     for update in consolidation.updates:
         target = dropped.get(update.id, update.id)
         if target not in by_id or update.decision not in decisions:

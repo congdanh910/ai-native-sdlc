@@ -260,7 +260,7 @@ def evaluate_gate(session: Session, run: Run, gate: str | None = None) -> dict |
     ai: list[dict] = []
     spec = latest_document(session, run.id, "spec")
     if gate == "baseline":
-        controller = baseline_checks(session, run)
+        controller, ai = baseline_checks(session, run)
     elif gate == "options":
         document = latest_document(session, run.id, "options")
         problems = check_options(Options.model_validate(document.data), json.loads(artifact(session, run.id, "baseline") or "null"))
@@ -308,15 +308,15 @@ def evaluate_gate(session: Session, run: Run, gate: str | None = None) -> dict |
     return {"gate": gate, "controller": controller, "ai": ai, "human": checklists.human_items(gate)}
 
 
-def baseline_checks(session: Session, run: Run) -> list[dict]:
+def baseline_checks(session: Session, run: Run) -> tuple[list[dict], list[dict]]:
     from controller.app.discovery import baseline, questions as q
     from controller.app.discovery.inventory import Inventory
     latest = latest_document(session, run.id, "inventory")
     data = latest.data if latest else {}
     inventory = Inventory.model_validate({k: data.get(k, [] if k != "coverage" else {}) for k in ("items", "gaps", "coverage")})
     run_questions, run_decisions = q.as_dicts(session, run.id)
-    return baseline.check(inventory, data.get("problems", []), run_questions, run_decisions,
-                          data.get("decisions_applied", []))
+    return (baseline.check(inventory, data.get("problems", []), run_questions, run_decisions,
+                           data.get("decisions_applied", [])), baseline.advisories(inventory, run_questions))
 
 
 def _release_evidence(session: Session, run: Run) -> tuple[list[str], list[str]]:
