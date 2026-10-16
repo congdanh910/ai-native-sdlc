@@ -378,11 +378,17 @@ def workshop(run_id: uuid.UUID, roles: str = "") -> str:
                                   [r for r in roles.split(",") if r], run.title.removeprefix("Discovery: "))
 
 
+class ExtractRound(Body):
+    beyond_limit: str = ""  # the Product Owner's reason for a round past discovery.limits.max_rounds
+
+
 @router.post("/runs/{run_id}/extract")
-def extract(run_id: uuid.UUID, again: bool = False) -> dict:
+def extract(run_id: uuid.UUID, body: ExtractRound | None = None, again: bool = False) -> dict:
     """The Business Analyst reads what is new and writes the next requirement inventory; `again=true` checks the
     inventory once more with nothing new to read."""
-    return _decide(run_id, lambda s, r: discovery.start_extraction(s, r, actor=operator(), again=again))
+    reason = body.beyond_limit if body else ""
+    return _decide(run_id, lambda s, r: discovery.start_extraction(s, r, actor=operator(), again=again,
+                                                                   beyond_limit=reason))
 
 
 @router.post("/runs/{run_id}/sources/{source_id}/remove")

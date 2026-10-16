@@ -125,7 +125,7 @@ def sources(session: Session, run_id: uuid.UUID, *, include_removed: bool = Fals
     return list(session.scalars(query))
 
 
-def start_extraction(session: Session, run: Run, *, actor: str, again: bool = False) -> None:
+def start_extraction(session: Session, run: Run, *, actor: str, again: bool = False, beyond_limit: str = "") -> None:
     """The Business Analyst reads what is new (sources, minutes) and applies the accepted decisions, writing the next
     version of the requirement inventory. The project's discovery.limits.max_rounds caps the rounds."""
     from controller.app import coordinator
@@ -151,11 +151,15 @@ def start_extraction(session: Session, run: Run, *, actor: str, again: bool = Fa
                              % latest.version)
     rounds = latest.version if latest else 0
     limit = discovery_config(session, run).limits.max_rounds
-    if rounds >= limit:
+    if rounds >= limit and not beyond_limit.strip():
         raise ValueError(f"the discovery already had {rounds} extraction round(s), the project's limit "
-                         "(discovery.limits.max_rounds); raise it in .sdlc/project.yaml to continue")
+                         "(discovery.limits.max_rounds); the Product Owner can confirm another round with a reason")
+    if rounds >= limit:
+        record_event(session, "discovery.round_beyond_limit", actor=actor, acting_role="product_owner", run_id=run.id,
+                     payload={"round": rounds + 1, "limit": limit, "reason": beyond_limit.strip()})
     transition_run(session, run, RunStatus.EXTRACTING, actor=actor, acting_role="product_owner",
-                   reason=f"extraction round {rounds + 1} of at most {limit}" + (" (check again)" if again else ""))
+                   reason=f"extraction round {rounds + 1} of at most {limit}" + (" (check again)" if again else "")
+                   + (f", confirmed beyond the limit: {beyond_limit.strip()}" if rounds >= limit else ""))
     coordinator.queue(session, run, "extract")
 
 

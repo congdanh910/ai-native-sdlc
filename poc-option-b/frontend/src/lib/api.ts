@@ -205,6 +205,7 @@ export interface RunDetail extends RunSummary {
   roles?: { id: string; name: string }[];  // discovery: the project's discovery roles
   questions?: Question[];
   decisions?: DiscoveryDecision[];
+  rounds?: { used: number; limit: number };  // extraction rounds of a discovery and discovery.limits.max_rounds
   pull_request: {
     url: string | null; number: number | null; head_sha: string | null; ci_status: string; review_status: string;
     merged_sha: string | null; simulated: boolean;

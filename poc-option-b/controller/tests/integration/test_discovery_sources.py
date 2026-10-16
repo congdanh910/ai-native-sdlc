@@ -284,3 +284,24 @@ def test_a_codex_business_analyst_reads_pdfs_as_text(db, sample_repo, monkeypatc
     item = inventory["items"][0]
     assert (item["name"], item["sources"][0]["location"]) == ("Customers export reports", "page 1")
     assert detail["sources"][0]["has_text"]  # the text view is kept next to the PDF
+
+
+def test_the_product_owner_confirms_rounds_beyond_the_limit(db, sample_repo):
+    import subprocess
+    config = sample_repo / ".sdlc" / "project.yaml"
+    config.write_text(config.read_text() + "discovery:\n  limits:\n    max_rounds: 1\n")
+    subprocess.run(["git", "-C", str(sample_repo), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "one round"],
+                   check=True)
+    run = start(sample_repo)
+    post(f"/api/runs/{run}/sources/text", {"title": "Brief", "text": "- Export reports"})
+    post(f"/api/runs/{run}/extract", {})
+    drain()
+    detail = client.get(f"/api/runs/{run}").json()
+    assert detail["rounds"] == {"used": 1, "limit": 1}
+    refused = client.post(f"/api/runs/{run}/extract", params={"again": "true"}, json={})
+    assert refused.status_code == 409 and "confirm another round with a reason" in refused.json()["detail"]
+    detail = post(f"/api/runs/{run}/extract?again=true", {"beyond_limit": "workshop minutes came late"})
+    assert detail["status"] == "EXTRACTING" and "confirmed beyond the limit: workshop minutes came late" in detail["reason"]
+    drain()
+    events = [e for e in client.get(f"/api/runs/{run}/events").json() if e["type"] == "discovery.round_beyond_limit"]
+    assert len(events) == 1

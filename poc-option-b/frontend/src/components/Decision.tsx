@@ -31,6 +31,7 @@ function Reason({ value, onChange, placeholder }: { value: string; onChange: (v:
 export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; onDone: () => void; onShowSources?: () => void }) {
   const need = run.waiting;
   const [reason, setReason] = useState("");
+  const [beyond, setBeyond] = useState("");  // why a discovery needs a round past its limit
   const [editing, setEditing] = useState(false);
   const meta = useQuery({ queryKey: ["meta"], queryFn: () => api<Meta>("/api/meta"), staleTime: 60_000 });
   const post = async (path: string, body: unknown) => {
@@ -71,7 +72,7 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
         <p className="m-0 text-muted">
           {need.action === "ingesting"
             ? `Add the raw requirements in the Sources tab (drag and drop, or paste text); ${sources} added so far. The Business Analyst then reads every source part by part and writes the requirement inventory; every item cites the page, slide or cell it comes from.`
-            : `Inventory v${rounds} is in the Requirements tab. Answer the questions (Questions tab), add sources or minutes, then extract again: only what is new is read.`}
+            : `Inventory v${rounds} is in the Requirements tab (round ${run.rounds?.used ?? rounds} of ${run.rounds?.limit ?? "?"}). Answer the questions (Questions tab), add sources or minutes, then extract again: only what is new is read.`}
         </p>
         {need.action === "clarifying" ? (
           <div className="flex flex-wrap gap-2 text-xs">
@@ -81,6 +82,16 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
             })}
             {run.questions?.some((q) => q.status === "open" && q.blocking) ? <Badge tone="bad">{run.questions.filter((q) => q.status === "open" && q.blocking).length} blocking</Badge> : null}
             {run.decisions?.some((d) => d.status === "proposed") ? <Badge tone="warn">{run.decisions.filter((d) => d.status === "proposed").length} decision(s) to accept</Badge> : null}
+          </div>
+        ) : null}
+        {run.rounds && run.rounds.used >= run.rounds.limit ? (
+          <div className="flex flex-col gap-2 rounded-lg border border-warn/40 bg-warn-soft p-3 text-sm">
+            <span>All {run.rounds.limit} extraction rounds of the project's limit (discovery.limits.max_rounds) are used. The baseline needs no more rounds; for another one, confirm it as Product Owner with a reason.</span>
+            <Field label="Why another round" htmlFor="beyond-limit"><Textarea id="beyond-limit" className="min-h-12" value={beyond} onChange={(e) => setBeyond(e.target.value)} placeholder="New minutes from the workshop of 20/10" /></Field>
+            <div className="flex flex-wrap gap-2">
+              <ActionButton disabled={!beyond.trim()} success="Extraction started" action={() => post("extract", { beyond_limit: beyond })}>Confirm another round: extract again</ActionButton>
+              <ActionButton disabled={!beyond.trim()} success="The Business Analyst checks the inventory again" action={() => post("extract?again=true", { beyond_limit: beyond })}>Confirm another round: check again</ActionButton>
+            </div>
           </div>
         ) : null}
         <div className="flex flex-wrap gap-2">

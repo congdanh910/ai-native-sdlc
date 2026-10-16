@@ -19,7 +19,7 @@ _Cập nhật: 2026-10-17. Mỗi mục ghi vì sao nó nằm đây và lúc nào
 | 2.2 | So sánh Claude và Codex làm BA trên cùng một bộ tài liệu | Codex tách mục mịn hơn nhiều (76 mục từ 2 trang, Claude 63 mục cả file 11 trang) và không thấy hình của trang (bảng, sơ đồ) |
 | 2.3 | PDF scan và ảnh khi BA chạy Codex | Hiện dừng và báo lỗi; cần OCR (ví dụ Tesseract) hoặc bắt buộc Claude cho loại nguồn này |
 | 2.4 | Lưu kết quả từng lượt đọc ngay khi xong, chạy lại thì đọc tiếp | Job hỏng giữa chừng (hết quota, máy ngủ) thì đọc lại từ đầu |
-| 2.5 | Vòng "Check the inventory again" có nên tính vào `max_rounds` | Trên run thử đã dùng 4 trên 5 vòng, phần lớn chỉ là vòng consolidate |
+| 2.5 | Vòng "Check the inventory again" có nên tính vào `max_rounds` | Trên run thử đã dùng 4 trên 5 vòng, phần lớn chỉ là vòng consolidate. Từ 17/10 PO xác nhận được vòng vượt giới hạn kèm lý do (event `discovery.round_beyond_limit`) |
 | 2.6 | Đổi engine của một run đang mở ngay trên giao diện | 16/10 phải dùng script để ghim lại engine run 9735e5fd (có event `engines.repinned`) |
 | 2.7 | Vai Discovery chỉnh trên UI | Người dùng: mặc định PO, BA, SA, TA, QC, DPO, Sales là đủ; "linh hoạt trên UI để sau" |
 | 2.8 | Khách hàng tự trả lời câu hỏi trên nền tảng; đồng bộ câu hỏi với Jira/email; đọc ghi âm/video họp | Ngoài phạm vi theo thiết kế (mục 11), cần tài khoản và phân quyền |
