@@ -54,12 +54,30 @@ export async function api<T = unknown>(path: string, options: { method?: string;
   return data as T;
 }
 
+/** Upload a file as the raw request body (the controller takes no multipart). */
+export async function uploadFile<T = unknown>(path: string, file: File): Promise<T> {
+  let response: Response;
+  try {
+    response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/octet-stream", "X-SDLC-Client": "web" }, body: file });
+  } catch {
+    throw new ApiError("The control room cannot reach the controller. Is ./sdlc up running?");
+  }
+  const data = await response.json().catch(() => null);
+  if (!response.ok) throw describeError(data && (data as { detail?: unknown }).detail, response.statusText);
+  return data as T;
+}
+
+export interface SourceFile {
+  id: string; filename: string; kind: string; sha256: string; size: number; pages: number | null;
+  has_text: boolean; uploaded_by: string; created_at: string;
+}
+
 export type Waiting = { role: string; action: string; stage?: string | null } | null;
 
 export interface RunSummary {
   id: string;
   title: string;
-  kind: "feature" | "srs" | "sds";
+  kind: "feature" | "srs" | "sds" | "discovery";
   project: string;
   status: string;
   version: number;
@@ -157,6 +175,7 @@ export interface RunDetail extends RunSummary {
   clarifications: { id: string; question: string; blocking: boolean; answer: string | null }[];
   approvals: { stage: string; decision: string; actor: string; role: string; reason: string | null; checklist: Partial<GateChecklist>; created_at: string }[];
   checklist: GateChecklist | null;
+  sources?: SourceFile[];
   pull_request: {
     url: string | null; number: number | null; head_sha: string | null; ci_status: string; review_status: string;
     merged_sha: string | null; simulated: boolean;

@@ -1,9 +1,11 @@
 """Team API used by the web control room. Every decision is made as SDLC_OPERATOR."""
 
-import uuid
+from pathlib import Path
 from typing import Literal
+import uuid
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 
@@ -11,7 +13,9 @@ from controller.app import evals, joblog, services
 from controller.app.api import views
 from controller.app.config import get_settings
 from controller.app.db import session_scope
-from controller.app.models import EvalRun, Execution, Project, Run
+from controller.app.discovery import service as discovery
+from controller.app.discovery.service import DiscoveryRequest
+from controller.app.models import EvalRun, Execution, Project, Run, Source
 from controller.app.projects import registry
 from controller.app.project_docs import ArchitectureBrief, ProjectBrief
 from controller.app.schemas import Intent
@@ -41,12 +45,14 @@ class NewRun(Body):
     intent: Intent | None = None  # a feature request
     brief: ProjectBrief | None = None  # a project brief: the run writes SRS.md
     architecture: ArchitectureBrief | None = None  # an architecture brief: the run writes SDS.md from SRS.md
+    discovery: DiscoveryRequest | None = None  # a discovery: raw requirement sources to a baseline
     idempotency_key: str = Field(min_length=8, max_length=128)
 
     @model_validator(mode="after")
     def _one_input(self) -> "NewRun":
-        if sum(x is not None for x in (self.intent, self.brief, self.architecture)) != 1:
-            raise ValueError("send exactly one of intent (a feature), brief (the SRS) or architecture (the SDS)")
+        if sum(x is not None for x in (self.intent, self.brief, self.architecture, self.discovery)) != 1:
+            raise ValueError("send exactly one of intent (a feature), brief (the SRS), architecture (the SDS) "
+                             "or discovery")
         return self
 
 
@@ -187,7 +193,7 @@ def create_run(body: NewRun) -> dict:
             project = session.scalar(select(Project).where(Project.key == body.project))
             if project is None:
                 raise HTTPException(404, "project not found")
-            run = services.create_run(session, project, body.intent or body.brief or body.architecture, actor=operator(),
+            run = services.create_run(session, project, body.intent or body.brief or body.architecture or body.discovery, actor=operator(),
                                       idempotency_key=body.idempotency_key)
             return views.run_summary(run, project.key)
     except services.DecisionError as exc:
@@ -230,6 +236,53 @@ def execution_log(run_id: uuid.UUID, execution_id: uuid.UUID, offset: int = 0) -
         status = execution.status
     text, next_offset = joblog.read(run_id, execution_id, offset)
     return {"text": text, "offset": next_offset, "status": status}
+
+
+class TextSource(Body):
+    title: str = Field(min_length=1, max_length=120)
+    text: str = Field(min_length=1)
+
+
+@router.post("/runs/{run_id}/sources")
+async def upload_source(run_id: uuid.UUID, filename: str, request: Request) -> dict:
+    """The file is the raw request body (no multipart), named by the `filename` query parameter."""
+    data = await request.body()
+    return _decide(run_id, lambda s, r: discovery.add_source(s, r, filename, data, actor=operator()))
+
+
+@router.post("/runs/{run_id}/sources/text")
+def paste_source(run_id: uuid.UUID, body: TextSource) -> dict:
+    return _decide(run_id, lambda s, r: discovery.add_text_source(s, r, body.title, body.text, actor=operator()))
+
+
+@router.post("/runs/{run_id}/sources/{source_id}/remove")
+def remove_source(run_id: uuid.UUID, source_id: uuid.UUID, body: Reason) -> dict:
+    return _decide(run_id, lambda s, r: discovery.remove_source(s, r, source_id, actor=operator(), reason=body.reason))
+
+
+def _source(run_id: uuid.UUID, source_id: uuid.UUID) -> Source:
+    with session_scope() as session:
+        source = session.get(Source, source_id)
+        if source is None or source.run_id != run_id:
+            raise HTTPException(404, "source not found")
+        session.expunge(source)
+        return source
+
+
+@router.get("/runs/{run_id}/sources/{source_id}/file")
+def source_file(run_id: uuid.UUID, source_id: uuid.UUID) -> FileResponse:
+    source = _source(run_id, source_id)
+    return FileResponse(source.path, filename=source.filename, content_disposition_type="inline")
+
+
+@router.get("/runs/{run_id}/sources/{source_id}/text")
+def source_text(run_id: uuid.UUID, source_id: uuid.UUID) -> dict:
+    """The text view with locations of a DOCX, XLSX, PPTX or text source."""
+    source = _source(run_id, source_id)
+    path = Path(source.text_path or (source.path if source.kind == "text" else ""))
+    if not source.text_path and source.kind != "text":
+        raise HTTPException(404, f"{source.kind} sources are read as they are; open the file instead")
+    return {"filename": source.filename, "text": path.read_text()}
 
 
 @router.get("/inbox")

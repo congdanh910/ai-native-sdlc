@@ -9,6 +9,10 @@ class RunStatus(StrEnum):
     SPECIFYING = "SPECIFYING"
     NEEDS_CLARIFICATION = "NEEDS_CLARIFICATION"
     WAITING_SPEC_APPROVAL = "WAITING_SPEC_APPROVAL"
+    INGESTING = "INGESTING"  # discovery: waiting for sources and the request to extract
+    EXTRACTING = "EXTRACTING"
+    CLARIFYING = "CLARIFYING"  # discovery: questions are open for their roles
+    WAITING_BASELINE_APPROVAL = "WAITING_BASELINE_APPROVAL"
     PLANNING = "PLANNING"
     GROUNDING = "GROUNDING"
     WAITING_PLAN_APPROVAL = "WAITING_PLAN_APPROVAL"
@@ -45,6 +49,7 @@ class RunKind(StrEnum):
     FEATURE = "feature"  # one user story: spec, plan, tests, code, review, PR
     SRS = "srs"  # the project's SRS.md: Business Analyst, SRS gate, PR
     SDS = "sds"  # the project's SDS.md from the merged SRS: Architect, SDS gate, PR
+    DISCOVERY = "discovery"  # raw requirements to a baseline: sources, extraction, questions, decisions, PR
 
 
 class HumanRole(StrEnum):
@@ -74,7 +79,11 @@ ACTIVE = frozenset(R) - TERMINAL
 
 _RUN_FLOW: dict[RunStatus, set[RunStatus]] = {
     R.RECEIVED: {R.PREFLIGHT},
-    R.PREFLIGHT: {R.SPECIFYING},
+    R.PREFLIGHT: {R.SPECIFYING, R.INGESTING},
+    R.INGESTING: {R.EXTRACTING},
+    R.EXTRACTING: {R.CLARIFYING, R.INGESTING},
+    R.CLARIFYING: {R.EXTRACTING, R.INGESTING, R.WAITING_BASELINE_APPROVAL},
+    R.WAITING_BASELINE_APPROVAL: {R.CLARIFYING, R.PR_OPEN},
     R.SPECIFYING: {R.NEEDS_CLARIFICATION, R.WAITING_SPEC_APPROVAL, R.PLANNING},
     R.NEEDS_CLARIFICATION: {R.SPECIFYING},
     R.WAITING_SPEC_APPROVAL: {R.PLANNING, R.SPECIFYING, R.PR_OPEN},  # PR_OPEN: an approved SRS goes straight to a PR
@@ -89,7 +98,7 @@ _RUN_FLOW: dict[RunStatus, set[RunStatus]] = {
     R.PR_OPEN: {R.WAITING_PR_APPROVAL},
     R.WAITING_PR_APPROVAL: {R.COMPLETED, R.CODING, R.CLOSED_UNMERGED, R.REVIEWING},  # REVIEWING: review again
     # NEEDS_HUMAN exits only through a recorded human decision.
-    R.NEEDS_HUMAN: {R.PREFLIGHT, R.SPECIFYING, R.PLANNING, R.DESIGNING_TESTS, R.CODING, R.REVIEWING, R.PR_OPEN},
+    R.NEEDS_HUMAN: {R.PREFLIGHT, R.INGESTING, R.EXTRACTING, R.SPECIFYING, R.PLANNING, R.DESIGNING_TESTS, R.CODING, R.REVIEWING, R.PR_OPEN},
 }
 
 def _run_targets(state: RunStatus) -> frozenset[RunStatus]:
@@ -120,6 +129,9 @@ TASK_TRANSITIONS: dict[TaskStatus, frozenset[TaskStatus]] = {
 # Which human role an operator acts in when a run waits in a state.
 WAITING_FOR: dict[RunStatus, HumanRole] = {
     R.NEEDS_CLARIFICATION: HumanRole.PRODUCT_OWNER,
+    R.INGESTING: HumanRole.PRODUCT_OWNER,
+    R.CLARIFYING: HumanRole.PRODUCT_OWNER,
+    R.WAITING_BASELINE_APPROVAL: HumanRole.PRODUCT_OWNER,
     R.WAITING_SPEC_APPROVAL: HumanRole.PRODUCT_OWNER,
     R.WAITING_PLAN_APPROVAL: HumanRole.TECH_LEAD,
     R.WAITING_TEST_APPROVAL: HumanRole.QC,

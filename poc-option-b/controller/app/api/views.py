@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from controller.app.models import (Approval, Clarification, Document, Event, Execution, Plan, Project, PullRequest,
-                                   Run, Task)
+                                   Run, Source, Task)
 from controller.app.project_docs import SRS_PATH, srs_features
 from controller.app.projects.registry import mirror_for
 from controller.app.coordinator import evaluate_gate
@@ -82,6 +82,11 @@ def run_detail(session: Session, run: Run) -> dict:
                            for c in session.scalars(select(Clarification).where(Clarification.run_id == run.id)
                                                     .order_by(Clarification.created_at))],
         "checklist": evaluate_gate(session, run) if run.status in WAITING_GATES else None,
+        "sources": [{"id": str(s.id), "filename": s.filename, "kind": s.kind, "sha256": s.sha256, "size": s.size,
+                     "pages": s.pages, "has_text": bool(s.text_path) or s.kind == "text", "uploaded_by": s.uploaded_by,
+                     "created_at": s.created_at.isoformat()}
+                    for s in session.scalars(select(Source).where(Source.run_id == run.id, Source.removed.is_(False))
+                                             .order_by(Source.created_at))],
         "approvals": [{"stage": a.stage, "decision": a.decision, "actor": a.actor, "role": a.acting_role,
                        "reason": a.reason, "checklist": a.checklist, "created_at": a.created_at.isoformat()}
                       for a in session.scalars(select(Approval).where(Approval.run_id == run.id)

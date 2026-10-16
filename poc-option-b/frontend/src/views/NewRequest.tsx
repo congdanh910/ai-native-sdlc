@@ -36,6 +36,10 @@ const BRIEF: DocField[] = [
   ["constraints", "Constraints", "deadline, compliance, devices, integrations; start a line with [blocking] if the SRS must wait for an answer", false],
   ["sources", "Sources", "notes from sales, meetings and the contract that the SRS should trace to", false],
 ];
+const DISCOVERY: DocField[] = [
+  ["title", "Name", "the product or project, as the team calls it", true],
+  ["notes", "Notes", "anything the sources do not say: who asked, deadline, what is already decided", false],
+];
 const ARCHITECTURE: DocField[] = [
   ["title", "Product name", "as in SRS.md", true],
   ["stack", "Technology and stack", "languages, frameworks, database, devices the team will use or must use", true],
@@ -44,7 +48,7 @@ const ARCHITECTURE: DocField[] = [
   ["notes", "Notes", "security, data protection, performance targets; start a line with [blocking] if the SDS must wait for an answer", false],
 ];
 type DocField = readonly [string, string, string, boolean];
-type Kind = "feature" | "srs" | "sds";
+type Kind = "discovery" | "feature" | "srs" | "sds";
 
 function validateDoc(fields: readonly DocField[], values: Record<string, string>): Record<string, string> {
   const errors: Record<string, string> = {};
@@ -58,7 +62,7 @@ function validateDoc(fields: readonly DocField[], values: Record<string, string>
 
 /** A project document request: a brief the Business Analyst turns into SRS.md, or an architecture brief the
  * Architect turns into SDS.md. Both come before any feature run. */
-function DocumentForm({ project, fields, bodyKey, submit }: { project: string; fields: readonly DocField[]; bodyKey: "brief" | "architecture"; submit: string }) {
+function DocumentForm({ project, fields, bodyKey, submit }: { project: string; fields: readonly DocField[]; bodyKey: "brief" | "architecture" | "discovery"; submit: string }) {
   const [, navigate] = useLocation();
   const idempotencyKey = useMemo(() => crypto.randomUUID(), []);
   const [brief, setBrief] = useState<Record<string, string>>(() => Object.fromEntries(fields.map(([k]) => [k, ""])));
@@ -167,11 +171,12 @@ export function NewRequestView() {
   return (
     <>
       <PageHeader title="New request" subtitle={{
+        discovery: "Step 0 of a new project, as Product Owner: collect the raw requirements (decks, documents, sheets, minutes); the Business Analyst extracts a requirement inventory and the questions to clarify.",
         srs: "Step 1 of a new project, as Product Owner: the Business Analyst writes SRS.md from this brief.",
         sds: "Step 2 of a new project, as Tech Lead: the Architect writes SDS.md from the merged SRS.md and this brief.",
         feature: "You act as Product Owner. This form is intent.md; the Business Analyst turns it into spec.md.",
       }[kind]} />
-      <Tabs<Kind> value={kind} onChange={setKind} tabs={[{ id: "feature", label: "Feature request" }, { id: "srs", label: "Project SRS" }, { id: "sds", label: "Project SDS" }]} />
+      <Tabs<Kind> value={kind} onChange={setKind} tabs={[{ id: "feature", label: "Feature request" }, { id: "discovery", label: "Discovery" }, { id: "srs", label: "Project SRS" }, { id: "sds", label: "Project SDS" }]} />
       <div className="flex flex-wrap items-start gap-5">
         <div className="flex min-w-0 flex-[999_1_560px] flex-col gap-5">
           <Card className="flex flex-col gap-4 p-5">
@@ -195,7 +200,8 @@ export function NewRequestView() {
                 </Select>
               </Field>
             ) : null}
-            {kind === "srs" ? <DocumentForm key="srs" project={chosen} fields={BRIEF} bodyKey="brief" submit="Submit brief, write SRS.md" />
+            {kind === "discovery" ? <DocumentForm key="discovery" project={chosen} fields={DISCOVERY} bodyKey="discovery" submit="Start discovery, then add sources" />
+              : kind === "srs" ? <DocumentForm key="srs" project={chosen} fields={BRIEF} bodyKey="brief" submit="Submit brief, write SRS.md" />
         : kind === "sds" ? <DocumentForm key="sds" project={chosen} fields={ARCHITECTURE} bodyKey="architecture" submit="Submit, write SDS.md" /> : FIELDS.map(([key, label, hint, required]) => {
               const props = {
                 id: key,

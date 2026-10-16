@@ -86,6 +86,45 @@ class Limits(Strict):
     container: ContainerLimits = ContainerLimits()
 
 
+class Role(Strict):
+    id: str = Field(pattern=r"^[a-z][a-z0-9_]{0,31}$")
+    name: str = Field(min_length=1, max_length=80)
+
+
+class DiscoveryLimits(Strict):
+    max_rounds: int = Field(default=5, ge=1, le=50)  # re-extractions before the PO confirms another round
+    max_questions_per_round: int = Field(default=30, ge=1, le=200)
+    max_source_mb: int = Field(default=50, ge=1, le=500)
+    max_pages_per_source: int = Field(default=300, ge=1, le=5000)
+    pages_per_read: int = Field(default=20, ge=1, le=20)  # Claude Code reads at most 20 PDF pages per call
+
+
+DEFAULT_ROLES = (("po", "Product Owner"), ("ba", "Business Analyst"), ("sa", "Solution Architect"),
+                 ("ta", "Technical Architect"), ("qc", "QC"), ("dpo", "Data Protection Officer"),
+                 ("sales", "Sales (customer contact)"))
+DEFAULT_QUESTION_OWNERS = {"scope": "po", "actor": "po", "permission": "po", "rule": "po", "threshold": "po",
+                           "data": "ba", "integration": "ta", "nfr": "ta", "exception": "ba", "acceptance": "qc",
+                           "compliance": "dpo", "deployment": "sa", "conflict": "po", "missing_source": "sales",
+                           "customer": "sales"}
+
+
+class Discovery(Strict):
+    """Raw requirements to a baseline. Roles and who answers which kind of question differ per project."""
+    roles: list[Role] = [Role(id=i, name=n) for i, n in DEFAULT_ROLES]
+    question_owners: dict[str, str] = DEFAULT_QUESTION_OWNERS
+    approvers: dict[str, str] = {"baseline": "po", "srs": "po", "options": "sa", "sds": "ta"}
+    commit_sources: bool = True  # raw files go to requirements/sources/ with the baseline (audited before upload)
+    limits: DiscoveryLimits = DiscoveryLimits()
+
+    @model_validator(mode="after")
+    def _known_roles(self) -> "Discovery":
+        ids = {r.id for r in self.roles}
+        unknown = sorted({v for v in [*self.question_owners.values(), *self.approvers.values()] if v not in ids})
+        if unknown:
+            raise ValueError(f"discovery names roles {', '.join(unknown)} that discovery.roles does not declare")
+        return self
+
+
 class Stages(Strict):
     spec: Literal["manual", "gated", "auto"] = "gated"
     plan: Literal["manual", "gated"] = "gated"  # the plan gate cannot be removed
@@ -112,6 +151,7 @@ class ProjectConfig(Strict):
     limits: Limits = Limits()
     stages: Stages = Stages()
     artifacts: Artifacts = Artifacts()
+    discovery: Discovery = Discovery()
 
     @model_validator(mode="after")
     def _consistent(self) -> "ProjectConfig":

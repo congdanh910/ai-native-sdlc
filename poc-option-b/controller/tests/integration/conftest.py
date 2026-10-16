@@ -6,7 +6,7 @@ from controller.app.db import get_engine
 from controller.app.projects import registry
 from controller.tests.conftest import TEST_DB
 
-TABLES = ("events", "approvals", "pull_requests", "executions", "tasks", "plans", "clarifications", "documents",
+TABLES = ("events", "approvals", "pull_requests", "executions", "tasks", "plans", "clarifications", "documents", "sources",
           "artifacts", "runs", "eval_runs", "projects")
 
 
@@ -28,4 +28,6 @@ def db(database, tmp_path, monkeypatch):
     data = tmp_path / "data"
     monkeypatch.setattr(registry, "DATA_DIR", data)
     monkeypatch.setattr(coordinator, "DATA_DIR", data)
+    from controller.app.discovery import service as discovery_service
+    monkeypatch.setattr(discovery_service, "DATA_DIR", data)
     return database

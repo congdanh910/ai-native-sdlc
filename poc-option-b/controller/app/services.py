@@ -12,6 +12,7 @@ from controller.app import coordinator
 from controller.app.documents import add_document, add_plan, latest_document, latest_plan
 from controller.app.events import record_event
 from controller.app.models import Approval, Clarification, Plan, Project, PullRequest, Run, Task
+from controller.app.discovery.service import DiscoveryRequest, render_request
 from controller.app.project_docs import (SRS_PATH, ArchitectureBrief, ProjectBrief, check_sds_markdown,
                                          check_srs_markdown, render_architecture_brief, render_brief, srs_features)
 from controller.app.projects.registry import mirror_for
@@ -62,7 +63,8 @@ def get_run(session: Session, run_id: uuid.UUID) -> Run:
 
 # ---------------------------------------------------------------- Product Owner
 
-def create_run(session: Session, project: Project, intent: Intent | ProjectBrief | ArchitectureBrief, *, actor: str,
+def create_run(session: Session, project: Project, intent: Intent | ProjectBrief | ArchitectureBrief | DiscoveryRequest,
+               *, actor: str,
                idempotency_key: str,
                experiment: bool = False, base_commit: str | None = None, stage_overrides: dict | None = None,
                eval_run_id: uuid.UUID | None = None, eval_case: str | None = None) -> Run:
@@ -72,7 +74,13 @@ def create_run(session: Session, project: Project, intent: Intent | ProjectBrief
     if project.readiness == "not_ready":
         raise DecisionError(f"project {project.key} is not ready; open Projects and run the check")
     kind = (RunKind.SRS if isinstance(intent, ProjectBrief) else RunKind.SDS if isinstance(intent, ArchitectureBrief)
-            else RunKind.FEATURE)
+            else RunKind.DISCOVERY if isinstance(intent, DiscoveryRequest) else RunKind.FEATURE)
+    if kind == RunKind.DISCOVERY:
+        open_discovery = session.scalar(select(Run).where(Run.project_id == project.id, Run.kind == RunKind.DISCOVERY,
+                                                          Run.status.not_in([s.value for s in TERMINAL])))
+        if open_discovery and open_discovery.idempotency_key != idempotency_key:
+            raise DecisionError(f"{project.key} already has an open discovery ({str(open_discovery.id)[:8]}); "
+                                "finish or cancel it first")
     if kind != RunKind.FEATURE and experiment:
         raise DecisionError(f"an {kind.upper()} run cannot be an experiment")
     has_srs = any(i.get("name") == SRS_PATH and i.get("status") == "ok" for i in project.readiness_report.get("items", []))
@@ -88,7 +96,8 @@ def create_run(session: Session, project: Project, intent: Intent | ProjectBrief
         if not srs_item or srs_item.get("status") != "ok":
             raise DecisionError(f"{project.key} has no SRS.md with user stories on {project.default_branch}; "
                                 "write and merge the SRS first, then run the project check")
-    title = {RunKind.SRS: f"SRS: {intent.title}", RunKind.SDS: f"SDS: {intent.title}"}.get(kind, intent.title)
+    title = {RunKind.SRS: f"SRS: {intent.title}", RunKind.SDS: f"SDS: {intent.title}",
+             RunKind.DISCOVERY: f"Discovery: {intent.title}"}.get(kind, intent.title)
     run = Run(project_id=project.id, title=title, kind=kind.value, idempotency_key=idempotency_key,
               status=RunStatus.RECEIVED.value, experiment=experiment, base_commit=base_commit,
               stage_overrides=stage_overrides or {}, eval_run_id=eval_run_id, eval_case=eval_case)
@@ -97,7 +106,8 @@ def create_run(session: Session, project: Project, intent: Intent | ProjectBrief
     if not experiment:  # pinned at creation, so a later .env change never alters a run in flight
         engines = json.dumps(get_settings().default_engines)
         coordinator.store_artifact(session, run, "engines", TeamRole.COORDINATOR, engines)
-    render = {RunKind.SRS: render_brief, RunKind.SDS: render_architecture_brief}.get(kind, render_intent)
+    render = {RunKind.SRS: render_brief, RunKind.SDS: render_architecture_brief,
+              RunKind.DISCOVERY: render_request}.get(kind, render_intent)
     add_document(session, run.id, "intent", render(intent),
                  author_kind="human", author=actor, data=intent.model_dump())
     record_event(session, "intent.accepted", actor=actor, acting_role=PO, run_id=run.id, project_id=project.id,

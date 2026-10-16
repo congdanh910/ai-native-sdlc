@@ -639,6 +639,10 @@ def _apply_preflight(session: Session, run: Run, execution: Execution, result: d
         intent = latest_document(session, run.id, "intent")
         intent.commit_sha = commit_thread(session, run, "intent", intent.content,
                                           f"sdlc: intent for {run.title}")
+    if run.kind == RunKind.DISCOVERY:
+        transition_run(session, run, RunStatus.INGESTING, actor=COORDINATOR,
+                       reason="add the raw requirement sources, then start the extraction")
+        return
     enter_stage(session, run, "spec")
 
 

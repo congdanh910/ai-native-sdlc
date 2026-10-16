@@ -3,7 +3,7 @@
 from datetime import datetime
 import uuid
 
-from sqlalchemy import (Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint,
+from sqlalchemy import (BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint,
                         func)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -220,3 +220,21 @@ class Artifact(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     checksum: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = _created()
+
+
+class Source(Base):
+    """A raw requirement file of a discovery run, stored once per content hash."""
+    __tablename__ = "sources"
+    id: Mapped[uuid.UUID] = _id()
+    run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("runs.id"), nullable=False)
+    filename: Mapped[str] = mapped_column(String(200), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)  # pdf, image, docx, xlsx, pptx, text
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    size: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    pages: Mapped[int | None] = mapped_column(Integer)
+    path: Mapped[str] = mapped_column(Text, nullable=False)
+    text_path: Mapped[str | None] = mapped_column(Text)  # Markdown with locations, for docx/xlsx/pptx/text
+    uploaded_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    removed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)  # kept for the audit trail
+    created_at: Mapped[datetime] = _created()
+    __table_args__ = (UniqueConstraint("run_id", "sha256", name="uq_sources_run_sha"),)

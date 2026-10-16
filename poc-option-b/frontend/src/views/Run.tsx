@@ -8,10 +8,11 @@ import { Pipeline } from "../components/Pipeline";
 import { DecisionPanel } from "../components/Decision";
 import { CoverageMatrix, GroundingSummary } from "../components/Coverage";
 import { JobLog } from "../components/JobLog";
+import { SourcesTab } from "../components/Sources";
 import { PlanSummary } from "../components/PlanSummary";
 import { ActionButton, Badge, Card, Empty, ErrorBox, Loading, Markdown, Mono, PageHeader, Select, StatusBadge, Tabs } from "../components/ui";
 
-type Tab = "tasks" | "plan" | "thread" | "diff" | "events" | "work";
+type Tab = "sources" | "tasks" | "plan" | "thread" | "diff" | "events" | "work";
 
 const STEP_LABEL: Record<string, string> = {
   WRITING_TESTS: "QA writes tests", RED_CHECK: "Red check", CODING: "Developer", REMEDIATING: "Developer fixes", VALIDATING: "Validation",
@@ -154,8 +155,9 @@ function DocBody({ doc }: { doc: Doc }) {
 
 function ThreadTab({ run }: { run: RunDetail }) {
   const doc = projectDoc(run);
-  const kinds = doc ? ["intent", doc.kind, "report"] : ["intent", "spec", "tests", "analysis", "review", "report"];
-  const name = (kind: string) => (doc && kind === doc.kind ? doc.name : doc && kind === "intent" ? "brief.md" : kind === "tests" ? "test_cases.md" : `${kind}.md`);
+  const kinds = doc ? ["intent", doc.kind, "report"] : run.kind === "discovery" ? ["intent", "inventory", "questions", "decisions", "baseline", "report"]
+    : ["intent", "spec", "tests", "analysis", "review", "report"];
+  const name = (kind: string) => (doc && kind === doc.kind ? doc.name : (doc || run.kind === "discovery") && kind === "intent" ? "brief.md" : kind === "tests" ? "test_cases.md" : `${kind}.md`);
   return (
     <div className="flex flex-col gap-3">
       {kinds.map((kind) => (
@@ -333,8 +335,10 @@ export function RunView({ id }: { id: string }) {
   const refresh = () => { client.invalidateQueries({ queryKey: ["run", id] }); client.invalidateQueries({ queryKey: ["inbox"] }); };
   const select = (t: Tab) => { setTab(t); try { sessionStorage.setItem("runTab", t); } catch { /* ignore */ } };
   const spec = [...r.documents].reverse().find((d) => d.kind === "spec");
-  const srs = r.kind !== "feature";  // an SRS or SDS run has no tasks, plan or code
-  const shown: Tab = srs && ["tasks", "plan", "diff"].includes(tab) ? "thread" : tab;
+  const srs = r.kind !== "feature";  // an SRS, SDS or discovery run has no tasks, plan or code
+  const discovery = r.kind === "discovery";
+  const shown: Tab = discovery && ["tasks", "plan", "diff"].includes(tab) ? "sources"
+    : srs && ["tasks", "plan", "diff", "sources"].includes(tab) ? "thread" : !discovery && tab === "sources" ? "tasks" : tab;
   return (
     <>
       <nav aria-label="Breadcrumb" className="text-sm text-muted"><Link href="/runs">Runs</Link> / {r.project} / <Mono>{r.id.slice(0, 8)}</Mono></nav>
@@ -362,6 +366,7 @@ export function RunView({ id }: { id: string }) {
         <div className="flex min-w-0 flex-[999_1_620px] flex-col gap-4">
           <Tabs<Tab> value={shown} onChange={select} tabs={[
             ...(srs ? [] : [{ id: "tasks" as Tab, label: "Tasks", count: r.tasks.length }, { id: "plan" as Tab, label: "Plan", count: r.plans.length }]),
+            ...(discovery ? [{ id: "sources" as Tab, label: "Sources", count: r.sources?.length ?? 0 }] : []),
             { id: "thread", label: "Thread" },
             ...(srs ? [] : [{ id: "diff" as Tab, label: "Diff" }]),
             { id: "events", label: "Events" },
@@ -369,6 +374,7 @@ export function RunView({ id }: { id: string }) {
           ]} />
           {shown === "tasks" ? <TasksTab run={r} /> : null}
           {shown === "plan" ? (r.plans.length ? <Card className="p-5"><VersionPicker items={r.plans}>{(p) => <PlanBody plan={p} spec={spec} />}</VersionPicker></Card> : <Empty>No plan yet.</Empty>) : null}
+          {shown === "sources" ? <SourcesTab run={r} onChange={refresh} /> : null}
           {shown === "thread" ? <ThreadTab run={r} /> : null}
           {shown === "diff" ? <DiffTab run={r} /> : null}
           {shown === "events" ? <EventsTab run={r} /> : null}

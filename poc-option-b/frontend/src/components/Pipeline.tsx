@@ -9,6 +9,7 @@ interface Stage { key: string; label: string; detail: string; gate?: boolean; st
 export function stages(run: RunDetail): Stage[] {
   const has = (kind: string) => run.documents.some((d) => d.kind === kind);
   const approved = (stage: string) => run.approvals.some((a) => a.stage === stage && a.decision === "approve");
+  if (run.kind === "discovery") return discoveryStages(run, has, approved);
   if (run.kind !== "feature") return documentStages(run, has, approved);
   const plan = run.plans[run.plans.length - 1];
   const passed = run.tasks.filter((t) => t.status === "PASSED").length;
@@ -36,6 +37,22 @@ export function stages(run: RunDetail): Stage[] {
     { key: "coding", label: "Coding", detail: run.tasks.length ? `${passed}/${run.tasks.length} tasks passed` : "after the Quality gate" },
     { key: "review", label: "Review", detail: review ? `verdict ${verdict ?? "?"}` : "after coding" },
     { key: "gate3", label: "Gate 3", detail: pr?.merged_sha ? "merged" : pr ? (pr.simulated ? "simulated PR" : `PR #${pr.number}`) : "merge PR", gate: true },
+  ];
+  return withState(run, list, done);
+}
+
+/** A discovery: sources, extraction, clarification rounds, the PO's baseline, then the PR with requirements/. */
+function discoveryStages(run: RunDetail, has: (kind: string) => boolean, approved: (stage: string) => boolean): Stage[] {
+  const pr = run.pull_request;
+  const sources = run.sources?.length ?? 0;
+  const done = [sources > 0 && run.status !== "INGESTING", has("inventory"), approved("baseline") || run.status === "WAITING_BASELINE_APPROVAL",
+    approved("baseline"), !!pr && (pr.merged_sha !== null || run.status === "COMPLETED")];
+  const list: Omit<Stage, "state">[] = [
+    { key: "sources", label: "Sources", detail: sources ? `${sources} file(s)` : "add raw requirements" },
+    { key: "extract", label: "Extract", detail: has("inventory") ? "requirement inventory" : "Business Analyst" },
+    { key: "clarify", label: "Clarify", detail: "questions per role" },
+    { key: "baseline", label: "Baseline", detail: approved("baseline") ? "approved" : "PO approves", gate: true },
+    { key: "pr", label: "PR", detail: pr?.merged_sha ? "merged" : pr ? `PR #${pr.number}` : "requirements/ to the repo", gate: true },
   ];
   return withState(run, list, done);
 }
