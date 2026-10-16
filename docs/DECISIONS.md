@@ -23,3 +23,5 @@ Quyết định bền vững của dự án và lý do. Quyết định thiết 
 | 2026-10-16 | Bảng requirement: mỗi mục ghi trang của file (số riêng của tài liệu trong ngoặc); chỉ lấy requirement của sản phẩm, không lấy phần nói về chính tài liệu | Lần thử đầu lẫn "mục đích tài liệu" và số slide không mở được |
 | 2026-10-16 | Mỗi lượt BA đọc 10 trang PDF (`pages_per_read`, tối đa 20); lượt hỏng vì câu trả lời quá dài thì chia đôi, không thử lại cùng cỡ | 20 trang dày vượt giới hạn output của CLI, hỏng 3 lần liền |
 | 2026-10-16 | Từ D3 đến D6 chỉ thử trên file đạo văn; chạy lại cả 3 file khi xong D6, hỏi trước | Tiết kiệm hạn mức subscription |
+| 2026-10-16 | Extract again chỉ đọc nguồn và biên bản mới; REQ id không đổi giữa các vòng; không có gì mới thì không chạy | Tiết kiệm hạn mức; câu trả lời và quyết định trỏ vào REQ id phải còn đúng |
+| 2026-10-16 | Quyết định từ biên bản là `proposed` cho tới khi vai sở hữu duyệt; câu trả lời trực tiếp là `accepted` | AI không tự chốt thay người |

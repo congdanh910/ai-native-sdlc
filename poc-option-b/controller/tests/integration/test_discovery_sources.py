@@ -77,7 +77,7 @@ def test_one_open_discovery_per_project(db, sample_repo):
 
 def test_extraction_writes_an_inventory_whose_items_cite_their_sources(db, sample_repo):
     run = start(sample_repo)
-    assert client.post(f"/api/runs/{run}/extract").json()["detail"] == "add at least one source first"
+    assert client.post(f"/api/runs/{run}/extract").json()["detail"] == "add at least one requirement source first"
     upload(run, "deck.pdf", PDF)
     post(f"/api/runs/{run}/sources/text", {"title": "Workshop notes",
                                            "text": "## Reports\n- Customers export reports\n- Which formats?"})
@@ -96,7 +96,66 @@ def test_extraction_writes_an_inventory_whose_items_cite_their_sources(db, sampl
     assert data["problems"] == [] and data["gaps"][0]["question"] == "Which formats?"
     assert [p["covers"] for p in data["parts"]] == ["pages 1-3 of 3", "lines 1-5 of 5"]
     assert "| REQ-004 | Customers export reports |" in inventory["content"] and inventory["commit_sha"]
-    detail = post(f"/api/runs/{run}/extract", {})  # a second round from CLARIFYING
+    assert client.post(f"/api/runs/{run}/extract").json()["detail"].startswith("nothing new since inventory v1")
+    upload(run, "brief.docx", docx("Customers export reports."))  # a new source: a second round reads only it
+    detail = post(f"/api/runs/{run}/extract", {})
     drain()
     detail = client.get(f"/api/runs/{run}").json()
     assert [d["version"] for d in detail["documents"] if d["kind"] == "inventory"] == [1, 2]
+    second = [d for d in detail["documents"] if d["kind"] == "inventory"][-1]["inventory"]
+    assert len(second["parts"]) == 3 and second["parts"][-1]["covers"] == "lines 1-1 of 1"
+
+
+def test_a_round_of_questions_answers_minutes_and_extract_again(db, sample_repo):
+    run = start(sample_repo)
+    post(f"/api/runs/{run}/sources/text", {"title": "Brief", "text": "## Reports\n- Customers export reports\n"
+                                                                     "- Which formats?\n- Who may export?"})
+    post(f"/api/runs/{run}/extract", {})
+    drain()
+    detail = client.get(f"/api/runs/{run}").json()
+    questions = detail["questions"]
+    assert [(q["number"], q["question"], q["owner_role"], q["status"]) for q in questions] == [
+        ("Q-001", "Which formats?", "po", "open"), ("Q-002", "Who may export?", "po", "open")]
+    assert [r["id"] for r in detail["roles"]][:3] == ["po", "ba", "sa"]
+    items = {i["name"]: i["id"] for i in next(d for d in detail["documents"] if d["kind"] == "inventory")["inventory"]["items"]}
+    assert "Which formats" in client.get(f"/api/runs/{run}/workshop.md", params={"roles": "po"}).text
+    assert client.post(f"/api/runs/{run}/extract").json()["detail"].startswith("nothing new since inventory v1")
+
+    q1, q2 = questions[0]["id"], questions[1]["id"]
+    detail = post(f"/api/runs/{run}/questions/{q1}/answer", {"answer": "CSV and PDF"})
+    assert detail["decisions"][0] | {} == {**detail["decisions"][0], "id": "D-001", "basis": "answer", "status": "accepted",
+                                           "question": "Q-001", "items": ["Which formats?"]}
+    missing = client.post(f"/api/runs/{run}/questions/{q2}/status", json={"status": "deferred", "reason": ""})
+    assert missing.status_code == 422 or "say why" in missing.json()["detail"]
+    post(f"/api/runs/{run}/questions/{q2}/reassign", {"role": "dpo", "reason": "export of personal data"})
+    assert client.post(f"/api/runs/{run}/questions/{q2}/reassign", json={"role": "cfo"}).status_code == 409
+    detail = client.get(f"/api/runs/{run}").json()
+    assert [d["kind"] for d in detail["documents"]].count("decisions") >= 1
+    decisions_md = [d for d in detail["documents"] if d["kind"] == "decisions"][-1]["content"]
+    assert "| D-001 | CSV and PDF |" in decisions_md and "answer to Q-001" in decisions_md
+
+    post(f"/api/runs/{run}/sources/text", {"title": "Workshop 17-10", "purpose": "minutes",
+                                           "text": f"- Decision: only managers export (Q-002) {items['Customers export reports']}"})
+    detail = post(f"/api/runs/{run}/extract", {})
+    drain()
+    detail = client.get(f"/api/runs/{run}").json()
+    assert detail["status"] == "CLARIFYING" and "1 decision(s) from minutes to accept" in detail["reason"]
+    inventory = [d for d in detail["documents"] if d["kind"] == "inventory"][-1]["inventory"]
+    assert {i["name"]: i["id"] for i in inventory["items"]} == items  # ids stay across rounds
+    assert "chunks" not in inventory and inventory["decisions_applied"] == ["D-001"]
+    proposed = detail["decisions"][1]
+    assert (proposed["id"], proposed["basis"], proposed["status"], proposed["role"], proposed["question"]) == (
+        "D-002", "minutes", "proposed", "dpo", "Q-002")
+    post(f"/api/runs/{run}/decisions/2", {"accept": True})
+    detail = client.get(f"/api/runs/{run}").json()
+    assert detail["questions"][1]["status"] == "answered" and detail["questions"][1]["answer"].startswith("only managers export")
+
+    post(f"/api/runs/{run}/extract", {})  # D-002 is new: the mock confirms the item it names
+    drain()
+    detail = client.get(f"/api/runs/{run}").json()
+    inventory = [d for d in detail["documents"] if d["kind"] == "inventory"][-1]
+    export = next(i for i in inventory["inventory"]["items"] if i["name"] == "Customers export reports")
+    assert export["status"] == "confirmed" and export["sources"][-1]["source"] == "decision:D-002"
+    assert inventory["inventory"]["problems"] == []
+    jobs = [e for e in detail["executions"] if e["kind"] == "extract"]
+    assert len(jobs) == 3

@@ -42,6 +42,9 @@ class CompositeTeam:
     def consolidate(self, *args, **kwargs):
         return self.thinking.consolidate(*args, **kwargs)
 
+    def read_minutes(self, *args, **kwargs):
+        return self.thinking.read_minutes(*args, **kwargs)
+
     def write_tests(self, *args, **kwargs):
         return self.doing.write_tests(*args, **kwargs)
 

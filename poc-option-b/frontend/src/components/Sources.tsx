@@ -18,6 +18,7 @@ export function SourcesTab({ run, onChange }: { run: RunDetail; onChange: () => 
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
   const [paste, setPaste] = useState({ title: "", text: "" });
+  const [minutes, setMinutes] = useState(false);  // the next files or text are minutes of a meeting
   const [preview, setPreview] = useState<{ name: string; text: string } | null>(null);
   const sources = run.sources ?? [];
 
@@ -26,7 +27,7 @@ export function SourcesTab({ run, onChange }: { run: RunDetail; onChange: () => 
     try {
       for (const file of Array.from(files)) {
         try {
-          await uploadFile(`/api/runs/${run.id}/sources?filename=${encodeURIComponent(file.name)}`, file);
+          await uploadFile(`/api/runs/${run.id}/sources?filename=${encodeURIComponent(file.name)}${minutes ? "&purpose=minutes" : ""}`, file);
           toast.success(`${file.name} added`);
         } catch (e) {
           toast.error(`${file.name}: ${(e as Error).message}`);
@@ -60,6 +61,10 @@ export function SourcesTab({ run, onChange }: { run: RunDetail; onChange: () => 
             <span className="text-xs text-muted">Slides, documents, sheets, images and minutes: PDF, DOCX, XLSX, PPTX, PNG, JPG, MD, TXT. Each file is stored with its SHA-256.</span>
             <input ref={input} type="file" multiple className="hidden" onChange={(e) => { if (e.target.files?.length) send(e.target.files); e.target.value = ""; }} />
           </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={minutes} onChange={(e) => setMinutes(e.target.checked)} />
+            These are <b>minutes of a meeting</b> (or an email or chat with decisions): the Business Analyst reads the decisions in them at the next extraction, and their owners accept or reject each one.
+          </label>
           <details>
             <summary className="cursor-pointer text-sm font-semibold">Paste text (an email, chat or meeting notes)</summary>
             <div className="mt-2 flex flex-col gap-2">
@@ -67,7 +72,7 @@ export function SourcesTab({ run, onChange }: { run: RunDetail; onChange: () => 
               <Field label="Text" htmlFor="paste-text"><Textarea id="paste-text" className="min-h-32" value={paste.text} onChange={(e) => setPaste({ ...paste, text: e.target.value })} /></Field>
               <div>
                 <ActionButton success="Text added as a source" action={async () => {
-                  await api(`/api/runs/${run.id}/sources/text`, { method: "POST", body: { title: paste.title || "Pasted text", text: paste.text } });
+                  await api(`/api/runs/${run.id}/sources/text`, { method: "POST", body: { title: paste.title || "Pasted text", text: paste.text, purpose: minutes ? "minutes" : "requirements" } });
                   setPaste({ title: "", text: "" });
                   onChange();
                 }}>Add as a source</ActionButton>
@@ -84,7 +89,7 @@ export function SourcesTab({ run, onChange }: { run: RunDetail; onChange: () => 
               {sources.map((s) => (
                 <tr key={s.id}>
                   <td className="border-b border-line px-3 py-2"><a href={`/api/runs/${run.id}/sources/${s.id}/file`} target="_blank" rel="noopener" className="font-semibold">{s.filename}</a></td>
-                  <td className="border-b border-line px-3 py-2 uppercase text-muted">{s.kind}</td>
+                  <td className="border-b border-line px-3 py-2 uppercase text-muted">{s.kind}{s.purpose === "minutes" ? <span className="ml-1 normal-case text-accent-ink">· minutes</span> : null}</td>
                   <td className="border-b border-line px-3 py-2">{s.pages ?? "?"}</td>
                   <td className="border-b border-line px-3 py-2 text-muted">{size(s.size)}</td>
                   <td className="border-b border-line px-3 py-2"><Mono className="text-muted">{short(s.sha256, 12)}</Mono></td>

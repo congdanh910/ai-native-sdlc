@@ -47,7 +47,9 @@ def _document(document: Document) -> dict:
             "author_kind": document.author_kind, "author": document.author, "content": document.content,
             "repo_path": document.repo_path, "commit_sha": document.commit_sha,
             "findings": (document.data or {}).get("sync_findings", []),
-            **({"inventory": document.data} if document.kind == "inventory" else {}),
+            # the per-source chunks are kept for the next round only; the page needs the merged inventory
+            **({"inventory": {k: v for k, v in (document.data or {}).items() if k != "chunks"}}
+               if document.kind == "inventory" else {}),
             "created_at": document.created_at.isoformat()}
 
 
@@ -55,6 +57,27 @@ def _plan(plan: Plan) -> dict:
     return {"id": str(plan.id), "version": plan.version, "sha256": plan.sha256, "author_kind": plan.author_kind,
             "author": plan.author, "plan": plan.payload, "test_plan": plan.test_plan,
             "grounding": plan.grounding_report, "commit_sha": plan.commit_sha, "created_at": plan.created_at.isoformat()}
+
+
+def _discovery(session: Session, run: Run) -> dict:
+    """Questions by role, decisions and the project's discovery roles, for the Questions and Decisions tabs."""
+    from controller.app.discovery import questions as q
+    from controller.app.discovery.service import discovery_config
+    config = discovery_config(session, run)
+    run_questions = q.questions(session, run.id)
+    by_id = {x.id: x for x in run_questions}
+    return {
+        "roles": [r.model_dump() for r in config.roles],
+        "questions": [{"id": str(x.id), "number": q.number(run_questions, x), "kind": x.kind, "question": x.question,
+                       "why": x.why, "suggestion": x.suggestion, "items": x.items or [], "citations": x.citations or [],
+                       "blocking": x.blocking, "owner_role": x.owner_role, "status": x.status,
+                       "status_reason": x.status_reason, "answer": x.answer, "answered_by": x.answered_by,
+                       "round": x.round} for x in run_questions],
+        "decisions": [{"number": d.number, "id": q.decision_id(d), "text": d.text, "basis": d.basis,
+                       "question": q.number(run_questions, by_id[d.question_id]) if d.question_id in by_id else None,
+                       "source": str(d.source_id) if d.source_id else None, "location": d.location, "items": d.items,
+                       "role": d.role, "status": d.status, "proposed_by": d.proposed_by, "decided_by": d.decided_by,
+                       "reason": d.reason} for d in q.decisions(session, run.id)]}
 
 
 def run_detail(session: Session, run: Run) -> dict:
@@ -80,11 +103,14 @@ def run_detail(session: Session, run: Run) -> dict:
         "tasks": [{"id": t.external_task_id, "title": t.payload["title"], "status": t.status,
                    "attempts": t.attempt_count, "depends_on": t.payload.get("depends_on", [])} for t in tasks],
         "clarifications": [{"id": str(c.id), "question": c.question, "blocking": c.blocking, "answer": c.answer}
-                           for c in session.scalars(select(Clarification).where(Clarification.run_id == run.id)
+                           for c in session.scalars(select(Clarification).where(Clarification.run_id == run.id,
+                                                                                Clarification.status.is_(None))
                                                     .order_by(Clarification.created_at))],
+        **(_discovery(session, run) if run.kind == "discovery" else {}),
         "checklist": evaluate_gate(session, run) if run.status in WAITING_GATES else None,
         "sources": [{"id": str(s.id), "filename": s.filename, "kind": s.kind, "sha256": s.sha256, "size": s.size,
                      "pages": s.pages, "has_text": bool(s.text_path) or s.kind == "text", "uploaded_by": s.uploaded_by,
+                     "purpose": s.purpose,
                      "created_at": s.created_at.isoformat()}
                     for s in session.scalars(select(Source).where(Source.run_id == run.id, Source.removed.is_(False))
                                              .order_by(Source.created_at))],

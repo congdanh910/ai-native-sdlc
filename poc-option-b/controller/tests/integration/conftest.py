@@ -6,7 +6,7 @@ from controller.app.db import get_engine
 from controller.app.projects import registry
 from controller.tests.conftest import TEST_DB
 
-TABLES = ("events", "approvals", "pull_requests", "executions", "tasks", "plans", "clarifications", "documents", "sources",
+TABLES = ("events", "approvals", "pull_requests", "executions", "tasks", "plans", "decisions", "clarifications", "documents", "sources",
           "artifacts", "runs", "eval_runs", "projects")
 
 

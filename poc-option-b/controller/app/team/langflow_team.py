@@ -16,8 +16,8 @@ from controller.app import capacity, joblog
 from controller.app.config import Settings
 from controller.app.integrations.langflow import (InvalidModelOutput, LangflowClient, client_from_settings,
                                                   extract_json, role_prompt)
-from controller.app.discovery.extract import Part, compact_items, repair_chunk, repair_consolidation
-from controller.app.discovery.inventory import ChunkResult, Consolidation
+from controller.app.discovery.extract import Part, compact_items, repair_chunk, repair_consolidation, repair_minutes
+from controller.app.discovery.inventory import ChunkResult, Consolidation, MinutesResult
 from controller.app.project_docs import Sds, Srs, srs_features
 from controller.app.projects.config import matches_any
 from controller.app.schemas import NOTES_HEADING, Intent, PlanPayload, Review, Spec, TestPlan, parse_criteria
@@ -222,13 +222,24 @@ class LangflowTeam(MockTeam):
         return self._ask("extract", payload, ChunkResult, lambda data: repair_chunk(data, part), context.session_id,
                          retries=context.policy.max_format_retries)
 
-    def consolidate(self, context: RunContext, items: list[dict], gaps: list[dict]) -> Consolidation:
+    def consolidate(self, context: RunContext, items: list[dict], gaps: list[dict], decisions: list[dict] = (),
+                    asked: list[str] = ()) -> Consolidation:
         payload = {"request": context.intent_md, "items": compact_items(items),
                    "gaps": [{"kind": g["kind"], "question": g["question"]} for g in gaps],
+                   "decisions": list(decisions), "asked": list(asked),
                    "agents_md": context.agents_md, "feedback": context.feedback}
         return self._ask("consolidate", payload, Consolidation, repair_consolidation, context.session_id,
                          retries=context.policy.max_format_retries)
 
+    def read_minutes(self, context: RunContext, part: Part, questions: list[dict], items: list[dict]) -> MinutesResult:
+        if part.file and not self.reads_files:
+            raise ValueError(f"{self.engine} cannot read {part.kind.upper()} minutes such as {part.filename}; "
+                             "put the business_analyst on claude-readonly (SDLC_ENGINES)")
+        payload = {**part.as_input(), "request": context.intent_md, "questions": questions,
+                   "items": [{k: i[k] for k in ("id", "type", "name", "parent")} for i in items],
+                   "feedback": context.feedback}
+        return self._ask("minutes", payload, MinutesResult, lambda data: repair_minutes(data, part), context.session_id,
+                         retries=context.policy.max_format_retries)
 
 def _describe(exc: Exception) -> str:
     if isinstance(exc, ValidationError):

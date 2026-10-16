@@ -69,7 +69,19 @@ export async function uploadFile<T = unknown>(path: string, file: File): Promise
 
 export interface SourceFile {
   id: string; filename: string; kind: string; sha256: string; size: number; pages: number | null;
-  has_text: boolean; uploaded_by: string; created_at: string;
+  has_text: boolean; uploaded_by: string; created_at: string; purpose: "requirements" | "minutes";
+}
+
+export interface Question {
+  id: string; number: string; kind: string; question: string; why: string | null; suggestion: string | null;
+  items: string[]; citations: Citation[]; blocking: boolean; owner_role: string;
+  status: "open" | "answered" | "deferred" | "withdrawn"; status_reason: string | null; answer: string | null;
+  answered_by: string | null; round: number | null;
+}
+export interface DiscoveryDecision {
+  number: number; id: string; text: string; basis: "answer" | "minutes"; question: string | null; source: string | null;
+  location: string | null; items: string[]; role: string; status: "proposed" | "accepted" | "rejected";
+  proposed_by: string; decided_by: string | null; reason: string | null;
 }
 
 export type Waiting = { role: string; action: string; stage?: string | null } | null;
@@ -188,6 +200,9 @@ export interface RunDetail extends RunSummary {
   approvals: { stage: string; decision: string; actor: string; role: string; reason: string | null; checklist: Partial<GateChecklist>; created_at: string }[];
   checklist: GateChecklist | null;
   sources?: SourceFile[];
+  roles?: { id: string; name: string }[];  // discovery: the project's discovery roles
+  questions?: Question[];
+  decisions?: DiscoveryDecision[];
   pull_request: {
     url: string | null; number: number | null; head_sha: string | null; ci_status: string; review_status: string;
     merged_sha: string | null; simulated: boolean;

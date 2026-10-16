@@ -91,7 +91,9 @@ Loại câu hỏi chung: `scope`, `actor`, `permission`, `rule`, `threshold` (s�
 
 - Mỗi câu hỏi có: loại, câu hỏi, lý do hỏi, REQ và nguồn liên quan, gợi ý câu trả lời nếu có, `blocking` (chặn baseline hay không), và **vai trả lời**. Vai được gán theo loại câu hỏi, cấu hình ở mục 7.
 - Câu hỏi gửi khách hàng đi qua vai được cấu hình (thường là Sales). Ai trả lời được ghi lại, và câu trả lời ghi rõ "từ khách hàng, qua Sales".
-- **Workshop:** BA (AI) soạn danh sách câu hỏi cho buổi họp, nhóm theo vai tham dự. Sau buổi họp, tải biên bản lên; BA rút ra quyết định và đánh dấu câu hỏi đã được trả lời. Người có vai tương ứng duyệt từng quyết định trước khi nó được tính.
+- **Trả lời và quyết định:** người của vai trả lời trên tab Questions; mỗi câu trả lời thành một quyết định `accepted` (D-001…). Câu hỏi có thể hoãn, rút (kèm lý do) hoặc chuyển vai. Câu hỏi đánh số Q-001… theo thứ tự được nêu. Mỗi vòng thêm tối đa `max_questions_per_round` câu mới (câu chặn trước), không lặp câu đã hỏi.
+- **Extract again** chỉ đọc nguồn mới và biên bản mới; nguồn đã đọc dùng lại kết quả vòng trước. REQ id **không đổi** giữa các vòng (khớp theo loại, thuộc về, tên hoặc tên gọi khác; mục mới đánh số tiếp). Quyết định đã duyệt được BA áp vào bảng: `confirmed`, `changed` (kèm text mới) hoặc `out_of_scope`, và mục đó trích dẫn quyết định. Không có gì mới thì không cho chạy, để khỏi tốn hạn mức.
+- **Workshop:** nút **Workshop list** xuất danh sách câu hỏi đang mở cho buổi họp, nhóm theo vai tham dự, câu chặn trước (lấy thẳng từ dữ liệu, không gọi AI). Sau buổi họp, tải biên bản lên (đánh dấu "minutes of a meeting"); BA rút ra quyết định `proposed` và nối với câu hỏi nó trả lời. Người có vai tương ứng duyệt từng quyết định trước khi nó được tính; duyệt xong thì câu hỏi được đánh dấu đã trả lời.
 
 ## 5. Nối vào run SRS và SDS hiện có
 

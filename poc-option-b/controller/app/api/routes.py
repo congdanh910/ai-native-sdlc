@@ -5,7 +5,7 @@ from typing import Literal
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 
@@ -14,6 +14,7 @@ from controller.app.api import views
 from controller.app.config import get_settings
 from controller.app.db import session_scope
 from controller.app.discovery import service as discovery
+from controller.app.discovery import questions
 from controller.app.discovery.service import DiscoveryRequest
 from controller.app.models import EvalRun, Execution, Project, Run, Source
 from controller.app.projects import registry
@@ -241,18 +242,82 @@ def execution_log(run_id: uuid.UUID, execution_id: uuid.UUID, offset: int = 0) -
 class TextSource(Body):
     title: str = Field(min_length=1, max_length=120)
     text: str = Field(min_length=1)
+    purpose: str = "requirements"  # or "minutes"
 
 
 @router.post("/runs/{run_id}/sources")
-async def upload_source(run_id: uuid.UUID, filename: str, request: Request) -> dict:
-    """The file is the raw request body (no multipart), named by the `filename` query parameter."""
+async def upload_source(run_id: uuid.UUID, filename: str, request: Request, purpose: str = "requirements") -> dict:
+    """The file is the raw request body (no multipart), named by the `filename` query parameter; `purpose=minutes`
+    marks minutes of a meeting, whose decisions the Business Analyst reads."""
     data = await request.body()
-    return _decide(run_id, lambda s, r: discovery.add_source(s, r, filename, data, actor=operator()))
+    return _decide(run_id, lambda s, r: discovery.add_source(s, r, filename, data, actor=operator(), purpose=purpose))
 
 
 @router.post("/runs/{run_id}/sources/text")
 def paste_source(run_id: uuid.UUID, body: TextSource) -> dict:
-    return _decide(run_id, lambda s, r: discovery.add_text_source(s, r, body.title, body.text, actor=operator()))
+    return _decide(run_id, lambda s, r: discovery.add_text_source(s, r, body.title, body.text, actor=operator(),
+                                                                  purpose=body.purpose))
+
+
+class Answer(Body):
+    answer: str = Field(min_length=1)
+
+
+class QuestionStatus(Body):
+    status: str  # open, deferred, withdrawn
+    reason: str = Field(min_length=1)
+
+
+class Reassign(Body):
+    role: str
+    reason: str = ""
+
+
+class DecisionVerdict(Body):
+    accept: bool
+    reason: str = ""
+
+
+def _discovery(run_id: uuid.UUID, action) -> dict:
+    """A discovery decision, then questions.md and decisions.md as they stand."""
+    def run(session, r):
+        action(session, r)
+        discovery.refresh_documents(session, r)
+    return _decide(run_id, run)
+
+
+@router.post("/runs/{run_id}/questions/{question_id}/answer")
+def answer_question(run_id: uuid.UUID, question_id: uuid.UUID, body: Answer) -> dict:
+    return _discovery(run_id, lambda s, r: questions.answer(s, r, question_id, body.answer, actor=operator()))
+
+
+@router.post("/runs/{run_id}/questions/{question_id}/status")
+def question_status(run_id: uuid.UUID, question_id: uuid.UUID, body: QuestionStatus) -> dict:
+    return _discovery(run_id, lambda s, r: questions.set_status(s, r, question_id, body.status, actor=operator(),
+                                                                reason=body.reason))
+
+
+@router.post("/runs/{run_id}/questions/{question_id}/reassign")
+def reassign_question(run_id: uuid.UUID, question_id: uuid.UUID, body: Reassign) -> dict:
+    return _discovery(run_id, lambda s, r: questions.reassign(s, r, question_id, body.role,
+                                                              discovery.discovery_config(s, r), actor=operator(),
+                                                              reason=body.reason))
+
+
+@router.post("/runs/{run_id}/decisions/{number}")
+def decide_decision(run_id: uuid.UUID, number: int, body: DecisionVerdict) -> dict:
+    return _discovery(run_id, lambda s, r: questions.decide(s, r, number, body.accept, actor=operator(),
+                                                            reason=body.reason))
+
+
+@router.get("/runs/{run_id}/workshop.md", response_class=PlainTextResponse)
+def workshop(run_id: uuid.UUID, roles: str = "") -> str:
+    """The open questions of the roles that attend a meeting (comma-separated role ids; empty = every role)."""
+    with session_scope() as session:
+        run = services.get_run(session, run_id)
+        config = discovery.discovery_config(session, run)
+        return questions.workshop(questions.questions(session, run.id), config,
+                                  [r for r in roles.split(",") if r], run.title.removeprefix("Discovery: "))
 
 
 @router.post("/runs/{run_id}/extract")

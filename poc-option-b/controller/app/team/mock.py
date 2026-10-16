@@ -194,6 +194,22 @@ class MockTeam:
                     gaps.append(Gap(kind="scope", question=body, items=[body[:80]], sources=cite))
         return ChunkResult(items=items, gaps=gaps, read=[part.label])
 
-    def consolidate(self, context: RunContext, items: list[dict], gaps: list[dict]):
-        from controller.app.discovery.inventory import Consolidation
-        return Consolidation()
+    def consolidate(self, context: RunContext, items: list[dict], gaps: list[dict], decisions=(), asked=()):
+        """Each decision confirms the items it names; a decision that says "out of scope" takes them out."""
+        from controller.app.discovery.inventory import Consolidation, Update
+        updates = [Update(id=item, decision=d["id"], status="out_of_scope" if "out of scope" in d["text"].lower() else "confirmed")
+                   for d in decisions for item in d.get("items", [])]
+        return Consolidation(updates=updates)
+
+    def read_minutes(self, context: RunContext, part, questions: list[dict], items: list[dict]):
+        """A line "Decision: ..." is a decision; "(Q-001)" in it answers that question, REQ ids in it are its items."""
+        from controller.app.discovery.inventory import MinutesDecision, MinutesResult
+        out = []
+        for line in part.text.splitlines():
+            match = re.search(r"Decision:\s*(.+)", line)
+            if match:
+                text = match[1].strip()
+                question = re.search(r"\((Q-\d+)\)", text)
+                out.append(MinutesDecision(text=re.sub(r"\s*\(Q-\d+\)", "", text), question=question[1] if question else "",
+                                           items=re.findall(r"REQ-\d+", text), location=part.label))
+        return MinutesResult(decisions=out, read=[part.label])

@@ -50,7 +50,7 @@ def chunk(*items, gaps=(), read=()):
                                        "gaps": list(gaps), "read": list(read)})
 
 
-def test_parts_merge_into_one_numbered_inventory_and_consolidation_renumbers():
+def test_parts_merge_into_one_numbered_inventory_and_ids_never_change():
     first = chunk(({"type": "actor", "name": "Operator"}, "page 2"), ({"type": "feature", "name": "Live view"}, "page 4"),
                   gaps=[{"kind": "actor", "question": "Who approves?", "items": ["Operator"]}], read=["page 1", "page 2"])
     second = chunk(({"type": "feature", "name": "live  VIEW"}, "page 21"), ({"type": "actor", "name": "Monitoring staff"}, "page 22"),
@@ -66,8 +66,8 @@ def test_parts_merge_into_one_numbered_inventory_and_consolidation_renumbers():
         "merges": [{"keep": "REQ-001", "drop": ["REQ-003", "REQ-002"], "name": ""}],  # REQ-002 is a feature: kept apart
         "gaps": [{"kind": "conflict", "question": "Is live view in phase 1?", "items": ["REQ-002", "REQ-004"]}]}))
     assert [(i.id, i.name, i.aliases) for i in merged.items] == [("REQ-001", "Operator", ["Monitoring staff"]),
-                                                                  ("REQ-002", "Live view", []), ("REQ-003", "Watch", [])]
-    assert merged.gaps[1].items == ["REQ-002", "REQ-003"]
+                                                                  ("REQ-002", "Live view", []), ("REQ-004", "Watch", [])]
+    assert merged.gaps[1].items == ["REQ-002", "REQ-004"]
     assert check(merged, {"s1"}) == []  # "Monitoring staff" is now an alias of the Operator
     assert check(inventory.model_copy(update={"items": inventory.items[:3] + [inventory.items[3].model_copy(
         update={"parent": "Guest"})]}), {"s2"})[-1] == "REQ-004 gives a permission to Guest, who is not listed as an actor"
@@ -116,8 +116,44 @@ def test_a_part_whose_answer_is_unusable_is_halved_and_read_again(settings):
     team = LongAnswers()
     base = context()
     loaded = Loaded(None, "extract", None, 1, context=base,
-                    extra={"parts": [Part("s1", "d.pdf", "pdf", "pages 1-2 of 2", file="d.pdf", pages="1-2")]})
+                    extra={"parts": [Part("s1", "d.pdf", "pdf", "pages 1-2 of 2", file="d.pdf", pages="1-2")],
+                           "minutes": [], "reused": {}, "previous": None, "previous_parts": [], "minutes_read": [],
+                           "questions": [], "asked": [], "decisions": []})
     result = _extract(team, loaded)
     assert team.seen == [("pages 1-2 of 2", 0), ("pages 1-1 of 2", base.policy.max_format_retries),
                          ("pages 2-2 of 2", base.policy.max_format_retries)]
     assert [p["covers"] for p in result["parts"]] == ["pages 1-1 of 2", "pages 2-2 of 2"]
+
+
+def test_a_second_round_keeps_ids_and_statuses_and_decisions_change_items():
+    from controller.app.discovery.inventory import Item
+    first = chunk(({"type": "actor", "name": "Operator", "aliases": ["Monitoring staff"]}, "page 2"),
+                  ({"type": "feature", "name": "Live view"}, "page 4"))
+    previous = merge_chunks([("s1", first)])
+    previous = previous.model_copy(update={"items": [previous.items[0], previous.items[1].model_copy(
+        update={"status": "confirmed"})]})
+    again = chunk(({"type": "feature", "name": "Export"}, "page 9"), ({"type": "feature", "name": "Live view"}, "page 4"),
+                  ({"type": "actor", "name": "Monitoring staff"}, "page 2"))
+    round2 = merge_chunks([("s1", again)], previous)
+    assert [(i.id, i.name, i.status) for i in round2.items] == [("REQ-001", "Operator", "proposed"),
+                                                                ("REQ-002", "Live view", "confirmed"),
+                                                                ("REQ-003", "Export", "proposed")]
+    decided = apply_consolidation(round2, Consolidation.model_validate({"updates": [
+        {"id": "REQ-003", "decision": "D-001", "status": "out of scope"},
+        {"id": "REQ-001", "decision": "D-009", "status": "confirmed"}]}), decisions={"D-001"})
+    export = decided.items[2]
+    assert export.status == "out_of_scope" and export.sources[-1].source == "decision:D-001"
+    assert decided.items[0].status == "proposed"  # D-009 is not an accepted decision
+    assert check(decided, {"s1"}, {"D-001"}) == [] and "cites unknown sources decision:D-001" in check(decided, {"s1"})[0]
+    assert "| REQ-003 | Export | — | — | — | out_of_scope | — | deck.pdf page 9; D-001 |" in render("T", decided, {"s1": "deck.pdf"})
+
+
+def test_an_inventory_from_before_rounds_becomes_chunks_per_source():
+    from controller.app.coordinator import _chunks_from
+    first = chunk(({"type": "actor", "name": "Operator"}, "page 2"), gaps=[{"kind": "actor", "question": "Who approves?"}],
+                  read=["page 1"])
+    data = merge_chunks([("s1", first)]).model_dump()
+    chunks = _chunks_from(data)
+    assert list(chunks) == ["s1"] and chunks["s1"][0]["read"] == ["page 1"]
+    again = merge_chunks([("s1", ChunkResult.model_validate(chunks["s1"][0]))], Inventory.model_validate(data))
+    assert [(i.id, i.name) for i in again.items] == [("REQ-001", "Operator")] and again.gaps[0].question == "Who approves?"

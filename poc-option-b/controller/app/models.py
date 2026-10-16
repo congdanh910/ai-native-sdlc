@@ -111,6 +111,18 @@ class Clarification(Base):
     answer: Mapped[str | None] = mapped_column(Text)
     answered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = _created()
+    # Discovery questions only: what kind, who answers (a role id of the project's discovery.roles), where it stands.
+    kind: Mapped[str | None] = mapped_column(String(32))
+    owner_role: Mapped[str | None] = mapped_column(String(32))
+    status: Mapped[str | None] = mapped_column(String(16))  # open / answered / deferred / withdrawn
+    why: Mapped[str | None] = mapped_column(Text)
+    suggestion: Mapped[str | None] = mapped_column(Text)
+    items: Mapped[list | None] = mapped_column(JSONB)  # REQ ids the question is about
+    citations: Mapped[list | None] = mapped_column(JSONB)  # [{source, location}]
+    round: Mapped[int | None] = mapped_column(Integer)  # the extraction round that raised it
+    position: Mapped[int | None] = mapped_column(Integer)  # Q-001 ... in the order the questions were raised
+    answered_by: Mapped[str | None] = mapped_column(String(64))
+    status_reason: Mapped[str | None] = mapped_column(Text)  # why it was deferred, withdrawn or reassigned
 
 
 class Plan(Base):
@@ -236,5 +248,29 @@ class Source(Base):
     text_path: Mapped[str | None] = mapped_column(Text)  # Markdown with locations, for docx/xlsx/pptx/text
     uploaded_by: Mapped[str] = mapped_column(String(64), nullable=False)
     removed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)  # kept for the audit trail
+    purpose: Mapped[str] = mapped_column(String(16), nullable=False, default="requirements")  # or "minutes"
     created_at: Mapped[datetime] = _created()
     __table_args__ = (UniqueConstraint("run_id", "sha256", name="uq_sources_run_sha"),)
+
+
+class Decision(Base):
+    """A discovery decision: an answer to a question, or what minutes of a meeting decided. Decisions the Business
+    Analyst reads from minutes are proposed until the role that owns them accepts them."""
+    __tablename__ = "decisions"
+    id: Mapped[uuid.UUID] = _id()
+    run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("runs.id"), nullable=False)
+    number: Mapped[int] = mapped_column(Integer, nullable=False)  # D-001 ...
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    basis: Mapped[str] = mapped_column(String(16), nullable=False)  # answer / minutes
+    question_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("clarifications.id"))
+    source_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("sources.id"))
+    location: Mapped[str | None] = mapped_column(Text)
+    items: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)  # who owns it
+    status: Mapped[str] = mapped_column(String(16), nullable=False)  # proposed / accepted / rejected
+    proposed_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    decided_by: Mapped[str | None] = mapped_column(String(64))
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = _created()
+    __table_args__ = (UniqueConstraint("run_id", "number", name="uq_decisions_run_number"),)

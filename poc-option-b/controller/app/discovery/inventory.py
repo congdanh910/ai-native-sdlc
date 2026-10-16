@@ -34,7 +34,7 @@ class Item(Contract):
     phase: str = ""  # release phase or priority as the source says it
     source_ref: str = ""  # the id the source itself uses, such as "BR-01" or "F03"
     aliases: list[str] = []  # other names the sources use for the same thing (actors and terms mostly)
-    status: str = "proposed"  # proposed / confirmed / changed / out_of_scope
+    status: str = "proposed"  # proposed / confirmed / changed / out_of_scope, changed only by decisions
     sources: list[Citation] = Field(min_length=1)
 
     @field_validator("type")
@@ -69,16 +69,49 @@ class ChunkResult(Contract):
     read: list[str] = []  # locations it read, to show coverage
 
 
+class MinutesDecision(Contract):
+    text: str = Field(min_length=1)
+    question: str = ""  # Q-003 when it answers an open question
+    items: list[str] = []  # REQ ids it is about
+    location: str = ""
+
+
+class MinutesResult(Contract):
+    """What the Business Analyst reads in one part of meeting minutes: the decisions taken there."""
+    decisions: list[MinutesDecision] = []
+    read: list[str] = []
+
+
 class Merge(Contract):
     keep: str  # REQ id
     drop: list[str] = Field(min_length=1)  # REQ ids that are the same thing as `keep`
     name: str = ""  # better name for the kept item, if any
 
 
+STATUSES = ("proposed", "confirmed", "changed", "out_of_scope")
+
+
+class Update(Contract):
+    """What a decision changes in one item: its status, its text, or both."""
+    id: str
+    decision: str  # D-001
+    status: str = ""
+    text: str = ""
+
+    @field_validator("status")
+    @classmethod
+    def _status(cls, value: str) -> str:
+        value = value.strip().lower().replace(" ", "_")
+        if value and value not in STATUSES:
+            raise ValueError(f"status must be one of {', '.join(STATUSES)}")
+        return value
+
+
 class Consolidation(Contract):
     """The Business Analyst's pass over the whole merged inventory."""
     merges: list[Merge] = []
     gaps: list[Gap] = []
+    updates: list[Update] = []  # what the accepted decisions change
 
 
 class Inventory(Contract):
@@ -87,14 +120,23 @@ class Inventory(Contract):
     coverage: dict[str, list[str]] = {}  # source id -> locations read
 
 
+def _norm(text: str) -> str:
+    return re.sub(r"\W+", " ", text.lower()).strip()
+
+
 def _key(item: Item) -> tuple[str, str, str]:
-    norm = lambda s: re.sub(r"\W+", " ", s.lower()).strip()
-    return item.type, norm(item.parent), norm(item.name)
+    return item.type, _norm(item.parent), _norm(item.name)
 
 
-def merge_chunks(chunks: list[tuple[str, ChunkResult]]) -> Inventory:
+def _number(item_id: str) -> int:
+    match = re.fullmatch(r"REQ-(\d+)", item_id)
+    return int(match[1]) if match else 0
+
+
+def merge_chunks(chunks: list[tuple[str, ChunkResult]], previous: Inventory | None = None) -> Inventory:
     """Items of every chunk in reading order; the same type, parent and name across chunks is one item whose
-    citations and aliases are joined. Ids are assigned after merging, so they have no gaps."""
+    citations and aliases are joined. An item the previous round already had (by name or alias) keeps its id and
+    status, so answers and decisions that cite REQ ids stay valid; new items are numbered after the highest id."""
     merged: dict[tuple, Item] = {}
     gaps: list[Gap] = []
     coverage: dict[str, list[str]] = {}
@@ -103,21 +145,42 @@ def merge_chunks(chunks: list[tuple[str, ChunkResult]]) -> Inventory:
         coverage[source_id] += [r for r in chunk.read if r not in coverage[source_id]]
         for item in chunk.items:
             key = _key(item)
-            if key in merged:
-                current = merged[key]
-                citations = current.sources + [c for c in item.sources if c not in current.sources]
-                aliases = current.aliases + [a for a in item.aliases if a not in current.aliases]
-                text = current.text if len(current.text) >= len(item.text) else item.text
-                merged[key] = current.model_copy(update={"sources": citations, "aliases": aliases, "text": text})
-            else:
-                merged[key] = item
+            merged[key] = _join(merged[key], item) if key in merged else item
         gaps += chunk.gaps
-    items = [item.model_copy(update={"id": f"REQ-{index:03d}"}) for index, item in enumerate(merged.values(), start=1)]
+    known: dict[tuple, Item] = {}
+    for old in (previous.items if previous else []):
+        for name in [old.name, *old.aliases]:
+            known.setdefault((old.type, _norm(old.parent), _norm(name)), old)
+    next_number = max([_number(i.id) for i in (previous.items if previous else [])] + [0]) + 1
+    by_id: dict[str, Item] = {}
+    for item in merged.values():
+        old = next((known[k] for k in [_key(item), *((item.type, _norm(item.parent), _norm(a)) for a in item.aliases)]
+                    if k in known), None)
+        if old is None:
+            item_id, next_number = f"REQ-{next_number:03d}", next_number + 1
+            by_id[item_id] = item.model_copy(update={"id": item_id})
+        elif old.id in by_id:
+            by_id[old.id] = _join(by_id[old.id], item)
+        else:
+            aliases = [a for a in old.aliases if a not in item.aliases and a != item.name]
+            by_id[old.id] = item.model_copy(update={"id": old.id, "name": old.name, "status": old.status,
+                                                    "aliases": [*item.aliases, *aliases] if old.name == item.name
+                                                    else [item.name, *item.aliases, *aliases]})
+    items = sorted(by_id.values(), key=lambda i: _number(i.id))
     return Inventory(items=items, gaps=_unique_gaps(gaps), coverage=coverage)
 
 
-def apply_consolidation(inventory: Inventory, consolidation: Consolidation) -> Inventory:
-    """Merge the items the Business Analyst found to be the same; renumber; questions point at the new ids."""
+def _join(current: Item, item: Item) -> Item:
+    citations = current.sources + [c for c in item.sources if c not in current.sources]
+    names = [item.name] if _norm(item.name) != _norm(current.name) else []
+    aliases = current.aliases + [a for a in [*names, *item.aliases] if a not in current.aliases]
+    text = current.text if len(current.text) >= len(item.text) else item.text
+    return current.model_copy(update={"sources": citations, "aliases": aliases, "text": text})
+
+
+def apply_consolidation(inventory: Inventory, consolidation: Consolidation, decisions: set[str] = frozenset()) -> Inventory:
+    """Merge the items the Business Analyst found to be the same (ids never change; a dropped id points at the kept
+    one in questions), then apply what accepted decisions change. An update naming an unknown decision is ignored."""
     by_id = {item.id: item for item in inventory.items}
     dropped: dict[str, str] = {}
     for merge in consolidation.merges:
@@ -128,20 +191,22 @@ def apply_consolidation(inventory: Inventory, consolidation: Consolidation) -> I
             other = by_id.get(other_id)
             if other is None or other_id == merge.keep or other_id in dropped or other.type != keep.type:
                 continue  # never merge across types; an unknown id is ignored
-            aliases = keep.aliases + [a for a in [other.name, *other.aliases] if a not in keep.aliases and a != keep.name]
-            citations = keep.sources + [c for c in other.sources if c not in keep.sources]
-            keep = keep.model_copy(update={"aliases": aliases, "sources": citations})
+            keep = _join(keep, other)
             dropped[other_id] = merge.keep
         if merge.name and merge.name != keep.name:
             keep = keep.model_copy(update={"name": merge.name, "aliases": [keep.name, *keep.aliases]})
         by_id[merge.keep] = keep
-    survivors = [by_id[item.id] for item in inventory.items if item.id not in dropped]
-    renumber = {item.id: f"REQ-{index:03d}" for index, item in enumerate(survivors, start=1)}
-    renumber.update({old: renumber[new] for old, new in dropped.items() if new in renumber})
-    items = [item.model_copy(update={"id": renumber[item.id]}) for item in survivors]
-    gaps = []
-    for gap in [*inventory.gaps, *consolidation.gaps]:
-        gaps.append(gap.model_copy(update={"items": [renumber.get(i, i) for i in gap.items]}))
+    for update in consolidation.updates:
+        target = dropped.get(update.id, update.id)
+        if target not in by_id or update.decision not in decisions:
+            continue
+        item = by_id[target]
+        cite = Citation(source=f"decision:{update.decision}", location="")
+        by_id[target] = item.model_copy(update={"status": update.status or item.status, "text": update.text or item.text,
+                                                "sources": item.sources + ([cite] if cite not in item.sources else [])})
+    items = [by_id[item.id] for item in inventory.items if item.id not in dropped]
+    gaps = [gap.model_copy(update={"items": [dropped.get(i, i) for i in gap.items]})
+            for gap in [*inventory.gaps, *consolidation.gaps]]
     return Inventory(items=items, gaps=_unique_gaps(gaps), coverage=inventory.coverage)
 
 
@@ -155,14 +220,16 @@ def _unique_gaps(gaps: list[Gap]) -> list[Gap]:
     return out
 
 
-def check(inventory: Inventory, source_ids: set[str]) -> list[str]:
-    """Problems a reviewer must see: items without a known source, duplicate ids, permissions of unknown actors."""
+def check(inventory: Inventory, source_ids: set[str], decisions: set[str] = frozenset()) -> list[str]:
+    """Problems a reviewer must see: items without a known source or decision, duplicate ids, permissions of
+    unknown actors."""
     problems = []
     ids = [item.id for item in inventory.items]
     if len(ids) != len(set(ids)):
         problems.append("item ids repeat")
     for item in inventory.items:
-        unknown = [c.source for c in item.sources if c.source not in source_ids]
+        unknown = [c.source for c in item.sources
+                   if c.source not in source_ids and c.source.removeprefix("decision:") not in decisions]
         if unknown:
             problems.append(f"{item.id} cites unknown sources {', '.join(sorted(set(unknown)))}")
     actors = {n.lower() for item in inventory.items if item.type == "actor" for n in [item.name, *item.aliases]}
@@ -181,18 +248,19 @@ TYPE_TITLES = {"goal": "Goals", "actor": "Actors", "permission": "Permissions", 
 
 def render(title: str, inventory: Inventory, source_names: dict[str, str]) -> str:
     cell = lambda s: " ".join(str(s).split()).replace("|", "\\|") or "—"
-    cite = lambda item: "; ".join(f"{source_names.get(c.source, c.source)} {c.location}" for c in item.sources)
+    cite = lambda item: "; ".join(c.source.removeprefix("decision:") if c.source.startswith("decision:")
+                                  else f"{source_names.get(c.source, c.source)} {c.location}" for c in item.sources)
     lines = [f"# Requirement inventory: {title}", "",
              f"{len(inventory.items)} items from {len(inventory.coverage)} source(s); {len(inventory.gaps)} open question(s).", ""]
     for kind in ITEM_TYPES:
         items = [i for i in inventory.items if i.type == kind]
         if not items:
             continue
-        lines += [f"## {TYPE_TITLES[kind]}", "", "| ID | Name | Requirement | Of | Phase | Source ref | Sources |",
-                  "|---|---|---|---|---|---|---|"]
+        lines += [f"## {TYPE_TITLES[kind]}", "", "| ID | Name | Requirement | Of | Phase | Status | Source ref | Sources |",
+                  "|---|---|---|---|---|---|---|---|"]
         for item in items:
             name = item.name + (f" (also: {', '.join(item.aliases)})" if item.aliases else "")
-            lines.append(f"| {item.id} | {cell(name)} | {cell(item.text)} | {cell(item.parent)} | {cell(item.phase)} | "
+            lines.append(f"| {item.id} | {cell(name)} | {cell(item.text)} | {cell(item.parent)} | {cell(item.phase)} | {item.status} | "
                          f"{cell(item.source_ref)} | {cell(cite(item))} |")
         lines.append("")
     if inventory.gaps:

@@ -71,8 +71,18 @@ export function DecisionPanel({ run, onDone }: { run: RunDetail; onDone: () => v
         <p className="m-0 text-muted">
           {need.action === "ingesting"
             ? `The Business Analyst reads every source (${sources} now) part by part and writes the requirement inventory; every item cites the page, slide or cell it comes from.`
-            : `Inventory v${rounds} is in the Requirements tab. Add sources or answers, then extract again for the next version.`}
+            : `Inventory v${rounds} is in the Requirements tab. Answer the questions (Questions tab), add sources or minutes, then extract again: only what is new is read.`}
         </p>
+        {need.action === "clarifying" ? (
+          <div className="flex flex-wrap gap-2 text-xs">
+            {(run.roles ?? []).map((r) => {
+              const n = run.questions?.filter((q) => q.owner_role === r.id && q.status === "open").length ?? 0;
+              return n ? <Badge key={r.id} tone="accent">{r.name}: {n} open</Badge> : null;
+            })}
+            {run.questions?.some((q) => q.status === "open" && q.blocking) ? <Badge tone="bad">{run.questions.filter((q) => q.status === "open" && q.blocking).length} blocking</Badge> : null}
+            {run.decisions?.some((d) => d.status === "proposed") ? <Badge tone="warn">{run.decisions.filter((d) => d.status === "proposed").length} decision(s) to accept</Badge> : null}
+          </div>
+        ) : null}
         <div><ActionButton variant="primary" disabled={!sources} success="Extraction started" action={() => post("extract", {})}>
           {need.action === "ingesting" ? "Start extraction" : "Extract again"}</ActionButton></div>
       </Panel>

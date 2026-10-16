@@ -984,18 +984,40 @@ def poll_pull_requests(session: Session) -> None:
 # ---------------------------------------------------------------- discovery: extraction
 
 def _load_extract(session: Session, run: Run, loaded: Loaded) -> Loaded:
-    """The parts the Business Analyst reads, in upload order, and the context of a discovery call."""
+    """What this round reads: sources not read in an earlier round (the others are reused), minutes not read yet,
+    the open questions and the accepted decisions."""
+    from controller.app.discovery import questions as q
     from controller.app.discovery.extract import plan_parts
     from controller.app.discovery.service import discovery_config, source_dir, sources
     limits = discovery_config(session, run).limits
-    parts = []
+    previous = latest_document(session, run.id, "inventory")
+    data = dict(previous.data) if previous else {}
+    if previous and "chunks" not in data:
+        data["chunks"] = _chunks_from(data)
+    reused, parts, minutes = {}, [], []
     for source in sources(session, run.id):
+        if source.purpose == "requirements" and str(source.id) in data.get("chunks", {}):
+            reused[str(source.id)] = data["chunks"][str(source.id)]
+            continue
+        if source.purpose == "minutes" and str(source.id) in data.get("minutes_read", []):
+            continue
         text = None
         if source.kind not in ("pdf", "image"):
             text = Path(source.text_path or source.path).read_text(errors="replace")
-        parts += plan_parts(str(source.id), source.filename, source.kind, source.path, source.pages, text,
-                            pages_per_read=limits.pages_per_read, chars_per_read=limits.chars_per_read)
-    loaded.extra.update({"parts": parts, "run_kind": run.kind})
+        planned = plan_parts(str(source.id), source.filename, source.kind, source.path, source.pages, text,
+                             pages_per_read=limits.pages_per_read, chars_per_read=limits.chars_per_read)
+        (minutes if source.purpose == "minutes" else parts).extend(planned)
+    run_questions = q.questions(session, run.id)
+    loaded.extra.update({
+        "parts": parts, "minutes": minutes, "reused": reused, "run_kind": run.kind,
+        "previous": {k: data.get(k, []) for k in ("items", "gaps")} if previous else None,
+        "previous_parts": [p for p in data.get("parts", []) if p["source"] in reused],
+        "minutes_read": data.get("minutes_read", []),
+        "questions": [{"id": q.number(run_questions, x), "kind": x.kind, "question": x.question, "items": x.items or []}
+                      for x in run_questions if x.status == q.OPEN],
+        "asked": [x.question for x in run_questions],
+        "decisions": [{"id": q.decision_id(d), "text": d.text, "items": d.items}
+                      for d in q.decisions(session, run.id) if d.status == "accepted"]})
     loaded.context = RunContext(
         title=run.title, policy=EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy")),
         agents_md=artifact(session, run.id, "agents_md") or "", review_md=None,
@@ -1005,12 +1027,49 @@ def _load_extract(session: Session, run: Run, loaded: Loaded) -> Loaded:
     return loaded
 
 
-def _extract(team: Team, loaded: Loaded) -> dict:
-    """Every part in turn, then one consolidation pass over the merged inventory."""
+def _chunks_from(data: dict) -> dict[str, list[dict]]:
+    """An inventory written before rounds kept what each source gave: rebuild it from the merged items (each under
+    the first source it cites) so the next round reuses them instead of reading every file again."""
+    chunks: dict[str, dict] = {}
+    for item in data.get("items", []):
+        first = next((c["source"] for c in item["sources"] if not c["source"].startswith("decision:")), None)
+        if first:
+            chunks.setdefault(first, {"items": [], "gaps": [], "read": data.get("coverage", {}).get(first, [])})
+            chunks[first]["items"].append({k: v for k, v in item.items() if k != "id"})
+    if chunks:
+        next(iter(chunks.values()))["gaps"] = data.get("gaps", [])
+    return {sid: [chunk] for sid, chunk in chunks.items()}
+
+
+def _read_parts(team: Team, context: RunContext, parts: list, read, record, what: str) -> list[tuple]:
+    """Each part in turn; a part whose answer is unusable is halved and read again instead of retried at the same size."""
     from controller.app.discovery.extract import split
-    from controller.app.discovery.inventory import apply_consolidation, merge_chunks
     from controller.app.integrations.langflow import InvalidModelOutput
-    context, parts = loaded.context, loaded.extra["parts"]
+    done, pending, index = [], list(parts), 0
+    while pending:
+        part, index = pending.pop(0), index + 1
+        halves = split(part)
+        joblog.note(f"Business Analyst reads {what} {part.filename}, {part.label} (part {index}, {len(pending)} more after it)")
+        # A part that can be halved gets no format retries: a too-long answer fails again at the same size.
+        policy = context.policy.model_copy(update={"max_format_retries": 0}) if halves else context.policy
+        part_context = dataclasses.replace(context, policy=policy, session_id=f"{context.session_id}:{what}:{index}")
+        try:
+            result = read(part_context, part)
+        except InvalidModelOutput as exc:
+            if not halves:
+                raise
+            joblog.note(f"  answer unusable ({str(exc)[:160]}); reading {halves[0].label} and {halves[1].label} instead")
+            pending[:0] = halves
+            continue
+        record()
+        done.append((part, result))
+    return done
+
+
+def _extract(team: Team, loaded: Loaded) -> dict:
+    """New sources part by part, new minutes, then one consolidation pass over the merged inventory."""
+    from controller.app.discovery.inventory import ChunkResult, Inventory, apply_consolidation, merge_chunks
+    context, extra = loaded.context, loaded.extra
     calls: list[dict] = []
 
     def record() -> None:
@@ -1019,63 +1078,101 @@ def _extract(team: Team, loaded: Loaded) -> dict:
             calls.append({"engine": call.engine, "prompt_version": call.prompt_version, "attempts": call.attempts,
                           "usage": call.usage})
 
-    chunks, known, pending, index, read_parts = [], {}, list(parts), 0, []
-    while pending:
-        part, index = pending.pop(0), index + 1
-        halves = split(part)
-        joblog.note(f"Business Analyst reads {part.filename}, {part.label} (part {index}, {len(pending)} more after it)")
-        # A part that can be halved gets no format retries: a too-long answer fails again at the same size.
-        policy = context.policy.model_copy(update={"max_format_retries": 0}) if halves else context.policy
-        part_context = dataclasses.replace(context, policy=policy, repository={"known": known},
-                                           session_id=f"{context.session_id}:{index}")
-        try:
-            chunk = team.extract_part(part_context, part)
-        except InvalidModelOutput as exc:
-            if not halves:
-                raise
-            joblog.note(f"  answer unusable ({str(exc)[:160]}); reading {halves[0].label} and {halves[1].label} instead")
-            pending[:0] = halves
-            continue
-        record()
+    if extra["reused"]:
+        joblog.note(f"reusing what earlier rounds read of {len(extra['reused'])} source(s)")
+    known: dict[str, list[str]] = {}
+    chunks = [(sid, ChunkResult.model_validate(c)) for sid, stored in extra["reused"].items() for c in stored]
+
+    def read_part(part_context, part):
+        chunk = team.extract_part(dataclasses.replace(part_context, repository={"known": known}), part)
         joblog.note(f"  {len(chunk.items)} item(s), {len(chunk.gaps)} question(s)")
-        chunks.append((part.source_id, chunk))
-        read_parts.append({"source": part.source_id, "covers": part.label})
         for item in chunk.items:  # later parts reuse the names of earlier ones
             if item.type in ("actor", "feature", "term", "data") and item.name not in known.setdefault(item.type, []):
                 known[item.type].append(item.name)
-    inventory = merge_chunks(chunks)
-    joblog.note(f"merged {sum(len(c.items) for _, c in chunks)} item(s) into {len(inventory.items)}; "
+        return chunk
+    for _, chunk in chunks:
+        for item in chunk.items:
+            if item.type in ("actor", "feature", "term", "data") and item.name not in known.setdefault(item.type, []):
+                known[item.type].append(item.name)
+    fresh = _read_parts(team, context, extra["parts"], read_part, record, "")
+    chunks += [(part.source_id, chunk) for part, chunk in fresh]
+    stored: dict[str, list] = {sid: list(c) for sid, c in extra["reused"].items()}
+    for part, chunk in fresh:
+        stored.setdefault(part.source_id, []).append(chunk.model_dump())
+    previous = Inventory.model_validate({**extra["previous"], "coverage": {}}) if extra["previous"] else None
+    inventory = merge_chunks(chunks, previous)
+    dumped = inventory.model_dump()
+    minutes = _read_parts(team, context, extra["minutes"],
+                          lambda c, part: team.read_minutes(c, part, extra["questions"], dumped["items"]), record, "minutes")
+    joblog.note(f"{len(inventory.items)} item(s), {len(extra['decisions'])} accepted decision(s); "
                 "the Business Analyst consolidates")
     if inventory.items:
-        dumped = inventory.model_dump()
-        consolidation = team.consolidate(context, dumped["items"], dumped["gaps"])
+        consolidation = team.consolidate(context, dumped["items"], dumped["gaps"], extra["decisions"], extra["asked"])
         record()
         before = len(inventory.items)
-        inventory = apply_consolidation(inventory, consolidation)
+        inventory = apply_consolidation(inventory, consolidation, {d["id"] for d in extra["decisions"]})
         joblog.note(f"consolidation merged {before - len(inventory.items)} item(s), "
-                    f"{len(inventory.gaps)} question(s) in total")
-    return {"inventory": inventory.model_dump(), "parts": read_parts,
+                    f"applied {len(consolidation.updates)} update(s), {len(inventory.gaps)} question(s) in total")
+    parts = extra["previous_parts"] + [{"source": p.source_id, "covers": p.label} for p, _ in fresh]
+    return {"inventory": inventory.model_dump(), "parts": parts, "chunks": stored,
+            "minutes": [{"source": p.source_id, "covers": p.label, **m.model_dump()} for p, m in minutes],
+            "minutes_read": sorted(set(extra["minutes_read"]) | {p.source_id for p, _ in minutes}),
+            "decisions_applied": [d["id"] for d in extra["decisions"]],
             "_calls": calls, "_engine": ",".join(sorted({c["engine"] for c in calls})) or None}
 
 
 def _apply_extract(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    from controller.app.discovery import questions as q
     from controller.app.discovery.inventory import Inventory, check, render
-    from controller.app.discovery.service import sources
+    from controller.app.discovery.service import discovery_config, sources
+    config = discovery_config(session, run)
     inventory = Inventory.model_validate(result["inventory"])
-    current = sources(session, run.id)
-    names = {str(s.id): s.filename for s in current}
-    problems = check(inventory, set(names))
+    names = {str(s.id): s.filename for s in sources(session, run.id)}
+    decided = {q.decision_id(d) for d in q.decisions(session, run.id)}
+    problems = check(inventory, set(names), decided)
     coarse = sum(1 for item in inventory.items
                  if all(c.location.startswith(("pages ", "lines ", "the whole")) for c in item.sources))
-    content = render(run.title.removeprefix("Discovery: "), inventory, names)
+    title = run.title.removeprefix("Discovery: ")
+    content = render(title, inventory, names)
     document = add_document(session, run.id, "inventory", content, author_kind="ai",
                             author=TeamRole.BUSINESS_ANALYST.value,
                             data={**inventory.model_dump(), "problems": problems, "coarse_citations": coarse,
-                                  "parts": result["parts"], "sources": names})
+                                  "sources": names, **{k: result[k] for k in ("parts", "chunks", "minutes_read",
+                                                                               "decisions_applied")}})
     document.commit_sha = commit_thread(session, run, "inventory", content,
                                         f"sdlc: requirement inventory v{document.version}")
-    detail = f"{len(inventory.items)} item(s), {len(inventory.gaps)} question(s)"
+    added, left_out = q.sync_questions(session, run, inventory.gaps, document.version, config)
+    run_questions = q.questions(session, run.id)
+    by_number = {q.number(run_questions, x): x for x in run_questions}
+    proposed = 0
+    for entry in result.get("minutes", []):
+        for decision in entry["decisions"]:
+            question = by_number.get(decision["question"])
+            q.propose(session, run, decision["text"], question=question if question and question.status == q.OPEN else None,
+                      items=decision["items"], source_id=uuid.UUID(entry["source"]), location=decision["location"],
+                      config=config)
+            proposed += 1
+    write_discovery_documents(session, run, config, names)
+    detail = f"{len(inventory.items)} item(s), {added} new question(s)"
+    if left_out:
+        detail += f" ({left_out} more left for the next round by discovery.limits.max_questions_per_round)"
+    if proposed:
+        detail += f", {proposed} decision(s) from minutes to accept"
     if problems:
         detail += f"; {len(problems)} problem(s) to review"
     transition_run(session, run, RunStatus.CLARIFYING, actor=TeamRole.BUSINESS_ANALYST.value,
                    reason=f"requirement inventory v{document.version}: {detail}")
+
+
+def write_discovery_documents(session: Session, run: Run, config, names: dict[str, str]) -> None:
+    """questions.md and decisions.md of the thread, as they stand now; a new version only when they changed."""
+    from controller.app.discovery import questions as q
+    title = run.title.removeprefix("Discovery: ")
+    run_questions = q.questions(session, run.id)
+    texts = {"questions": q.render_questions(run_questions, config, title),
+             "decisions": q.render_decisions(q.decisions(session, run.id), run_questions, config, names, title)}
+    for kind, content in texts.items():
+        current = latest_document(session, run.id, kind)
+        if current is None or current.content != content:
+            document = add_document(session, run.id, kind, content, author_kind="ai", author=COORDINATOR)
+            document.commit_sha = commit_thread(session, run, kind, content, f"sdlc: {kind} v{document.version}")

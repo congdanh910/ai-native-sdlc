@@ -50,8 +50,16 @@ def _require_open(run: Run) -> None:
                          f"it is {run.status}")
 
 
-def add_source(session: Session, run: Run, filename: str, data: bytes, *, actor: str) -> Source:
+PURPOSES = ("requirements", "minutes")
+
+
+def add_source(session: Session, run: Run, filename: str, data: bytes, *, actor: str,
+               purpose: str = "requirements") -> Source:
+    """A raw requirement source, or minutes of a meeting (an email, a chat) whose decisions the Business Analyst
+    reads at the next extraction."""
     _require_open(run)
+    if purpose not in PURPOSES:
+        raise ValueError(f"purpose must be one of {', '.join(PURPOSES)}")
     config = discovery_config(session, run)
     accepted = tuple(t.strip().lower() for t in get_settings().discovery_accepted_types.split(",") if t.strip())
     try:
@@ -72,25 +80,28 @@ def add_source(session: Session, run: Run, filename: str, data: bytes, *, actor:
         text_path.write_text(prepared.text)
     if existing:  # the same file was removed earlier and is added again
         existing.removed, existing.filename, existing.uploaded_by = False, prepared.filename, actor
+        existing.purpose = purpose
         source = existing
     else:
         source = Source(run_id=run.id, filename=prepared.filename, kind=prepared.kind, sha256=prepared.sha256,
                         size=prepared.size, pages=prepared.pages, path=str(path),
-                        text_path=str(text_path) if text_path else None, uploaded_by=actor)
+                        text_path=str(text_path) if text_path else None, uploaded_by=actor, purpose=purpose)
         session.add(source)
     session.flush()
     record_event(session, "source.added", actor=actor, acting_role="product_owner", run_id=run.id,
                  payload={"source": str(source.id), "filename": source.filename, "kind": source.kind,
-                          "sha256": source.sha256, "pages": source.pages, "size": source.size})
+                          "sha256": source.sha256, "pages": source.pages, "size": source.size, "purpose": purpose})
     return source
 
 
-def add_text_source(session: Session, run: Run, title: str, text: str, *, actor: str) -> Source:
+def add_text_source(session: Session, run: Run, title: str, text: str, *, actor: str,
+                    purpose: str = "requirements") -> Source:
     """Pasted text (an email, chat or minutes) becomes a Markdown source."""
     if not text.strip():
         raise ValueError("paste some text first")
     name = re.sub(r"[^\w\- ]+", "", title, flags=re.UNICODE).strip().replace(" ", "-")[:80] or "pasted-text"
-    return add_source(session, run, f"{name}.md", f"# {title.strip() or name}\n\n{text.strip()}\n".encode(), actor=actor)
+    return add_source(session, run, f"{name}.md", f"# {title.strip() or name}\n\n{text.strip()}\n".encode(), actor=actor,
+                      purpose=purpose)
 
 
 def remove_source(session: Session, run: Run, source_id: uuid.UUID, *, actor: str, reason: str) -> None:
@@ -115,13 +126,27 @@ def sources(session: Session, run_id: uuid.UUID, *, include_removed: bool = Fals
 
 
 def start_extraction(session: Session, run: Run, *, actor: str) -> None:
-    """The Business Analyst reads every source and writes the next version of the requirement inventory.
-    From CLARIFYING this is a re-extraction; the project's discovery.limits.max_rounds caps the rounds."""
+    """The Business Analyst reads what is new (sources, minutes) and applies the accepted decisions, writing the next
+    version of the requirement inventory. The project's discovery.limits.max_rounds caps the rounds."""
     from controller.app import coordinator
+    from controller.app.discovery import questions as q
     _require_open(run)
-    if not sources(session, run.id):
-        raise ValueError("add at least one source first")
+    current = sources(session, run.id)
+    if not any(s.purpose == "requirements" for s in current):
+        raise ValueError("add at least one requirement source first")
     latest = latest_document(session, run.id, "inventory")
+    if latest:
+        data = latest.data or {}
+        ids = {str(s.id) for s in current}
+        new_sources = [s for s in current if s.purpose == "requirements" and str(s.id) not in data.get("chunks", {})]
+        new_minutes = [s for s in current if s.purpose == "minutes" and str(s.id) not in data.get("minutes_read", [])]
+        removed = [sid for sid in data.get("chunks", {}) if sid not in ids]
+        accepted = {q.decision_id(d) for d in q.decisions(session, run.id) if d.status == "accepted"}
+        new_decisions = accepted - set(data.get("decisions_applied", []))
+        written_before_rounds = "chunks" not in data  # its questions are not asked yet
+        if not (new_sources or new_minutes or removed or new_decisions or written_before_rounds):
+            raise ValueError("nothing new since inventory v%d: add a source or minutes, or answer a question first"
+                             % latest.version)
     rounds = latest.version if latest else 0
     limit = discovery_config(session, run).limits.max_rounds
     if rounds >= limit:
@@ -130,3 +155,9 @@ def start_extraction(session: Session, run: Run, *, actor: str) -> None:
     transition_run(session, run, RunStatus.EXTRACTING, actor=actor, acting_role="product_owner",
                    reason=f"extraction round {rounds + 1} of at most {limit}")
     coordinator.queue(session, run, "extract")
+
+
+def refresh_documents(session: Session, run: Run) -> None:
+    from controller.app import coordinator
+    names = {str(s.id): s.filename for s in sources(session, run.id, include_removed=True)}
+    coordinator.write_discovery_documents(session, run, discovery_config(session, run), names)

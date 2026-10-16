@@ -8,12 +8,13 @@ import { Pipeline } from "../components/Pipeline";
 import { DecisionPanel } from "../components/Decision";
 import { CoverageMatrix, GroundingSummary } from "../components/Coverage";
 import { JobLog } from "../components/JobLog";
+import { DecisionsTab, QuestionsTab } from "../components/Questions";
 import { RequirementsTab } from "../components/Requirements";
 import { SourcesTab } from "../components/Sources";
 import { PlanSummary } from "../components/PlanSummary";
 import { ActionButton, Badge, Card, Empty, ErrorBox, Loading, Markdown, Mono, PageHeader, Select, StatusBadge, Tabs } from "../components/ui";
 
-type Tab = "sources" | "requirements" | "tasks" | "plan" | "thread" | "diff" | "events" | "work";
+type Tab = "sources" | "requirements" | "questions" | "decisions" | "tasks" | "plan" | "thread" | "diff" | "events" | "work";
 
 const STEP_LABEL: Record<string, string> = {
   WRITING_TESTS: "QA writes tests", RED_CHECK: "Red check", CODING: "Developer", REMEDIATING: "Developer fixes", VALIDATING: "Validation",
@@ -339,7 +340,8 @@ export function RunView({ id }: { id: string }) {
   const srs = r.kind !== "feature";  // an SRS, SDS or discovery run has no tasks, plan or code
   const discovery = r.kind === "discovery";
   const shown: Tab = discovery && ["tasks", "plan", "diff"].includes(tab) ? "sources"
-    : srs && ["tasks", "plan", "diff", "sources", "requirements"].includes(tab) ? "thread" : !discovery && ["sources", "requirements"].includes(tab) ? "tasks" : tab;
+    : srs && ["tasks", "plan", "diff", "sources", "requirements", "questions", "decisions"].includes(tab) ? "thread"
+    : !discovery && ["sources", "requirements", "questions", "decisions"].includes(tab) ? "tasks" : tab;
   return (
     <>
       <nav aria-label="Breadcrumb" className="text-sm text-muted"><Link href="/runs">Runs</Link> / {r.project} / <Mono>{r.id.slice(0, 8)}</Mono></nav>
@@ -368,7 +370,9 @@ export function RunView({ id }: { id: string }) {
           <Tabs<Tab> value={shown} onChange={select} tabs={[
             ...(srs ? [] : [{ id: "tasks" as Tab, label: "Tasks", count: r.tasks.length }, { id: "plan" as Tab, label: "Plan", count: r.plans.length }]),
             ...(discovery ? [{ id: "sources" as Tab, label: "Sources", count: r.sources?.length ?? 0 },
-              { id: "requirements" as Tab, label: "Requirements", count: [...r.documents].reverse().find((d) => d.kind === "inventory")?.inventory?.items.length ?? 0 }] : []),
+              { id: "requirements" as Tab, label: "Requirements", count: [...r.documents].reverse().find((d) => d.kind === "inventory")?.inventory?.items.length ?? 0 },
+              { id: "questions" as Tab, label: "Questions", count: r.questions?.filter((q) => q.status === "open").length ?? 0 },
+              { id: "decisions" as Tab, label: "Decisions", count: r.decisions?.length ?? 0 }] : []),
             { id: "thread", label: "Thread" },
             ...(srs ? [] : [{ id: "diff" as Tab, label: "Diff" }]),
             { id: "events", label: "Events" },
@@ -378,6 +382,8 @@ export function RunView({ id }: { id: string }) {
           {shown === "plan" ? (r.plans.length ? <Card className="p-5"><VersionPicker items={r.plans}>{(p) => <PlanBody plan={p} spec={spec} />}</VersionPicker></Card> : <Empty>No plan yet.</Empty>) : null}
           {shown === "sources" ? <SourcesTab run={r} onChange={refresh} /> : null}
           {shown === "requirements" ? <RequirementsTab run={r} /> : null}
+          {shown === "questions" ? <QuestionsTab run={r} onChange={refresh} /> : null}
+          {shown === "decisions" ? <DecisionsTab run={r} onChange={refresh} /> : null}
           {shown === "thread" ? <ThreadTab run={r} /> : null}
           {shown === "diff" ? <DiffTab run={r} /> : null}
           {shown === "events" ? <EventsTab run={r} /> : null}

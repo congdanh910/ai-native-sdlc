@@ -146,4 +146,14 @@ def compact_items(items: list[dict]) -> list[dict]:
     """What the consolidation pass needs of each item. The text stays whole: a cut text made the Business Analyst
     ask for flow steps the item already listed (trial run, 2026-10-16)."""
     return [{"id": i["id"], "type": i["type"], "name": i["name"], "text": i["text"], "parent": i["parent"],
+             "status": i.get("status", "proposed"),
              "sources": [c["location"] for c in i["sources"]]} for i in items]
+
+
+def repair_minutes(data: dict, part: Part) -> dict:
+    out = []
+    for raw in data.get("decisions") or []:
+        if isinstance(raw, dict) and str(raw.get("text") or "").strip():
+            out.append({"text": " ".join(str(raw["text"]).split()), "question": str(raw.get("question") or "").strip(),
+                        "items": _strings(raw.get("items")), "location": _citation(raw.get("location") or "", part)["location"]})
+    return {"decisions": out, "read": _strings(data.get("read")) or [part.label]}
