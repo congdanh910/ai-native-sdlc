@@ -107,7 +107,7 @@ function DecisionRow({ run, d, onChange }: { run: RunDetail; d: DiscoveryDecisio
       <td className="border-b border-line px-3 py-2 font-mono text-xs">{d.id}</td>
       <td className="border-b border-line px-3 py-2">{d.text}{d.items.length ? <div className="text-xs text-muted">about {d.items.join(", ")}</div> : null}</td>
       <td className="border-b border-line px-3 py-2 text-xs text-muted">
-        {d.basis === "answer" ? `answer to ${d.question}` : <>minutes {source ? <a href={`/api/runs/${run.id}/sources/${source.id}/file`} target="_blank" rel="noopener">{source.filename}</a> : null} {d.location}{d.question ? `, answers ${d.question}` : ""}</>}
+        {d.basis === "answer" ? `answer to ${d.question}` : d.basis === "direct" ? "taken directly" : <>minutes {source ? <a href={`/api/runs/${run.id}/sources/${source.id}/file`} target="_blank" rel="noopener">{source.filename}</a> : null} {d.location}{d.question ? `, answers ${d.question}` : ""}</>}
       </td>
       <td className="border-b border-line px-3 py-2 text-xs">{roleName(run, d.role)}</td>
       <td className="border-b border-line px-3 py-2"><Badge tone={d.status === "accepted" ? "good" : d.status === "rejected" ? "bad" : "warn"}>{d.status}</Badge>
@@ -123,10 +123,36 @@ function DecisionRow({ run, d, onChange }: { run: RunDetail; d: DiscoveryDecisio
 }
 
 /** The decision log: answers to questions and decisions read from minutes, which their owner accepts or rejects. */
+function NewDecision({ run, onChange }: { run: RunDetail; onChange: () => void }) {
+  const [form, setForm] = useState({ text: "", items: "", role: run.roles?.[0]?.id ?? "po" });
+  return (
+    <details className="rounded-xl border border-line bg-panel p-3">
+      <summary className="cursor-pointer text-sm font-semibold">Record a decision</summary>
+      <div className="mt-2 flex flex-col gap-2">
+        <span className="text-xs text-muted">For example "REQ-002 is out of scope for phase 1". It counts at once; Extract again applies it to the inventory.</span>
+        <Textarea aria-label="Decision" className="min-h-14" value={form.text} onChange={(e) => setForm({ ...form, text: e.target.value })} placeholder="What was decided" />
+        <div className="flex flex-wrap gap-2">
+          <input aria-label="Items" className="h-9 min-w-56 flex-1 rounded-md border border-line bg-panel px-2 text-sm" value={form.items} onChange={(e) => setForm({ ...form, items: e.target.value })} placeholder="REQ ids, comma-separated" />
+          <Select aria-label="Owner" className="h-9 w-auto" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
+            {run.roles?.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+          </Select>
+          <ActionButton variant="primary" disabled={!form.text.trim()} success="Decision recorded" action={async () => {
+            await api(`/api/runs/${run.id}/decisions`, { method: "POST", body: { text: form.text, items: form.items.split(",").map((i) => i.trim()).filter(Boolean), role: form.role } });
+            setForm({ ...form, text: "", items: "" });
+            onChange();
+          }}>Record</ActionButton>
+        </div>
+      </div>
+    </details>
+  );
+}
+
 export function DecisionsTab({ run, onChange }: { run: RunDetail; onChange: () => void }) {
   const decisions = run.decisions ?? [];
-  if (!decisions.length) return <Empty>No decisions yet. Answer a question, or add minutes of a meeting as a source and extract again.</Empty>;
+  const form = run.status === "CLARIFYING" ? <NewDecision run={run} onChange={onChange} /> : null;
+  if (!decisions.length) return <div className="flex flex-col gap-3">{form}<Empty>No decisions yet. Answer a question, record one, or add minutes of a meeting as a source and extract again.</Empty></div>;
   return (
+    <div className="flex flex-col gap-3">{form}
     <Card className="overflow-x-auto">
       <table className="w-full min-w-[760px] border-collapse text-sm">
         <thead><tr className="bg-side text-left text-xs text-muted">{["ID", "Decision", "Basis", "Owner", "Status", ""].map((h, i) => <th key={i} className="border-b border-line px-3 py-2.5 font-semibold">{h}</th>)}</tr></thead>
@@ -134,5 +160,6 @@ export function DecisionsTab({ run, onChange }: { run: RunDetail; onChange: () =
       </table>
       <p className="m-0 px-4 py-2 text-xs text-muted">Accepted decisions change the inventory at the next extraction (Extract again).</p>
     </Card>
+    </div>
   );
 }

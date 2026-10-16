@@ -111,8 +111,8 @@ class Worktree:
         target = self.path / safe_repo_path(relative_path)
         return target.read_text() if target.is_file() and not target.is_symlink() else None
 
-    def commit_files(self, files: dict[str, str], message: str) -> str:
-        """Write several files and commit them together; returns the commit SHA."""
+    def commit_files(self, files: dict[str, str | bytes], message: str) -> str:
+        """Write several files (text, or bytes for a binary file) and commit them together; returns the commit SHA."""
         paths = []
         for relative_path, content in files.items():
             relative_path = safe_repo_path(relative_path)
@@ -120,7 +120,10 @@ class Worktree:
             if target.is_symlink():
                 raise ValueError(f"refusing to write through a symlink: {relative_path}")
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content)
+            if isinstance(content, bytes):
+                target.write_bytes(content)
+            else:
+                target.write_text(content)
             paths.append(relative_path)
         _git("add", "--", *paths, cwd=self.path)
         if _git("status", "--porcelain", "--", *paths, cwd=self.path).strip():

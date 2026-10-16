@@ -79,7 +79,7 @@ export interface Question {
   answered_by: string | null; round: number | null;
 }
 export interface DiscoveryDecision {
-  number: number; id: string; text: string; basis: "answer" | "minutes"; question: string | null; source: string | null;
+  number: number; id: string; text: string; basis: "answer" | "minutes" | "direct"; question: string | null; source: string | null;
   location: string | null; items: string[]; role: string; status: "proposed" | "accepted" | "rejected";
   proposed_by: string; decided_by: string | null; reason: string | null;
 }
@@ -104,6 +104,8 @@ export interface InboxItem extends RunSummary {
   role: string;
   action: string;
   stage: string | null;
+  role_name?: string;  // discovery "Questions for you": the project's role name
+  questions?: number;
 }
 
 export interface Doc {

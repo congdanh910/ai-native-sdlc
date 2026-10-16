@@ -53,6 +53,11 @@ AI_ITEMS = {
 }
 
 HUMAN_ITEMS = {
+    "baseline": [
+        Item("agreed-scope", "The scope matches what was agreed with the customer for this phase"),
+        Item("deferrals", "The items out of scope and the deferred questions are acceptable"),
+        Item("actors", "The actors and their permissions are complete"),
+    ],
     "srs": [
         Item("matches-customer", "Requirements match what the customer asked for (brief, notes, meetings)"),
         Item("complete", "Roles, features and stories are complete for this release"),

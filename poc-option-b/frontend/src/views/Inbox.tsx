@@ -50,13 +50,14 @@ function ItemCard({ item }: { item: InboxItem }) {
   return (
     <Card className="flex flex-col gap-4 p-5">
       <div className="flex flex-wrap items-center gap-2.5">
-        <Badge tone={ROLE_TONE[item.role] ?? "neutral"}>{role(item.role)} · {ACTION_LABEL[item.action] ?? item.action}</Badge>
+        <Badge tone={ROLE_TONE[item.role] ?? "neutral"}>{item.role_name ?? role(item.role)} · {ACTION_LABEL[item.action] ?? item.action}{item.questions ? ` (${item.questions})` : ""}</Badge>
         <Mono className="text-muted">{item.project} · {item.id.slice(0, 8)} · {ago(item.updated_at)}</Mono>
       </div>
       <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
         <div className="min-w-0 flex-[1_1_360px]">
           <h2 className="m-0 text-xl font-semibold tracking-tight">{item.title}</h2>
-          {item.reason ? <p className="mt-1.5 mb-0 truncate text-muted">{item.reason}</p> : null}
+          {item.questions ? <p className="mt-1.5 mb-0 text-muted">{item.questions} open question(s) for {item.role_name}: open the run's Questions tab.</p>
+            : item.reason ? <p className="mt-1.5 mb-0 truncate text-muted">{item.reason}</p> : null}
           {item.stage ? <p className="mt-1.5 mb-0 text-muted">Stage: {item.stage}</p> : null}
         </div>
         <Highlights id={item.id} />

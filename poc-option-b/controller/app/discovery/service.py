@@ -161,3 +161,90 @@ def refresh_documents(session: Session, run: Run) -> None:
     from controller.app import coordinator
     names = {str(s.id): s.filename for s in sources(session, run.id, include_removed=True)}
     coordinator.write_discovery_documents(session, run, discovery_config(session, run), names)
+
+
+def _baseline_inputs(session: Session, run: Run):
+    from controller.app.discovery import questions as q
+    from controller.app.discovery.inventory import Inventory
+    latest = latest_document(session, run.id, "inventory")
+    if latest is None:
+        raise ValueError("extract the requirement inventory first")
+    data = latest.data or {}
+    inventory = Inventory.model_validate({"items": data.get("items", []), "gaps": data.get("gaps", []),
+                                          "coverage": data.get("coverage", {})})
+    run_questions, run_decisions = q.as_dicts(session, run.id)
+    return latest, inventory, run_questions, run_decisions
+
+
+def prepare_baseline(session: Session, run: Run, scope: str, *, actor: str) -> None:
+    """The Product Owner states the scope of the phase; the baseline is drafted and waits at its gate."""
+    from controller.app.discovery import baseline
+    if run.kind != RunKind.DISCOVERY or run.status != RunStatus.CLARIFYING:
+        raise ValueError(f"a baseline is prepared while the discovery is CLARIFYING; it is {run.status}")
+    if not scope.strip():
+        raise ValueError("state the scope of this phase (what the baseline covers)")
+    latest, inventory, run_questions, run_decisions = _baseline_inputs(session, run)
+    config = discovery_config(session, run)
+    files = [{"filename": s.filename, "sha256": s.sha256, "pages": s.pages, "purpose": s.purpose}
+             for s in sources(session, run.id)]
+    data = baseline.snapshot(run.title.removeprefix("Discovery: "), scope, inventory, latest.version, run_questions,
+                             run_decisions, files)
+    content = baseline.render(data, {r.id: r.name for r in config.roles})
+    from controller.app.documents import add_document
+    add_document(session, run.id, "baseline", content, author_kind="human", author=actor, data=data)
+    transition_run(session, run, RunStatus.WAITING_BASELINE_APPROVAL, actor=actor, acting_role="product_owner",
+                   reason=f"baseline on inventory v{latest.version} waits for the {config.approvers.get('baseline', 'po')} sign-off")
+
+
+def approve_baseline(session: Session, run: Run, document_id: uuid.UUID, checked: list[str], *, actor: str) -> None:
+    """Commit requirements/ to the run's branch and open the draft PR; the controller checks must pass."""
+    import json
+    from controller.app import coordinator
+    from controller.app.discovery import baseline, questions as q
+    from controller.app.documents import latest_document as latest_doc
+    from controller.app.models import Approval
+    if run.status != RunStatus.WAITING_BASELINE_APPROVAL:
+        raise ValueError(f"the discovery is {run.status}, not waiting for the baseline")
+    document = latest_doc(session, run.id, "baseline")
+    if document is None or document.id != document_id:
+        raise ValueError("the baseline changed; reload the page")
+    evidence = coordinator.require_checklist(session, run, checked)
+    if not run.commit_artifacts:
+        raise ValueError("the project does not commit artifacts (artifacts.commit_to_repo: false); "
+                         "a baseline needs its requirements/ folder in the repository")
+    config = discovery_config(session, run)
+    current = sources(session, run.id)
+    names = {str(s.id): s.filename for s in current}
+    files: dict[str, str | bytes] = {
+        f"{baseline.BASELINE_DIR}/baseline.md": document.content,
+        baseline.BASELINE_JSON: json.dumps(document.data, ensure_ascii=False, indent=1) + "\n",
+        f"{baseline.BASELINE_DIR}/inventory.md": latest_doc(session, run.id, "inventory").content,
+        f"{baseline.BASELINE_DIR}/questions.md": q.render_questions(q.questions(session, run.id), config, run.title.removeprefix("Discovery: ")),
+        f"{baseline.BASELINE_DIR}/decisions.md": q.render_decisions(q.decisions(session, run.id), q.questions(session, run.id),
+                                                                    config, names, run.title.removeprefix("Discovery: ")),
+        f"{baseline.BASELINE_DIR}/sources.md": baseline.sources_md(current, config.commit_sources),
+        **baseline.source_files(current, config.commit_sources),
+    }
+    project = session.get(Project, run.project_id)
+    document.commit_sha = coordinator.worktree_for(project, run).commit_files(
+        files, f"sdlc: requirement baseline on inventory v{document.data['inventory_version']}")
+    session.add(Approval(run_id=run.id, stage="baseline", decision="approve", actor=actor,
+                         acting_role="product_owner", document_id=document.id, checklist=evidence))
+    record_event(session, "baseline.approved", actor=actor, acting_role="product_owner", run_id=run.id,
+                 payload={"document": str(document.id), "commit": document.commit_sha, "files": sorted(files)})
+    transition_run(session, run, RunStatus.PR_OPEN, actor=actor, acting_role="product_owner",
+                   reason=f"baseline committed as {document.commit_sha[:12]}; the draft PR opens next")
+    coordinator.queue(session, run, "release")
+
+
+def reject_baseline(session: Session, run: Run, *, actor: str, reason: str) -> None:
+    if run.status != RunStatus.WAITING_BASELINE_APPROVAL:
+        raise ValueError(f"the discovery is {run.status}, not waiting for the baseline")
+    if not reason.strip():
+        raise ValueError("say what the baseline still needs")
+    from controller.app.models import Approval
+    session.add(Approval(run_id=run.id, stage="baseline", decision="reject", actor=actor, acting_role="product_owner",
+                         reason=reason, checklist={}))
+    record_event(session, "baseline.reject", actor=actor, acting_role="product_owner", run_id=run.id,
+                 payload={"reason": reason})
+    transition_run(session, run, RunStatus.CLARIFYING, actor=actor, acting_role="product_owner", reason=reason)

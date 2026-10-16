@@ -48,9 +48,12 @@ def decisions(session: Session, run_id: uuid.UUID) -> list[Decision]:
     return list(session.scalars(select(Decision).where(Decision.run_id == run_id).order_by(Decision.number)))
 
 
-def sync_questions(session: Session, run: Run, gaps: list[Gap], round_: int, config: Discovery) -> tuple[int, int]:
+def sync_questions(session: Session, run: Run, gaps: list[Gap], round_: int, config: Discovery,
+                   ids_by_name: dict[str, str] | None = None) -> tuple[int, int]:
     """Add the round's questions that are not asked yet, blocking ones first, up to max_questions_per_round.
+    Item names a part's gap gives become REQ ids, so a decision on the question reaches those items.
     Returns (added, left out by the limit)."""
+    ids_by_name = ids_by_name or {}
     existing = questions(session, run.id)
     asked = {_norm(q.question) for q in existing}
     fresh, seen = [], set()
@@ -63,7 +66,8 @@ def sync_questions(session: Session, run: Run, gaps: list[Gap], round_: int, con
     for position, gap in enumerate(fresh[:limit], start=len(existing) + 1):
         session.add(Clarification(run_id=run.id, position=position, question=gap.question, blocking=gap.blocking, kind=gap.kind,
                                   owner_role=owner_for(gap.kind, config), status=OPEN, why=gap.why or None,
-                                  suggestion=gap.suggestion or None, items=gap.items,
+                                  suggestion=gap.suggestion or None,
+                                  items=[ids_by_name.get(_norm(i), i) for i in gap.items],
                                   citations=[c.model_dump() for c in gap.sources], round=round_))
     session.flush()
     return min(len(fresh), limit), max(0, len(fresh) - limit)
@@ -137,6 +141,25 @@ def reassign(session: Session, run: Run, question_id: uuid.UUID, role: str, conf
     record_event(session, "question.reassigned", actor=actor, acting_role=question.owner_role, run_id=run.id,
                  payload={"question": str(question.id), "from": question.owner_role, "to": role, "reason": reason})
     question.owner_role, question.status_reason = role, reason.strip() or None
+
+
+def record(session: Session, run: Run, text: str, items: list[str], role: str, config: Discovery, *,
+           actor: str) -> Decision:
+    """A decision a role takes directly, such as putting an item out of scope; it counts at once."""
+    _require(run)
+    if not text.strip():
+        raise ValueError("write the decision first")
+    if role not in {r.id for r in config.roles}:
+        raise ValueError(f"{role} is not a role of discovery.roles")
+    now = datetime.now(timezone.utc)
+    decision = Decision(run_id=run.id, number=_next_number(session, run.id), text=text.strip(), basis="direct",
+                        items=[i.strip() for i in items if i.strip()], role=role, status="accepted", proposed_by=actor,
+                        decided_by=actor, decided_at=now)
+    session.add(decision)
+    session.flush()
+    record_event(session, "decision.recorded", actor=actor, acting_role=role, run_id=run.id,
+                 payload={"decision": decision_id(decision), "items": decision.items})
+    return decision
 
 
 def propose(session: Session, run: Run, text: str, *, question: Clarification | None, items: list[str],
@@ -227,6 +250,7 @@ def render_decisions(run_decisions: list[Decision], run_questions: list[Clarific
     for decision in run_decisions:
         question = by_id.get(decision.question_id)
         basis = (f"answer to {number(run_questions, question)}" if decision.basis == "answer" and question
+                 else "taken directly" if decision.basis == "direct"
                  else f"minutes {source_names.get(str(decision.source_id), '')} {decision.location or ''}".strip())
         if decision.basis == "minutes" and question:
             basis += f", answers {number(run_questions, question)}"
@@ -235,3 +259,19 @@ def render_decisions(run_decisions: list[Decision], run_questions: list[Clarific
     if not run_decisions:
         lines.append("| — | No decisions yet | | | | | |")
     return "\n".join(lines) + "\n"
+
+
+def as_dicts(session: Session, run_id: uuid.UUID) -> tuple[list[dict], list[dict]]:
+    """Questions and decisions as the page and the baseline gate read them."""
+    run_questions = questions(session, run_id)
+    by_id = {x.id: x for x in run_questions}
+    qs = [{"id": str(x.id), "number": number(run_questions, x), "kind": x.kind, "question": x.question, "why": x.why,
+           "suggestion": x.suggestion, "items": x.items or [], "citations": x.citations or [], "blocking": x.blocking,
+           "owner_role": x.owner_role, "status": x.status, "status_reason": x.status_reason, "answer": x.answer,
+           "answered_by": x.answered_by, "round": x.round} for x in run_questions]
+    ds = [{"number": d.number, "id": decision_id(d), "text": d.text, "basis": d.basis,
+           "question": number(run_questions, by_id[d.question_id]) if d.question_id in by_id else None,
+           "source": str(d.source_id) if d.source_id else None, "location": d.location, "items": d.items,
+           "role": d.role, "status": d.status, "proposed_by": d.proposed_by, "decided_by": d.decided_by,
+           "reason": d.reason} for d in decisions(session, run_id)]
+    return qs, ds

@@ -119,12 +119,14 @@ def test_a_round_of_questions_answers_minutes_and_extract_again(db, sample_repo)
     assert [r["id"] for r in detail["roles"]][:3] == ["po", "ba", "sa"]
     items = {i["name"]: i["id"] for i in next(d for d in detail["documents"] if d["kind"] == "inventory")["inventory"]["items"]}
     assert "Which formats" in client.get(f"/api/runs/{run}/workshop.md", params={"roles": "po"}).text
+    cards = [(i["role"], i["action"], i.get("questions")) for i in client.get("/api/inbox").json() if i["id"] == run]
+    assert cards == [("po", "answer_questions", 2), ("product_owner", "clarifying", None)]
     assert client.post(f"/api/runs/{run}/extract").json()["detail"].startswith("nothing new since inventory v1")
 
     q1, q2 = questions[0]["id"], questions[1]["id"]
     detail = post(f"/api/runs/{run}/questions/{q1}/answer", {"answer": "CSV and PDF"})
     assert detail["decisions"][0] | {} == {**detail["decisions"][0], "id": "D-001", "basis": "answer", "status": "accepted",
-                                           "question": "Q-001", "items": ["Which formats?"]}
+                                           "question": "Q-001", "items": [items["Which formats?"]]}
     missing = client.post(f"/api/runs/{run}/questions/{q2}/status", json={"status": "deferred", "reason": ""})
     assert missing.status_code == 422 or "say why" in missing.json()["detail"]
     post(f"/api/runs/{run}/questions/{q2}/reassign", {"role": "dpo", "reason": "export of personal data"})
@@ -159,3 +161,53 @@ def test_a_round_of_questions_answers_minutes_and_extract_again(db, sample_repo)
     assert inventory["inventory"]["problems"] == []
     jobs = [e for e in detail["executions"] if e["kind"] == "extract"]
     assert len(jobs) == 3
+
+
+
+def test_the_baseline_gate_then_requirements_in_the_repository(db, sample_repo):
+    import subprocess
+    run = start(sample_repo)
+    post(f"/api/runs/{run}/sources/text", {"title": "Brief", "text": "## Reports\n- Customers export reports"})
+    post(f"/api/runs/{run}/extract", {})
+    drain()
+    detail = client.get(f"/api/runs/{run}").json()
+    items = {i["name"]: i["id"] for i in [d for d in detail["documents"] if d["kind"] == "inventory"][-1]["inventory"]["items"]}
+    assert "state the scope" in client.post(f"/api/runs/{run}/baseline", json={"scope": " "}).json()["detail"]
+    detail = post(f"/api/runs/{run}/baseline", {"scope": "Phase 1: reports"})
+    assert detail["status"] == "WAITING_BASELINE_APPROVAL" and detail["checklist"]["gate"] == "baseline"
+    failing = {c["id"]: c["detail"] for c in detail["checklist"]["controller"] if not c["ok"]}
+    assert failing == {"functions": f"{items['Brief']} Brief"}  # the pasted title became a feature without functions
+    baseline = [d for d in detail["documents"] if d["kind"] == "baseline"][-1]
+    refused = client.post(f"/api/runs/{run}/baseline/approve", json={"document_id": baseline["id"], "checked": []})
+    assert refused.status_code == 409 and "controller checks fail" in refused.json()["detail"]
+    post(f"/api/runs/{run}/baseline/reject", {"reason": "the title is not a feature"})
+
+    post(f"/api/runs/{run}/decisions", {"text": "The brief title is out of scope", "items": [items["Brief"]]})
+    post(f"/api/runs/{run}/extract", {})
+    drain()
+    detail = post(f"/api/runs/{run}/baseline", {"scope": "Phase 1: reports"})
+    assert all(c["ok"] for c in detail["checklist"]["controller"]), detail["checklist"]["controller"]
+    baseline = [d for d in detail["documents"] if d["kind"] == "baseline"][-1]
+    assert "## Out of scope" in baseline["content"] and "| " + items["Brief"] + " | Brief | D-001 |" in baseline["content"]
+    missing = client.post(f"/api/runs/{run}/baseline/approve", json={"document_id": baseline["id"], "checked": []})
+    assert "tick every review item" in missing.json()["detail"]
+    ticks = [h["id"] for h in detail["checklist"]["human"]]
+    detail = post(f"/api/runs/{run}/baseline/approve", {"document_id": baseline["id"], "checked": ticks})
+    assert detail["status"] == "PR_OPEN"
+    drain()
+    detail = client.get(f"/api/runs/{run}").json()
+    assert detail["status"] == "WAITING_PR_APPROVAL"
+    files = subprocess.run(["git", "-C", detail_worktree(run), "ls-tree", "-r", "--name-only", "HEAD", "requirements/"],
+                           capture_output=True, text=True).stdout.split()
+    assert files == ["requirements/baseline.json", "requirements/baseline.md", "requirements/decisions.md",
+                     "requirements/inventory.md", "requirements/questions.md", "requirements/sources.md",
+                     "requirements/sources/Brief.md"]
+    post(f"/api/runs/{run}/pr-decision", {"decision": "approve", "checked": [h["id"] for h in detail["checklist"]["human"]]})
+    assert client.get(f"/api/runs/{run}").json()["status"] == "COMPLETED"
+
+
+def detail_worktree(run: str) -> str:
+    from controller.app.db import session_scope
+    from controller.app.models import Run
+    with session_scope() as session:
+        return session.get(Run, uuid.UUID(run)).worktree_path

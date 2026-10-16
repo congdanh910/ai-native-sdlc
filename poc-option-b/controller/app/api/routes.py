@@ -304,10 +304,48 @@ def reassign_question(run_id: uuid.UUID, question_id: uuid.UUID, body: Reassign)
                                                               reason=body.reason))
 
 
+class NewDecision(Body):
+    text: str = Field(min_length=1)
+    items: list[str] = []
+    role: str = "po"
+
+
+@router.post("/runs/{run_id}/decisions")
+def record_decision(run_id: uuid.UUID, body: NewDecision) -> dict:
+    """A decision taken directly (for example REQ-002 out of scope); Extract again applies it to the inventory."""
+    return _discovery(run_id, lambda s, r: questions.record(s, r, body.text, body.items, body.role,
+                                                            discovery.discovery_config(s, r), actor=operator()))
+
+
 @router.post("/runs/{run_id}/decisions/{number}")
 def decide_decision(run_id: uuid.UUID, number: int, body: DecisionVerdict) -> dict:
     return _discovery(run_id, lambda s, r: questions.decide(s, r, number, body.accept, actor=operator(),
                                                             reason=body.reason))
+
+
+class BaselineScope(Body):
+    scope: str = Field(min_length=1)
+
+
+class BaselineApproval(Body):
+    document_id: uuid.UUID
+    checked: list[str] = []
+
+
+@router.post("/runs/{run_id}/baseline")
+def prepare_baseline(run_id: uuid.UUID, body: BaselineScope) -> dict:
+    """The Product Owner states the phase's scope; the baseline waits at its gate with the checklist."""
+    return _decide(run_id, lambda s, r: discovery.prepare_baseline(s, r, body.scope, actor=operator()))
+
+
+@router.post("/runs/{run_id}/baseline/approve")
+def approve_baseline(run_id: uuid.UUID, body: BaselineApproval) -> dict:
+    return _decide(run_id, lambda s, r: discovery.approve_baseline(s, r, body.document_id, body.checked, actor=operator()))
+
+
+@router.post("/runs/{run_id}/baseline/reject")
+def reject_baseline(run_id: uuid.UUID, body: Reason) -> dict:
+    return _decide(run_id, lambda s, r: discovery.reject_baseline(s, r, actor=operator(), reason=body.reason))
 
 
 @router.get("/runs/{run_id}/workshop.md", response_class=PlainTextResponse)

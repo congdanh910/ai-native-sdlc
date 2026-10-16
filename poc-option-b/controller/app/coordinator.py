@@ -237,7 +237,7 @@ def tick_tasks(session: Session, run: Run) -> None:
 
 # ---------------------------------------------------------------- gate checklists
 
-GATE_OF_STATUS = {RunStatus.WAITING_PLAN_APPROVAL: "plan", RunStatus.WAITING_TEST_APPROVAL: "tests",
+GATE_OF_STATUS = {RunStatus.WAITING_BASELINE_APPROVAL: "baseline", RunStatus.WAITING_PLAN_APPROVAL: "plan", RunStatus.WAITING_TEST_APPROVAL: "tests",
                   RunStatus.WAITING_PR_APPROVAL: "pr"}
 
 
@@ -257,7 +257,9 @@ def evaluate_gate(session: Session, run: Run, gate: str | None = None) -> dict |
     controller: list[dict] = []
     ai: list[dict] = []
     spec = latest_document(session, run.id, "spec")
-    if gate == "srs":
+    if gate == "baseline":
+        controller = baseline_checks(session, run)
+    elif gate == "srs":
         problems = check_srs_markdown(latest_document(session, run.id, "srs").content)
         controller = [checklists._result("outline", "SRS sections 1-8 are present and story ids are unique", problems)]
     elif gate == "sds":
@@ -286,6 +288,17 @@ def evaluate_gate(session: Session, run: Run, gate: str | None = None) -> dict |
         findings = after.data.get("findings", []) if after and after.data.get("stage") == "after" else []
         controller = checklists.check_release(statuses, added, changed, findings)
     return {"gate": gate, "controller": controller, "ai": ai, "human": checklists.human_items(gate)}
+
+
+def baseline_checks(session: Session, run: Run) -> list[dict]:
+    from controller.app.discovery import baseline, questions as q
+    from controller.app.discovery.inventory import Inventory
+    latest = latest_document(session, run.id, "inventory")
+    data = latest.data if latest else {}
+    inventory = Inventory.model_validate({k: data.get(k, [] if k != "coverage" else {}) for k in ("items", "gaps", "coverage")})
+    run_questions, run_decisions = q.as_dicts(session, run.id)
+    return baseline.check(inventory, data.get("problems", []), run_questions, run_decisions,
+                          data.get("decisions_applied", []))
 
 
 def _release_evidence(session: Session, run: Run) -> tuple[list[str], list[str]]:
@@ -1141,7 +1154,8 @@ def _apply_extract(session: Session, run: Run, execution: Execution, result: dic
                                                                                "decisions_applied")}})
     document.commit_sha = commit_thread(session, run, "inventory", content,
                                         f"sdlc: requirement inventory v{document.version}")
-    added, left_out = q.sync_questions(session, run, inventory.gaps, document.version, config)
+    ids_by_name = {q._norm(n): i.id for i in inventory.items for n in [i.name, *i.aliases]}
+    added, left_out = q.sync_questions(session, run, inventory.gaps, document.version, config, ids_by_name)
     run_questions = q.questions(session, run.id)
     by_number = {q.number(run_questions, x): x for x in run_questions}
     proposed = 0

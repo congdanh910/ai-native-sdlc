@@ -25,6 +25,10 @@ export const ROLE_LABEL: Record<string, string> = {
 
 export const ACTION_LABEL: Record<string, string> = {
   needs_clarification: "Answer the Business Analyst's questions",
+  answer_questions: "Questions for you",
+  ingesting: "Add the sources, then start the extraction",
+  clarifying: "Review the requirement inventory",
+  waiting_baseline_approval: "Approve the baseline",
   waiting_spec_approval: "Review spec.md",
   waiting_plan_approval: "Review the plan",
   waiting_test_approval: "Review the test cases",

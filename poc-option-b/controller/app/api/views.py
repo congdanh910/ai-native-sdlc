@@ -12,7 +12,7 @@ from controller.app.services import needs_classification
 from controller.app.states import ACTIVE, STAGE_STARTER, WAITING_FOR, HumanRole
 
 
-WAITING_GATES = ("WAITING_SPEC_APPROVAL", "WAITING_PLAN_APPROVAL", "WAITING_TEST_APPROVAL", "WAITING_PR_APPROVAL")
+WAITING_GATES = ("WAITING_BASELINE_APPROVAL", "WAITING_SPEC_APPROVAL", "WAITING_PLAN_APPROVAL", "WAITING_TEST_APPROVAL", "WAITING_PR_APPROVAL")
 
 
 def project_view(project: Project) -> dict:
@@ -63,21 +63,9 @@ def _discovery(session: Session, run: Run) -> dict:
     """Questions by role, decisions and the project's discovery roles, for the Questions and Decisions tabs."""
     from controller.app.discovery import questions as q
     from controller.app.discovery.service import discovery_config
-    config = discovery_config(session, run)
-    run_questions = q.questions(session, run.id)
-    by_id = {x.id: x for x in run_questions}
-    return {
-        "roles": [r.model_dump() for r in config.roles],
-        "questions": [{"id": str(x.id), "number": q.number(run_questions, x), "kind": x.kind, "question": x.question,
-                       "why": x.why, "suggestion": x.suggestion, "items": x.items or [], "citations": x.citations or [],
-                       "blocking": x.blocking, "owner_role": x.owner_role, "status": x.status,
-                       "status_reason": x.status_reason, "answer": x.answer, "answered_by": x.answered_by,
-                       "round": x.round} for x in run_questions],
-        "decisions": [{"number": d.number, "id": q.decision_id(d), "text": d.text, "basis": d.basis,
-                       "question": q.number(run_questions, by_id[d.question_id]) if d.question_id in by_id else None,
-                       "source": str(d.source_id) if d.source_id else None, "location": d.location, "items": d.items,
-                       "role": d.role, "status": d.status, "proposed_by": d.proposed_by, "decided_by": d.decided_by,
-                       "reason": d.reason} for d in q.decisions(session, run.id)]}
+    run_questions, run_decisions = q.as_dicts(session, run.id)
+    return {"roles": [r.model_dump() for r in discovery_config(session, run).roles], "questions": run_questions,
+            "decisions": run_decisions}
 
 
 def run_detail(session: Session, run: Run) -> dict:
@@ -158,6 +146,14 @@ def inbox(session: Session) -> list[dict]:
         if run.experiment or (run.status not in ACTIVE and not needs_classification(run)):
             continue  # experiment runs are followed on the Evals page
         need = waiting(run)
+        if run.kind == "discovery" and run.status == "CLARIFYING":
+            # Questions for you: one card per role that has open questions, besides the PO's card for the round.
+            from controller.app.discovery import questions as q
+            from controller.app.discovery.service import discovery_config
+            names = {r.id: r.name for r in discovery_config(session, run).roles}
+            for owner, count in sorted(q.open_count(session, run.id).items()):
+                items.append({**run_summary(run, key), "role": owner, "role_name": names.get(owner, owner),
+                              "action": "answer_questions", "stage": None, "questions": count})
         if need:
             items.append({**run_summary(run, key), **{"role": need["role"], "action": need["action"],
                                                        "stage": need.get("stage")}})

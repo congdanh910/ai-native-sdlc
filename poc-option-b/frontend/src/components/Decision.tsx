@@ -85,6 +85,33 @@ export function DecisionPanel({ run, onDone }: { run: RunDetail; onDone: () => v
         ) : null}
         <div><ActionButton variant="primary" disabled={!sources} success="Extraction started" action={() => post("extract", {})}>
           {need.action === "ingesting" ? "Start extraction" : "Extract again"}</ActionButton></div>
+        {need.action === "clarifying" ? (
+          <details className="rounded-lg border border-line p-3">
+            <summary className="cursor-pointer text-sm font-semibold">Prepare the baseline (Product Owner)</summary>
+            <div className="mt-2 flex flex-col gap-2">
+              <p className="m-0 text-sm text-muted">The baseline is inventory v{rounds} with the accepted decisions. At its gate the controller checks that no blocking question or conflict is open, every feature in scope has functions and quality targets have numbers; you tick the review items, then requirements/ goes to the repository through a draft PR.</p>
+              <Field label="Scope of this phase" htmlFor="baseline-scope"><Textarea id="baseline-scope" className="min-h-16" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Phase 1: what this release covers, as agreed with the customer" /></Field>
+              <div><ActionButton disabled={!reason.trim()} action={() => post("baseline", { scope: reason })}>Prepare baseline</ActionButton></div>
+            </div>
+          </details>
+        ) : null}
+      </Panel>
+    );
+  }
+
+  if (need.action === "waiting_baseline_approval") {
+    const baseline = [...run.documents].reverse().find((d) => d.kind === "baseline");
+    if (!baseline) return null;
+    return (
+      <Panel run={run} title={`Baseline on inventory v${run.documents.filter((d) => d.kind === "inventory").length}`}>
+        <p className="m-0 text-sm text-muted">Approving commits requirements/ (inventory, questions, decisions, baseline and the raw sources) to the run's branch and opens a draft PR. Merging it completes the discovery; the SRS run then builds on it.</p>
+        <div className="max-h-[420px] overflow-y-auto rounded-lg border border-line bg-side p-4"><Markdown source={baseline.content} /></div>
+        {checklist}
+        <Reason value={reason} onChange={setReason} placeholder="Required to send it back" />
+        <div className="flex flex-wrap gap-2">
+          <ActionButton variant="primary" success="Baseline approved; opening the PR" action={() => post("baseline/approve", { document_id: baseline.id, checked })}>Approve baseline</ActionButton>
+          <ActionButton variant="danger" action={() => post("baseline/reject", { reason })}>Back to clarifying</ActionButton>
+        </div>
       </Panel>
     );
   }
