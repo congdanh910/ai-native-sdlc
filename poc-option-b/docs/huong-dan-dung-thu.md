@@ -56,7 +56,7 @@ flowchart LR
     val -- "lỗi: sửa, tối đa 2 lần" --> dev
   end
   gq --> qa
-  val --> review["Code Reviewer<br/><small>Qwen3, review.md</small>"]
+  val --> review["Code Reviewer<br/><small>Claude, review.md</small>"]
   review --> pr["Phân tích sau code<br/>+ draft PR<br/><small>Release Engineer</small>"]
   pr --> g3{{"Cổng 3: merge<br/>GitHub, bởi bạn"}}
   g3 --> done["COMPLETED<br/><small>worker ghi nhận</small>"]
@@ -66,7 +66,7 @@ Mỗi cổng hiện checklist ba phần: mục controller tự kiểm (trượt 
 
 ## Kiến trúc
 
-Mọi thứ chạy trên MacBook trừ Qwen3 (GX10) và GitHub; worker là nơi duy nhất gọi các vai, còn PostgreSQL giữ trạng thái chính thức.
+Mọi thứ chạy trên MacBook trừ GitHub (và GX10 khi bật Qwen); worker là nơi duy nhất gọi các vai, còn PostgreSQL giữ trạng thái chính thức.
 
 ```mermaid
 flowchart TB
@@ -101,7 +101,7 @@ Mọi dịch vụ trên MacBook chỉ nghe ở `127.0.0.1`; `./sdlc up` bật t�
 | Controller DB | Docker `controller-db` | PostgreSQL 16 | 55442 | Projects, runs, documents, plans, tasks, executions, approvals, events, evals |
 | Langflow | Docker `langflow` (+ `langflow-db`) | Langflow 1.12 | 7870 | 5 flow, mỗi vai một flow: prompt → Ollama; prompt đồng bộ từ `langflow/prompts/` |
 | SSH tunnel | MacBook → GX10 | `ssh -N -L` | 11435 → 11437 | Đưa Langflow tới Ollama trên GX10; tự mở lại khi rớt |
-| Ollama + Qwen3 | GX10 | `qwen3:30b-instruct`, ctx 8192 | 11437 (nội bộ) | Code Reviewer; worker kiểm tra RAM/GPU trước mỗi lần gọi |
+| Ollama + Qwen3 (tuỳ chọn, đang tắt) | GX10 | `qwen3:30b-instruct`, ctx 8192 | 11437 (nội bộ) | Chỉ dùng khi `SDLC_QWEN_ENABLED=true`; worker kiểm tra RAM/GPU trước mỗi lần gọi |
 | Claude Code CLI (chỉ đọc) | MacBook | `claude -p`, subscription claude.ai | – | Business Analyst, Tech Lead, QA Analyst; chỉ Read/Glob/Grep trong worktree |
 | Codex CLI | MacBook | `codex exec`, subscription ChatGPT | – | QA Engineer, Developer; sandbox `workspace-write`, không mạng |
 | Validation container | Docker, mỗi lệnh một container | `node:20-alpine`, `python:3.12-slim`… | – | Red check và validation: không mạng, worktree chỉ đọc, 2 CPU, 2 GB |
@@ -115,7 +115,7 @@ Mọi việc của đội là một dòng trong bảng `executions`; worker xử
 1. **Xếp hàng**: API hoặc coordinator thêm job (`specify`, `plan`, `ground`, `code_task`, `review`, `release`) kèm idempotency key, nên cùng một việc không bị xếp hai lần.
 2. **Nhận job**: worker lấy job bằng `FOR UPDATE SKIP LOCKED`, giữ lease 120 giây và gia hạn liên tục; cứ 5 giây kiểm tra run có bị huỷ không.
 3. **Load** (đọc DB): dựng ngữ cảnh từ artifact đã lưu: intent, spec, policy, AGENTS.md, plan, engine của run, file và symbol của repo ở commit ghim.
-4. **Compute** (không chạm DB): gọi vai — Claude hoặc Qwen3 cho vai suy nghĩ, Codex + container cho vai làm; đầu ra được chuẩn hoá và kiểm tra theo schema, sai thì hỏi lại tối đa 2 lần; bước *tidy* gỡ tiêu chí kiểu "test pass", file test trong task của Tech Lead.
+4. **Compute** (không chạm DB): gọi vai — Claude cho vai suy nghĩ (Qwen3 nếu bật), Codex + container cho vai làm; đầu ra được chuẩn hoá và kiểm tra theo schema, sai thì hỏi lại tối đa 2 lần; bước *tidy* gỡ tiêu chí kiểu "test pass", file test trong task của Tech Lead.
 5. **Apply** (một transaction): kiểm tra run vẫn ở đúng trạng thái và version, lưu tài liệu, chuyển trạng thái, ghi event, xếp job kế tiếp; run đã đổi thì kết quả bị bỏ (`discarded`).
 6. **Khi lỗi**: job suy nghĩ được thử lại tối đa 3 lần (chờ 10, 20, 40 giây); GX10 bận → hoãn 2 phút; hết hạn mức subscription → hoãn 15 phút; job có tác dụng phụ (code, release) không bao giờ chạy lại mù mà chuyển run sang `NEEDS_HUMAN`.
 
@@ -157,7 +157,7 @@ Mỗi vai có hợp đồng riêng; engine của vai suy nghĩ đặt trong `.en
 | Code Reviewer | Viết review.md (tham khảo), kiểm theo constitution | Claude chỉ đọc |
 | Release Engineer | Push branch, mở draft PR, theo dõi CI và merge | `gh` của bạn |
 
-Người duyệt: Product Owner (spec, SRS), Tech Lead (plan, SDS), QC (test cases), Code Owner (PR). Tạm thời một operator giữ mọi vai và ghi "thay mặt ai" trong lý do. Mọi vai đọc `.specify/memory/constitution.md` của repo nếu có (Qwen3 nhận bản cắt ngắn). Nền tảng không tự merge, không deploy và không dùng API key trả phí.
+Người duyệt: Product Owner (spec, SRS), Tech Lead (plan, SDS), QC (test cases), Code Owner (PR). Tạm thời một operator giữ mọi vai và ghi "thay mặt ai" trong lý do. Mọi vai đọc `.specify/memory/constitution.md` của repo nếu có. Nền tảng không tự merge, không deploy và không dùng API key trả phí.
 
 ## Giao diện
 
