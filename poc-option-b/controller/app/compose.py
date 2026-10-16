@@ -5,6 +5,11 @@ import subprocess
 from controller.app.config import ENV_FILE, PROJECT_ROOT
 
 SERVICES = ("controller-db", "langflow-db", "langflow")
+QWEN_SERVICES = ("langflow-db", "langflow")  # needed only when SDLC_QWEN_ENABLED=true
+
+
+def services(qwen_enabled: bool) -> tuple[str, ...]:
+    return SERVICES if qwen_enabled else tuple(s for s in SERVICES if s not in QWEN_SERVICES)
 
 
 def compose_argv(*args: str) -> list[str]:

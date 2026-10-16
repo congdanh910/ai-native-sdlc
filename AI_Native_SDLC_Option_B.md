@@ -113,6 +113,8 @@ Allowed values: `qwen3` (Langflow and Ollama on GX10), `claude-readonly` and `co
 
 **Approval (operator, 2026-10-15):** the **Code Reviewer** of normal runs may also use `claude-readonly`. With the AIF artifacts (AC/EC in Given/When/Then, test cases, design sections) the review input of the attendance `AUTH-US-01` run was about 9,500 tokens after compaction, beyond Qwen3's 8,192-token window. The operator chose Claude over a larger Qwen3 context.
 
+**Decision (operator, 2026-10-16):** Qwen3 on GX10 is no longer used. `SDLC_QWEN_ENABLED=false`, `SDLC_TEAM_MODE=claude-readonly` and `SDLC_DEFAULT_ENGINE=claude-readonly`: every thinking role and the intent draft run on the operator's Claude subscription; `sdlc up` starts neither Langflow nor the GX10 tunnel. The Qwen3 path stays in the code and returns with `SDLC_QWEN_ENABLED=true`.
+
 ### Working agreements
 1. **Artifacts, not conversations.** Each AI role works only from the artifacts handed to it. There is no hidden memory between roles. Every artifact is versioned, checksummed, attributed to the role that produced it and, by default, committed to the run branch.
 2. **No self-approval.** No role approves its own output, and no AI role approves another AI role's output. Approval authority belongs to humans only.

@@ -60,10 +60,16 @@ def check_config(settings: Settings) -> Check:
     if missing:
         return Check("config", FAIL, "placeholder values: " + ", ".join(missing),
                      "Edit .env or rerun ./sdlc init with the GX10 options")
-    problems = settings.gx10_problems()
+    problems = settings.gx10_problems() if settings.sdlc_qwen_enabled else []
     if problems:
         return Check("config", FAIL, "; ".join(problems), "Edit the GX10_* values in .env")
-    return Check("config", OK, f"operator {settings.sdlc_operator}")
+    try:
+        engines = settings.default_engines
+    except ValueError as exc:
+        return Check("config", FAIL, str(exc), "Edit SDLC_ENGINES, SDLC_DEFAULT_ENGINE or SDLC_QWEN_ENABLED in .env")
+    qwen = "Qwen on GX10 enabled" if settings.sdlc_qwen_enabled else "Qwen disabled"
+    return Check("config", OK, f"operator {settings.sdlc_operator}; {qwen}; engines "
+                               + ", ".join(f"{role}={engine}" for role, engine in engines.items()))
 
 
 def check_docker() -> Check:
@@ -217,16 +223,17 @@ def check_executors(settings: Settings) -> list[Check]:
 
 def readiness_checks(settings: Settings, engine: Engine) -> list[Check]:
     """Fast checks for /health/ready."""
-    return [check_postgres(engine), check_migrations(engine), check_langflow(settings), check_flows(settings),
-            check_tunnel(settings), check_ollama(settings), check_worker()]
+    qwen = [check_langflow(settings), check_flows(settings), check_tunnel(settings), check_ollama(settings)] \
+        if settings.sdlc_qwen_enabled else []
+    return [check_postgres(engine), check_migrations(engine), *qwen, check_worker()]
 
 
 def doctor_checks(settings: Settings, engine: Engine) -> list[Check]:
     config = check_config(settings)
     if config.status == FAIL:
         return [config]
-    return [config, check_docker(), *readiness_checks(settings, engine),
-            check_langflow_to_ollama(settings), check_gx10_capacity(settings), check_api(settings),
+    gx10 = [check_langflow_to_ollama(settings), check_gx10_capacity(settings)] if settings.sdlc_qwen_enabled else []
+    return [config, check_docker(), *readiness_checks(settings, engine), *gx10, check_api(settings),
             *check_executors(settings)]
 
 

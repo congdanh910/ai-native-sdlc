@@ -61,11 +61,12 @@ def test_routing_uses_the_run_engines_and_qwen3_by_default(settings):
 
 
 def test_engine_choices_are_validated():
-    assert validate_engines({"tech_lead": "claude-readonly"})["business_analyst"] == "qwen3"
+    defaults = {"default": "qwen3", "qwen_enabled": True}  # independent of the operator's .env
+    assert validate_engines({"tech_lead": "claude-readonly"}, **defaults)["business_analyst"] == "qwen3"
     with pytest.raises(ValueError, match="unknown engine"):
-        validate_engines({"tech_lead": "gpt"})
+        validate_engines({"tech_lead": "gpt"}, **defaults)
     with pytest.raises(ValueError, match="unknown thinking role"):
-        validate_engines({"developer": "qwen3"})
+        validate_engines({"developer": "qwen3"}, **defaults)
 
 
 def test_default_engines_come_from_settings(settings):
@@ -75,3 +76,37 @@ def test_default_engines_come_from_settings(settings):
     assert custom.default_engines["tech_lead"] == "claude-readonly" and custom.default_engines["code_reviewer"] == "qwen3"
     with pytest.raises(ValueError):
         _ = settings.model_copy(update={"sdlc_engines": "tech_lead"}).default_engines
+
+
+def test_without_qwen_every_role_needs_a_cli_engine():
+    import pytest
+    from controller.app.team.readonly import validate_engines
+    assert validate_engines({"tech_lead": "codex-readonly"}, default="claude-readonly", qwen_enabled=False) == {
+        "business_analyst": "claude-readonly", "tech_lead": "codex-readonly", "qa_analyst": "claude-readonly",
+        "code_reviewer": "claude-readonly"}
+    with pytest.raises(ValueError, match="Qwen is disabled.*code_reviewer"):
+        validate_engines({"code_reviewer": "qwen3"}, default="claude-readonly", qwen_enabled=False)
+    with pytest.raises(ValueError, match="business_analyst"):
+        validate_engines({}, default="qwen3", qwen_enabled=False)
+
+
+def test_a_claude_base_team_drafts_intents_without_langflow(monkeypatch):
+    from controller.app import team as team_module
+    from controller.app.config import Settings
+    from controller.app.team.readonly import ReadonlyTeam
+    settings = Settings(sdlc_team_mode="claude-readonly", sdlc_qwen_enabled=False, sdlc_default_engine="claude-readonly",
+                        sdlc_doing_mode="mock")
+    monkeypatch.setattr(team_module, "get_settings", lambda: settings)
+    built = team_module.get_team()
+    assert isinstance(built.base, ReadonlyTeam) and built.base.engine == "claude-readonly"
+
+
+def test_health_skips_langflow_and_gx10_without_qwen(monkeypatch):
+    from controller.app import health
+    from controller.app.config import Settings
+    settings = Settings(sdlc_qwen_enabled=False)
+    monkeypatch.setattr(health, "check_postgres", lambda e: health.Check("postgres", health.OK, ""))
+    monkeypatch.setattr(health, "check_migrations", lambda e: health.Check("migrations", health.OK, ""))
+    monkeypatch.setattr(health, "check_worker", lambda: health.Check("worker", health.OK, ""))
+    names = [c.name for c in health.readiness_checks(settings, None)]
+    assert names == ["postgres", "migrations", "worker"]

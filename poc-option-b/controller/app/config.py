@@ -28,7 +28,11 @@ class Settings(BaseSettings):
     langflow_port: int = 7870
 
     sdlc_api_port: int = 8770
-    sdlc_team_mode: str = "mock"  # thinking roles: mock or qwen3
+    sdlc_team_mode: str = "mock"  # base of the thinking roles: mock, qwen3, claude-readonly or codex-readonly
+    # Qwen3 on GX10 through Langflow. Off: `sdlc up` starts neither Langflow nor the GX10 tunnel, the health checks
+    # skip them, and no role may use qwen3.
+    sdlc_qwen_enabled: bool = True
+    sdlc_default_engine: str = "qwen3"  # engine of a thinking role that SDLC_ENGINES does not name
     sdlc_doing_mode: str = "mock"  # QA Engineer, Developer, Validation Gate: mock or cli (B4)
     github_webhook_secret: str = ""  # empty: no webhook; the worker polls GitHub every minute
     # Engines of normal runs per thinking role, e.g. "tech_lead=claude-readonly,qa_analyst=claude-readonly".
@@ -42,7 +46,7 @@ class Settings(BaseSettings):
         pairs = [item.split("=", 1) for item in self.sdlc_engines.replace(" ", "").split(",") if item]
         if any(len(pair) != 2 for pair in pairs):
             raise ValueError("SDLC_ENGINES must look like tech_lead=claude-readonly,qa_analyst=claude-readonly")
-        return validate_engines(dict(pairs))
+        return validate_engines(dict(pairs), default=self.sdlc_default_engine, qwen_enabled=self.sdlc_qwen_enabled)
 
     ollama_tunnel_port: int = 11435
     ollama_remote_port: int = 11437

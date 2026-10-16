@@ -145,7 +145,7 @@ class RoutingTeam:
         return self.base.engine
 
     def _for(self, context: RunContext, role: str):
-        engine = (context.engines or {}).get(role, "qwen3")
+        engine = (context.engines or {}).get(role, self.settings.sdlc_default_engine)
         if engine == "qwen3":
             return self.base
         if engine not in ENGINES:
@@ -187,14 +187,28 @@ class RoutingTeam:
         return getattr(self.base, name)
 
 
-def validate_engines(engines: dict | None) -> dict:
+def validate_engines(engines: dict | None, default: str | None = None, qwen_enabled: bool | None = None) -> dict:
+    """Every thinking role's engine; a role not named gets `default` (SDLC_DEFAULT_ENGINE). With Qwen disabled
+    (SDLC_QWEN_ENABLED=false) no role may use qwen3."""
+    if default is None or qwen_enabled is None:
+        from controller.app.config import get_settings
+        settings = get_settings()
+        default = settings.sdlc_default_engine if default is None else default
+        qwen_enabled = settings.sdlc_qwen_enabled if qwen_enabled is None else qwen_enabled
     engines = dict(engines or {})
     for role, engine in engines.items():
         if role not in THINKING_ROLES:
             raise ValueError(f"unknown thinking role {role!r}; use {', '.join(THINKING_ROLES)}")
         if engine not in ENGINES:
             raise ValueError(f"unknown engine {engine!r} for {role}; use {', '.join(ENGINES)}")
-    return {role: engines.get(role, "qwen3") for role in THINKING_ROLES}
+    if default not in ENGINES:
+        raise ValueError(f"unknown SDLC_DEFAULT_ENGINE {default!r}; use {', '.join(ENGINES)}")
+    resolved = {role: engines.get(role, default) for role in THINKING_ROLES}
+    if not qwen_enabled and "qwen3" in resolved.values():
+        roles = [role for role, engine in resolved.items() if engine == "qwen3"]
+        raise ValueError(f"Qwen is disabled (SDLC_QWEN_ENABLED=false) but {', '.join(roles)} would use qwen3; "
+                         "set SDLC_DEFAULT_ENGINE or SDLC_ENGINES to a read-only CLI")
+    return resolved
 
 
 def describe(engines: dict) -> str:

@@ -9,10 +9,16 @@ def get_team() -> Team:
         from controller.app.team.mock import MockTeam
         thinking = MockTeam()
     elif settings.sdlc_team_mode == "qwen3":
+        if not settings.sdlc_qwen_enabled:
+            raise ValueError("SDLC_TEAM_MODE=qwen3 needs SDLC_QWEN_ENABLED=true; use claude-readonly or codex-readonly")
         from controller.app.team.langflow_team import LangflowTeam
         thinking = LangflowTeam(settings)
+    elif settings.sdlc_team_mode in ("claude-readonly", "codex-readonly"):
+        from controller.app.team.readonly import ReadonlyTeam
+        thinking = ReadonlyTeam(settings, settings.sdlc_team_mode.removesuffix("-readonly"))
     else:
-        raise ValueError(f"unknown SDLC_TEAM_MODE {settings.sdlc_team_mode!r}; use mock or qwen3")
+        raise ValueError(f"unknown SDLC_TEAM_MODE {settings.sdlc_team_mode!r}; "
+                         "use mock, qwen3, claude-readonly or codex-readonly")
     from controller.app.team.readonly import RoutingTeam
     thinking = RoutingTeam(thinking, settings)  # experiments may put a thinking role on a read-only CLI
     if settings.sdlc_doing_mode == "mock":

@@ -10,7 +10,7 @@ import httpx
 
 from cli.envfile import write_env
 from controller.app import health, migrations
-from controller.app.compose import SERVICES, run_compose
+from controller.app.compose import QWEN_SERVICES, SERVICES, run_compose, services
 from controller.app.config import ENV_FILE, PROJECT_ROOT, Settings
 from controller.app.db import get_engine
 from controller.app.integrations.langflow import LangflowError, client_from_settings
@@ -97,28 +97,35 @@ def cmd_up(args: argparse.Namespace) -> int:
     if docker.status == health.FAIL:
         raise CliError(f"{docker.detail}. {docker.hint}")
 
-    say("1/5 Starting PostgreSQL and Langflow (first start can take a few minutes)…")
-    result = run_compose("up", "-d", "--wait", *SERVICES)
+    qwen = settings.sdlc_qwen_enabled
+    say("1/5 Starting PostgreSQL" + (" and Langflow (first start can take a few minutes)…" if qwen else "…"))
+    result = run_compose("up", "-d", "--wait", *services(qwen))
     if result.returncode:
         raise CliError(f"docker compose failed:\n{result.stderr.strip()}")
+    if not qwen:
+        run_compose("stop", *QWEN_SERVICES)  # left running from a time Qwen was enabled
 
     say("2/5 Applying database migrations…")
     migrations.upgrade_to_head(get_engine())
 
-    say("3/5 Syncing role prompts into Langflow flows…")
-    try:
-        changes = client_from_settings(settings).sync_flows(settings.ollama_model, settings.ollama_url_from_langflow,
-                                                           settings.ollama_num_ctx)
-    except LangflowError as exc:
-        raise CliError(f"cannot sync Langflow flows: {exc}") from exc
-    say("    " + ("; ".join(changes) if changes else "flows already match langflow/prompts"))
+    if qwen:
+        say("3/5 Syncing role prompts into Langflow flows…")
+        try:
+            changes = client_from_settings(settings).sync_flows(settings.ollama_model,
+                                                               settings.ollama_url_from_langflow, settings.ollama_num_ctx)
+        except LangflowError as exc:
+            raise CliError(f"cannot sync Langflow flows: {exc}") from exc
+        say("    " + ("; ".join(changes) if changes else "flows already match langflow/prompts"))
 
-    say("4/5 Opening the SSH tunnel to GX10…")
-    try:
-        tunnel = ensure_tunnel(settings)
-    except RuntimeError as exc:
-        raise CliError(str(exc)) from exc
-    say(f"    tunnel {tunnel.state}")
+        say("4/5 Opening the SSH tunnel to GX10…")
+        try:
+            tunnel = ensure_tunnel(settings)
+        except RuntimeError as exc:
+            raise CliError(str(exc)) from exc
+        say(f"    tunnel {tunnel.state}")
+    else:
+        say("3/5 Langflow flows: skipped (SDLC_QWEN_ENABLED=false)")
+        say("4/5 GX10 tunnel: skipped (SDLC_QWEN_ENABLED=false)")
 
     say("5/5 Starting the controller API and the team worker…")
     say(f"    API {_ensure_api(settings)}")

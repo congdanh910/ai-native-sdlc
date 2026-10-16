@@ -577,7 +577,7 @@ def apply(session: Session, loaded: Loaded, result: dict, team: Team) -> None:
         record_event(session, "job.discarded", actor=COORDINATOR, run_id=run.id,
                      payload={"kind": loaded.kind, "execution": str(execution.id)})
         return
-    execution.engine = result.get("_engine") or team.engine
+    execution.engine = result.get("_engine")  # only jobs that called a model or a CLI name an engine
     calls = result.get("_calls") or []
     if calls:
         execution.prompt_version = ",".join(sorted({c["prompt_version"] for c in calls if c["prompt_version"]}))

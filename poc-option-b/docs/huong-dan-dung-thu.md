@@ -154,7 +154,7 @@ Mỗi vai có hợp đồng riêng; engine của vai suy nghĩ đặt trong `.en
 | QA Engineer | Viết test trước khi có code; chỉ được thêm test | Codex (subscription) |
 | Developer | Viết code trong đúng file của task; không được sửa test | Codex |
 | Validation Gate | Red check và validation | Container Docker, không mạng, chỉ đọc |
-| Code Reviewer | Viết review.md (tham khảo) | Qwen3 trên GX10 |
+| Code Reviewer | Viết review.md (tham khảo), kiểm theo constitution | Claude chỉ đọc |
 | Release Engineer | Push branch, mở draft PR, theo dõi CI và merge | `gh` của bạn |
 
 Người duyệt: Product Owner (spec, SRS), Tech Lead (plan, SDS), QC (test cases), Code Owner (PR). Tạm thời một operator giữ mọi vai và ghi "thay mặt ai" trong lý do. Mọi vai đọc `.specify/memory/constitution.md` của repo nếu có (Qwen3 nhận bản cắt ngắn). Nền tảng không tự merge, không deploy và không dùng API key trả phí.
@@ -338,8 +338,8 @@ Thông số của nền tảng (worker, GitHub, Ollama, hạn mức subscription
 - Branch `sdlc/run-xxxx` của mỗi run được push lên repo demo; PR #1 trên `inventory-demo` đang chờ quyết định merge hoặc đóng.
 - Sửa `.env` thì chạy lại `./sdlc up`; run đã tạo vẫn giữ engine cũ.
 - Không restart dịch vụ khi run đang ở `CODING`: task đang chạy sẽ thành `UNKNOWN` và phải Resume.
-- Các vai dùng Claude gửi nội dung repo tới Anthropic qua subscription; Code Reviewer dùng GX10.
-- Code Reviewer (Qwen3) chưa bắt được lỗi kiến trúc; vẫn cần người đọc PR.
+- Mọi vai suy nghĩ và nút Draft with AI dùng Claude qua subscription (nội dung repo được gửi tới Anthropic). Qwen3 trên GX10 đã tắt (`SDLC_QWEN_ENABLED=false`); bật lại thì `sdlc up` khởi động Langflow và tunnel như trước.
+- Code Reviewer chỉ tham khảo; vẫn cần người đọc PR.
 - Plan mẫu của bộ eval `inventory` do Claude viết, chưa có người duyệt.
 - Chữ trên giao diện là tiếng Anh, khớp với thông báo của backend. Dùng thử không cần Node; chỉ khi sửa giao diện mới chạy `cd frontend && npm ci && npm run build`.
 - Tài liệu chi tiết: [user-guide.md](user-guide.md); sự cố và cách xử lý: [runbook.md](runbook.md).
