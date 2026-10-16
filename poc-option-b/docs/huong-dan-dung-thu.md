@@ -2,6 +2,8 @@
 
 _Cập nhật 15/10/2026 · bản gốc: [trang Claude Docs](https://claude.ai/artifact/FMfNAm6VsrVbp1B6EJ3Gkx)_
 
+> Hướng dẫn đầy đủ và mới nhất (có Discovery, Options của SDS, Codex): [huong-dan-su-dung.md](huong-dan-su-dung.md). Trang này giữ lại cho phần kiến trúc và lịch sử các phase.
+
 Một đội phát triển gồm các vai AI làm theo quy trình AIF-SDLC của công ty: một dự án mới bắt đầu bằng SRS rồi SDS, sau đó mỗi user story trong SRS §7 là một run viết spec, plan, test cases, code và mở draft PR. Người duyệt ở các cổng, mỗi cổng có checklist lấy từ `aif-review-checklist.md`. Ba dự án demo: `task-board` (Node), `inventory` (Python) và `attendance` (Node, dự án đầu tiên đi theo AIF-SDLC).
 
 ## Đã xây gì
