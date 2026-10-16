@@ -28,3 +28,4 @@ Quyết định bền vững của dự án và lý do. Quyết định thiết 
 | 2026-10-16 | Baseline có cổng riêng (PO), commit `requirements/` qua draft PR; SRS chỉ xây trên baseline đã merge | Baseline là căn cứ ký với khách hàng; phải nằm trong repo, có lịch sử |
 | 2026-10-16 | Run SDS có bước Options mặc định, SA chọn kèm lý do vào SDS §9; tắt được bằng `stages.options: skip` | Quyết định kiến trúc phải có người chịu trách nhiệm và lý do ghi lại |
 | 2026-10-16 | Người dùng sẽ kiểm tra D1–D6 một lần khi xong cả phần Discovery | Người dùng chọn |
+| 2026-10-16 | Discovery có engine riêng (`SDLC_DISCOVERY_ENGINE`); Codex đọc PDF dạng text qua pdftotext | Hết quota Claude; chỉ đổi Discovery, không đổi BA của SRS/feature |

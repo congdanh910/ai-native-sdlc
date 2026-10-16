@@ -66,11 +66,14 @@ sinh phiên bản theo vòng.
 ## Trạng thái nền tảng
 
 - `.env`: `SDLC_TEAM_MODE=claude-readonly`, `SDLC_QWEN_ENABLED=false`, `SDLC_DOING_MODE=cli`, mọi vai suy nghĩ
-  trên `claude-readonly`. Codex CLI cho vai viết code (model trong `~/.codex/config.toml`).
+  trên `claude-readonly`; riêng Discovery: `SDLC_DISCOVERY_ENGINE=codex-readonly` (16/10 đêm, hết quota Claude). Codex
+  đọc PDF qua `pdftotext` (text có `[page N]`), không đọc được ảnh và PDF scan. Run discovery `9735e5fd` của người
+  dùng (VMS, vòng 1 trên Claude: 145 mục) đã được ghim lại BA = codex-readonly cho các vòng sau (event
+  `engines.repinned`). Codex CLI cho vai viết code (model trong `~/.codex/config.toml`).
 - Dữ liệu: đã clean slate ngày 16/10. Chỉ còn dự án `attendance` (chưa run). Ba dự án thử Discovery
   (`discovery-trial*`, kết quả: đạo văn 67 mục, VMS 155, OCR 281) đã xoá hẳn theo yêu cầu người dùng tối 16/10;
   để thử tiếp D3–D6 cần tạo lại một dự án thử (repo cục bộ có `.sdlc/project.yaml` với `project:` trùng key).
-- Test lần cuối: 209 pass (bỏ test docker, test đó pass khi chạy riêng).
+- Test lần cuối: 211 pass (bỏ test docker, test đó pass khi chạy riêng).
 
 ## Việc treo, chờ người dùng
 
