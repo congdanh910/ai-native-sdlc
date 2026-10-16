@@ -49,8 +49,8 @@ https://claude.ai/code/artifact/770112ad-5c83-4811-90cc-30845b1619c4 (cột Tr�
 ## Việc treo, chờ người dùng
 
 - Duyệt D1, D2, D3 trên tracker.
-- GX10 (`cdp@118.69.64.152:2222`): container `ai-native-sdlc-ollama-14b` (qwen3:14b, port 11436, bản mặc định
-  ban đầu của B1, không dùng từ 12/10) vẫn chạy; em đề xuất tắt, người dùng chưa chọn; `ai-native-sdlc-ollama-30b` đã dừng (khởi động lại: `sudo docker start ai-native-sdlc-ollama-30b`).
+- GX10 (`cdp@118.69.64.152:2222`): cả hai container của dự án đã dừng (16/10), restart policy `no`, volume giữ
+  nguyên: `ai-native-sdlc-ollama-30b`, `ai-native-sdlc-ollama-14b`. Bật lại: `sudo docker start <tên>`.
   Không đụng container của dự án khác trên GX10.
 - Bàn sau: cấu hình AI provider/tài khoản (model theo vai, tài khoản riêng cho nền tảng).
 - PR #1 cũ của inventory-demo vẫn mở trên GitHub.
