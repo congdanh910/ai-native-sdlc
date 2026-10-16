@@ -97,8 +97,8 @@ Loại câu hỏi chung: `scope`, `actor`, `permission`, `rule`, `threshold` (s�
 
 ## 5. Nối vào run SRS và SDS hiện có
 
-- **Run SRS:** đầu vào đổi từ brief sang **baseline đã merge**; form brief vẫn giữ cho dự án nhỏ không có tài liệu thô. Prompt BA nhận các mục `confirmed` và `changed` cùng các quyết định. SRS thêm phụ lục "Truy vết requirement": mỗi FR và US trỏ về REQ hoặc quyết định. Khung §1–§8 không đổi.
-- **Run SDS:** thêm bước **Options** trước khi viết SDS. Architect lập bảng so sánh phương án (lấy từ các mục `option` của baseline cùng phương án tự đề xuất) theo NFR, chi phí, rủi ro, dữ liệu cá nhân và vận hành. SA chọn ở một cổng riêng, và lý do chọn đi thẳng vào SDS §9.
+- **Run SRS:** form SRS có lựa chọn "Build on the discovery baseline"; preflight đọc `requirements/baseline.json` trên nhánh mặc định (chưa merge thì dừng, báo rõ). Đầu vào đổi từ brief sang **baseline đã merge**; form brief vẫn giữ cho dự án nhỏ không có tài liệu thô. Prompt BA nhận các mục `confirmed` và `changed` cùng các quyết định. SRS thêm phụ lục "Truy vết requirement": mỗi FR và US trỏ về REQ hoặc quyết định. Khung §1–§8 không đổi.
+- **Run SDS:** thêm bước **Options** trước khi viết SDS (bật mặc định; tắt bằng `stages.options: skip` trong `.sdlc/project.yaml`). Trạng thái `DESIGNING_OPTIONS` → `WAITING_OPTIONS_APPROVAL` (vai Solution Architect) → `SPECIFYING`. SA chọn một phương án kèm lý do (bắt buộc) hoặc yêu cầu so sánh lại; cổng SDS kiểm dòng **Decision** ở §9 có ghi phương án đã chọn. Architect lập bảng so sánh phương án (lấy từ các mục `option` của baseline cùng phương án tự đề xuất) theo NFR, chi phí, rủi ro, dữ liệu cá nhân và vận hành. SA chọn ở một cổng riêng, và lý do chọn đi thẳng vào SDS §9.
 - **Thay đổi sau baseline:** mở một discovery mới với nguồn mới. Khi baseline mới được chốt, run SRS cập nhật `SRS.md`, giữ ID cũ và ghi lịch sử thay đổi.
 
 ## 6. Checklist ở các cổng (cùng ba nhóm như hiện nay)

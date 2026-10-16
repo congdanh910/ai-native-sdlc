@@ -133,6 +133,7 @@ class Stages(Strict):
     plan: Literal["manual", "gated"] = "gated"  # the plan gate cannot be removed
     coding: Literal["manual", "auto"] = "auto"
     review: Literal["manual", "auto"] = "auto"
+    options: Literal["gated", "skip"] = "gated"  # SDS runs: the Architect compares options, the SA picks one
 
 
 class Artifacts(Strict):

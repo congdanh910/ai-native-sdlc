@@ -62,9 +62,12 @@ function documentStages(run: RunDetail, has: (kind: string) => boolean, approved
   const pr = run.pull_request;
   const srs = run.kind === "srs";
   const kind = srs ? "srs" : "sds", name = srs ? "SRS" : "SDS";
-  const done = [has("intent"), has(kind), approved("spec"), !!pr && (pr.merged_sha !== null || run.status === "COMPLETED")];
+  const options = !srs && (has("options") || run.status === "DESIGNING_OPTIONS");
+  const done = [has("intent"), ...(options ? [approved("options")] : []), has(kind), approved("spec"),
+    !!pr && (pr.merged_sha !== null || run.status === "COMPLETED")];
   const list: Omit<Stage, "state">[] = [
     { key: "brief", label: "Brief", detail: srs ? "Product Owner" : "architecture brief" },
+    ...(options ? [{ key: "options", label: "Options", detail: approved("options") ? "SA chose" : "Architect compares, SA picks", gate: true }] : []),
     { key: kind, label: name, detail: has(kind) ? (srs ? "Business Analyst" : "Architect") : "not yet" },
     { key: "gate1", label: "Gate 1", detail: approved("spec") ? `${name} approved` : `approve ${name}`, gate: true },
     { key: "gate2", label: "Gate 2", detail: pr?.merged_sha ? "merged" : pr ? (pr.simulated ? "simulated PR" : `PR #${pr.number}`) : "merge PR", gate: true },

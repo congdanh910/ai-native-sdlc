@@ -25,3 +25,6 @@ Quyết định bền vững của dự án và lý do. Quyết định thiết 
 | 2026-10-16 | Từ D3 đến D6 chỉ thử trên file đạo văn; chạy lại cả 3 file khi xong D6, hỏi trước | Tiết kiệm hạn mức subscription |
 | 2026-10-16 | Extract again chỉ đọc nguồn và biên bản mới; REQ id không đổi giữa các vòng; không có gì mới thì không chạy | Tiết kiệm hạn mức; câu trả lời và quyết định trỏ vào REQ id phải còn đúng |
 | 2026-10-16 | Quyết định từ biên bản là `proposed` cho tới khi vai sở hữu duyệt; câu trả lời trực tiếp là `accepted` | AI không tự chốt thay người |
+| 2026-10-16 | Baseline có cổng riêng (PO), commit `requirements/` qua draft PR; SRS chỉ xây trên baseline đã merge | Baseline là căn cứ ký với khách hàng; phải nằm trong repo, có lịch sử |
+| 2026-10-16 | Run SDS có bước Options mặc định, SA chọn kèm lý do vào SDS §9; tắt được bằng `stages.options: skip` | Quyết định kiến trúc phải có người chịu trách nhiệm và lý do ghi lại |
+| 2026-10-16 | Người dùng sẽ kiểm tra D1–D6 một lần khi xong cả phần Discovery | Người dùng chọn |

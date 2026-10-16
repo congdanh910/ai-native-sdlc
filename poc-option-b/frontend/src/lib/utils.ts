@@ -12,6 +12,7 @@ export const ROLE_LABEL: Record<string, string> = {
   architect: "Architect",
   code_owner: "Code Owner",
   platform_admin: "Platform Admin",
+  solution_architect: "Solution Architect",
   business_analyst: "Business Analyst",
   tech_lead_ai: "Tech Lead (AI)",
   qa_analyst: "QA Analyst",
@@ -29,6 +30,7 @@ export const ACTION_LABEL: Record<string, string> = {
   ingesting: "Add the sources, then start the extraction",
   clarifying: "Review the requirement inventory",
   waiting_baseline_approval: "Approve the baseline",
+  waiting_options_approval: "Choose the architecture option",
   waiting_spec_approval: "Review spec.md",
   waiting_plan_approval: "Review the plan",
   waiting_test_approval: "Review the test cases",
@@ -38,7 +40,7 @@ export const ACTION_LABEL: Record<string, string> = {
   classify: "Classify what went wrong",
 };
 
-export const ACTIVE_WORK = ["RECEIVED", "PREFLIGHT", "SPECIFYING", "PLANNING", "GROUNDING", "DESIGNING_TESTS", "READY", "CODING",
+export const ACTIVE_WORK = ["RECEIVED", "PREFLIGHT", "EXTRACTING", "DESIGNING_OPTIONS", "SPECIFYING", "PLANNING", "GROUNDING", "DESIGNING_TESTS", "READY", "CODING",
   "REVIEWING", "PR_OPEN"];
 export const TERMINAL = ["COMPLETED", "CANCELLED", "FAILED", "CLOSED_UNMERGED"];
 

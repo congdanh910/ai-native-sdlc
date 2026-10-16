@@ -152,6 +152,19 @@ def test_sds_run_designs_every_srs_story_and_waits_for_the_tech_lead(db, sample_
     assert run["kind"] == "sds"
     drain()
     assert [(i["role"], i["action"]) for i in client.get("/api/inbox").json()] == [
+        ("solution_architect", "waiting_options_approval")]
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    options = [d for d in detail["documents"] if d["kind"] == "options"][-1]
+    assert "| Summary |" in options["content"] and "**Recommendation:** PA1." in options["content"]
+    assert detail["checklist"]["gate"] == "options" and all(c["ok"] for c in detail["checklist"]["controller"])
+    refused = client.post(f"/api/runs/{run['id']}/options/choose", json={"document_id": options["id"], "option": "PA2",
+                                                                         "reason": "", "checked": []})
+    assert refused.status_code == 409 and "say why" in refused.json()["detail"]
+    post(f"/api/runs/{run['id']}/options/choose", {"document_id": options["id"], "option": "PA2",
+                                                    "reason": "the customer runs its own cloud account",
+                                                    "checked": [h["id"] for h in detail["checklist"]["human"]]})
+    drain()
+    assert [(i["role"], i["action"]) for i in client.get("/api/inbox").json()] == [
         ("tech_lead", "waiting_spec_approval")]
     detail = client.get(f"/api/runs/{run['id']}").json()
     sds = [d for d in detail["documents"] if d["kind"] == "sds"][-1]
@@ -171,9 +184,36 @@ def test_sds_run_designs_every_srs_story_and_waits_for_the_tech_lead(db, sample_
     drain()
     detail = client.get(f"/api/runs/{run['id']}").json()
     assert detail["status"] == "WAITING_PR_APPROVAL"
-    assert [a["role"] for a in detail["approvals"]] == ["tech_lead"]
+    assert [a["role"] for a in detail["approvals"]] == ["solution_architect", "tech_lead"]
     with session_scope() as session:
         worktree = session.get(Run, uuid.UUID(run["id"])).worktree_path
     committed = subprocess.run(["git", "-C", worktree, "show", "HEAD~1:SDS.md"], capture_output=True, text=True,
                                check=True).stdout
     assert committed == sds["content"]
+
+
+def test_the_sds_records_the_chosen_option_in_section_9(db, sample_repo):
+    with_srs(sample_repo)
+    post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
+    run = post("/api/runs", {"project": "task-board", "architecture": ARCHITECTURE, "idempotency_key": str(uuid.uuid4())},
+               status=201)
+    drain()
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    options = [d for d in detail["documents"] if d["kind"] == "options"][-1]
+    post(f"/api/runs/{run['id']}/options/redo", {"reason": "compare an on-premise option too"})
+    drain()
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    assert [d["version"] for d in detail["documents"] if d["kind"] == "options"] == [1, 2]
+    options = [d for d in detail["documents"] if d["kind"] == "options"][-1]
+    post(f"/api/runs/{run['id']}/options/choose", {"document_id": options["id"], "option": "PA2", "reason": "own cloud",
+                                                    "checked": [h["id"] for h in detail["checklist"]["human"]]})
+    drain()
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    sds = [d for d in detail["documents"] if d["kind"] == "sds"][-1]["content"]
+    assert "### 9.1 Architecture Option" in sds and "PA2 Managed cloud: own cloud" in sds
+    assert {c["id"]: c["ok"] for c in detail["checklist"]["controller"]}["option"] is True
+    from controller.app.project_docs import check_chosen_option
+    chosen = {"id": "PA2", "name": "Managed cloud"}
+    assert check_chosen_option(sds, chosen) == []
+    assert check_chosen_option(sds.replace("PA2 Managed cloud", "a cloud"), chosen) == [
+        "section 9 does not record the chosen option PA2 Managed cloud"]

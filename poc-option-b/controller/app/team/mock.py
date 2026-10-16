@@ -109,6 +109,17 @@ class MockTeam:
                        + ["The system records the result"]}],
             "questions": questions, "concerns": ["Mock Business Analyst: no model was called."]})
 
+    def design_options(self, context: RunContext):
+        """The baseline's option items, or two generic options, and the first one recommended."""
+        from controller.app.project_docs import Options
+        named = [i for i in (context.baseline or {}).get("items", []) if i["type"] == "option"]
+        options = [{"name": i["name"] if len(i["name"]) >= 2 else f"Option {i['name']}", "summary": i["text"] or i["name"],
+                    "refs": [i["id"]]} for i in named]
+        while len(options) < 2:
+            options.append({"name": ["Single server", "Managed cloud"][len(options)], "summary": "Mock Architect option"})
+        return Options.model_validate({"context": f"Where {context.title} runs.", "options": options,
+                                       "recommendation": options[0]["name"], "reason": "Mock Architect: the first option."})
+
     def write_sds(self, context: RunContext) -> Sds:
         """One object and table per SRS feature, one decision for the stack named in the brief."""
         features = srs_features(context.srs_md or "")
@@ -129,8 +140,11 @@ class MockTeam:
             "purposes": {s.id: f"Let {s.actors} {s.title.lower()}." for f in features for s in f.stories},
             "endpoints": [{"method": "GET", "path": f"/api/v1/{f.prefix.lower()}", "feature": f.prefix,
                            "stories": [s.id for s in f.stories]} for f in features],
-            "decisions": [{"title": "Technology Stack Selection", "context": "The brief names the stack.",
-                           "decision": stack.splitlines()[0]}],
+            "decisions": ([{"title": "Architecture Option", "context": "The Solution Architect chose between the options.",
+                            "decision": f"{context.chosen_option['id']} {context.chosen_option['name']}: "
+                                        f"{context.chosen_option['reason']}"}] if context.chosen_option else [])
+                         + [{"title": "Technology Stack Selection", "context": "The brief names the stack.",
+                             "decision": stack.splitlines()[0]}],
             "questions": questions, "concerns": ["Mock Architect: no model was called."]})
 
     def plan(self, context: RunContext) -> PlanPayload:

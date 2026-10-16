@@ -209,6 +209,25 @@ def srs(data: dict) -> dict:
     return data
 
 
+def options(data: dict) -> dict:
+    data = dict(data)
+    out = []
+    for option in data.get("options") or []:
+        if isinstance(option, dict):
+            option = dict(option)
+            for key in ("pros", "cons"):
+                value = option.get(key)
+                option[key] = [line.strip("-* ").strip() for line in value.splitlines() if line.strip()] if isinstance(value, str) else value or []
+            for key in ("nfr_fit", "cost", "risks", "personal_data", "operations", "summary"):
+                if isinstance(option.get(key), list):
+                    option[key] = "; ".join(str(x) for x in option[key])
+            out.append(option)
+    data["options"] = out
+    data["questions"] = [{"question": q, "blocking": False} if isinstance(q, str) else q for q in data.get("questions") or []]
+    _refs(data)
+    return data
+
+
 def _refs(value) -> None:
     """refs written as "REQ-001, REQ-004" become a list of ids, at any depth."""
     if isinstance(value, dict):

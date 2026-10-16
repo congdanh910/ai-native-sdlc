@@ -896,3 +896,73 @@ def _section_text(markdown: str, number: str) -> str:
     text = TAGS.sub("", markdown)
     match = re.search(rf"^##\s+{re.escape(number)}\s.*?$(.*?)(?=^##\s+\d+\.\s|\Z)", text, re.MULTILINE | re.DOTALL)
     return match[1] if match else ""
+
+
+# ---------------------------------------------------------------- architecture options (the SDS run's first step)
+
+class ArchOption(Contract):
+    id: str = ""  # PA1, PA2 ... assigned by the controller
+    name: str = Field(min_length=2)
+    summary: str
+    refs: list[str] = []  # baseline option items it comes from; empty when the Architect proposes it
+    nfr_fit: str = ""  # how it meets the quality targets
+    cost: str = ""
+    risks: str = ""
+    personal_data: str = ""
+    operations: str = ""
+    pros: list[str] = []
+    cons: list[str] = []
+
+
+class Options(Contract):
+    context: str  # what has to be decided and why it matters
+    options: list[ArchOption] = Field(min_length=2)
+    recommendation: str  # the id or name of the option the Architect recommends
+    reason: str
+    questions: list[Question] = []
+
+
+def number_options(options: Options) -> Options:
+    data = options.model_dump()
+    for index, option in enumerate(data["options"], start=1):
+        option["id"] = f"PA{index}"
+    names = {o["name"].lower(): o["id"] for o in data["options"]}
+    data["recommendation"] = names.get(data["recommendation"].strip().lower(), data["recommendation"].strip())
+    return Options.model_validate(data)
+
+
+def render_options(options: Options, *, title: str) -> str:
+    options = number_options(options)
+    rows = [("Summary", "summary"), ("Quality targets", "nfr_fit"), ("Cost", "cost"), ("Risks", "risks"),
+            ("Personal data", "personal_data"), ("Operations", "operations")]
+    out = [f"# Architecture options: {title}", "", options.context.strip(), "",
+           *_table(["", *[f"{o.id} {o.name}" for o in options.options]],
+                   [[label, *[getattr(o, key) or "—" for o in options.options]] for label, key in rows]
+                   + [["Pros", *["; ".join(o.pros) or "—" for o in options.options]],
+                      ["Cons", *["; ".join(o.cons) or "—" for o in options.options]],
+                      ["From the baseline", *[", ".join(o.refs) or "proposed by the Architect" for o in options.options]]]),
+           "", f"**Recommendation:** {options.recommendation}. {options.reason.strip()}", ""]
+    return "\n".join(out)
+
+
+def check_options(options: Options, baseline: dict | None) -> list[str]:
+    """Every option item of the baseline is compared; the recommendation is one of the options."""
+    options = number_options(options)
+    problems = []
+    wanted = [i["id"] for i in (baseline or {}).get("items", []) if i["type"] == "option"]
+    used = {r for o in options.options for r in o.refs}
+    missing = [w for w in wanted if w not in used]
+    if missing:
+        problems.append(f"baseline options not compared: {', '.join(missing)}")
+    if options.recommendation not in {o.id for o in options.options}:
+        problems.append(f"the recommendation {options.recommendation!r} is not one of the options")
+    return problems
+
+
+def check_chosen_option(content: str, chosen: dict) -> list[str]:
+    """A decision of SDS section 9 names the option the Solution Architect chose (not only its list of options)."""
+    match = re.search(r"^## 9\. Design Decisions.*?(?=^## |\Z)", content, re.MULTILINE | re.DOTALL)
+    decided = " ".join(line for line in (match[0] if match else "").splitlines() if line.startswith("**Decision:**"))
+    if chosen["name"].lower() not in decided.lower() and chosen["id"] not in decided:
+        return [f"section 9 does not record the chosen option {chosen['id']} {chosen['name']}"]
+    return []

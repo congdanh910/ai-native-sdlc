@@ -7,8 +7,9 @@ import { Badge, Button, Card, Empty, ErrorBox, Loading, Mono, PageHeader } from 
 import { api, type InboxItem, type RunDetail } from "../lib/api";
 import { ACTION_LABEL, ago, parseCriteria, role, statusTone, type Tone } from "../lib/utils";
 
-const ROLE_TONE: Record<string, Tone> = { code_owner: "accent", tech_lead: "warn", product_owner: "violet", platform_admin: "neutral" };
-const ROLE_ORDER = ["code_owner", "tech_lead", "product_owner", "platform_admin"];
+const ROLE_TONE: Record<string, Tone> = { code_owner: "accent", tech_lead: "warn", product_owner: "violet", platform_admin: "neutral",
+  solution_architect: "flag" };
+const ROLE_ORDER = ["code_owner", "tech_lead", "solution_architect", "product_owner", "platform_admin"];
 
 function Highlights({ id }: { id: string }) {
   const run = useQuery({ queryKey: ["run", id], queryFn: () => api<RunDetail>(`/api/runs/${id}`), staleTime: 5000 });

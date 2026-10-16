@@ -99,6 +99,12 @@ export function DecisionPanel({ run, onDone }: { run: RunDetail; onDone: () => v
     );
   }
 
+  if (need.action === "waiting_options_approval") {
+    const doc = [...run.documents].reverse().find((d) => d.kind === "options");
+    if (!doc) return null;
+    return <OptionsPanel run={run} doc={doc} checklist={checklist} checked={checked} post={post} />;
+  }
+
   if (need.action === "waiting_baseline_approval") {
     const baseline = [...run.documents].reverse().find((d) => d.kind === "baseline");
     if (!baseline) return null;
@@ -310,4 +316,32 @@ export function DecisionPanel({ run, onDone }: { run: RunDetail; onDone: () => v
     );
   }
   return null;
+}
+
+
+/** The Solution Architect picks the architecture option the SDS designs; the reason goes into SDS section 9. */
+function OptionsPanel({ run, doc, checklist, checked, post }: { run: RunDetail; doc: { id: string; content: string; version: number };
+  checklist: ReactNode; checked: string[]; post: (path: string, body: unknown) => Promise<void> }) {
+  const ids = Array.from(doc.content.matchAll(/\| (PA\d+) [^|]*\|/g)).map((m) => m[1]);
+  const options = Array.from(new Set(ids));
+  const recommended = /\*\*Recommendation:\*\* (PA\d+)/.exec(doc.content)?.[1] ?? options[0] ?? "";
+  const [option, setOption] = useState(recommended);
+  const [why, setWhy] = useState("");
+  return (
+    <Panel run={run} title={`Architecture options v${doc.version}`}>
+      <p className="m-0 text-sm text-muted">The Architect compared the options; you pick the one the SDS designs. Your reason goes into SDS section 9.</p>
+      <div className="max-h-[460px] overflow-auto rounded-lg border border-line bg-side p-4"><Markdown source={doc.content} /></div>
+      <div className="flex flex-wrap items-center gap-3 text-sm">
+        {options.map((o) => (
+          <label key={o} className="flex items-center gap-1.5"><input type="radio" name="option" checked={option === o} onChange={() => setOption(o)} />{o}{o === recommended ? " (recommended)" : ""}</label>
+        ))}
+      </div>
+      {checklist}
+      <Field label="Why this option" htmlFor="option-why"><Textarea id="option-why" className="min-h-16" value={why} onChange={(e) => setWhy(e.target.value)} placeholder="Against the quality targets, constraints and cost; required, also to ask for other options" /></Field>
+      <div className="flex flex-wrap gap-2">
+        <ActionButton variant="primary" disabled={!option || !why.trim()} success={`${option} chosen; the Architect writes the SDS`} action={() => post("options/choose", { document_id: doc.id, option, reason: why, checked })}>Choose {option}</ActionButton>
+        <ActionButton variant="danger" disabled={!why.trim()} action={() => post("options/redo", { reason: why })}>Ask for other options</ActionButton>
+      </div>
+    </Panel>
+  );
 }

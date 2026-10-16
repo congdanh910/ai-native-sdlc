@@ -12,9 +12,9 @@ https://claude.ai/code/artifact/770112ad-5c83-4811-90cc-30845b1619c4 (cột Tr�
 | D1 Sources | Chờ người dùng duyệt | 88c47ce |
 | D2 Extract | Chờ người dùng duyệt | 5e19e25, d583472, 8f57700; chạy thật trên 3 PDF, mọi mục có trang nguồn |
 | D3 Questions, Decisions, Re-extract | Chờ người dùng duyệt | xem dưới |
-| D4 Baseline + PR `requirements/` | Chưa bắt đầu | |
-| D5 SRS từ baseline + phụ lục truy vết | Chưa bắt đầu | |
-| D6 Options + SDS (SA chọn phương án) | Chưa bắt đầu | |
+| D4 Baseline + PR `requirements/` | Chờ người dùng duyệt | 2f83992 |
+| D5 SRS từ baseline + phụ lục truy vết | Chờ người dùng duyệt | fd22a94 |
+| D6 Options + SDS (SA chọn phương án) | Chờ người dùng duyệt | xem dưới |
 
 ### D3: đã làm
 
@@ -31,11 +31,25 @@ https://claude.ai/code/artifact/770112ad-5c83-4811-90cc-30845b1619c4 (cột Tr�
 - Chạy thật trên `discovery-trial` (run 470903ac): vòng 3 chỉ 1 lượt consolidate (~2 phút), 67 mục giữ id,
   14 câu hỏi (PO 8, TA 4, BA 1, Sales 1).
 
-### D3: còn lại
+### D4–D6: đã làm
 
-- Chạy hết một vòng thật (trả lời câu hỏi, biên bản, Extract again) trên một discovery thử mới: run 470903ac đã
-  bị xoá cùng dự án thử.
-- Chưa làm: thẻ "Questions for you" trong Inbox gom theo vai (thiết kế mục 9) — làm cùng D4 nếu cần.
+- D4: PO soạn baseline (nêu phạm vi giai đoạn) → cổng baseline: 7 mục controller kiểm (không còn câu chặn / mâu
+  thuẫn mở, không còn quyết định chờ duyệt, inventory đã áp mọi quyết định, inventory không lỗi, feature trong phạm vi
+  có function, NFR có số hoặc câu hỏi đã trả lời/hoãn) + 3 mục PO tick → commit `requirements/` (baseline.md,
+  baseline.json, inventory.md, questions.md, decisions.md, sources.md, sources/) → draft PR. Quyết định ghi trực
+  tiếp (ví dụ đưa REQ ra ngoài phạm vi); Inbox có thẻ "Questions for you" theo vai. Code:
+  `controller/app/discovery/baseline.py`.
+- D5: form SRS có "Build on the discovery baseline"; preflight đọc `requirements/baseline.json` (chưa merge thì
+  NEEDS_HUMAN); mọi phần tử SRS có `refs` REQ; SRS.md có "Appendix A. Requirement traceability"; cổng SRS chặn khi có
+  REQ trong phạm vi chưa dùng hoặc REQ lạ (option để cho SDS).
+- D6: run SDS có bước Options (`stages.options: gated|skip`, mặc định gated): Architect so sánh 2–4 phương án
+  (`options.md`, prompt `langflow/prompts/options.md`), Solution Architect chọn kèm lý do hoặc yêu cầu so sánh lại;
+  SDS §9 mục "Architecture Option" ghi phương án và lý do, cổng SDS kiểm điều đó.
+
+### Còn lại
+
+- Chạy thật một vòng trên file đạo văn: Discovery → câu hỏi/quyết định → baseline → PR → SRS từ baseline → Options →
+  SDS (đang làm, xem mục Bước tiếp theo).
 
 ## Trạng thái nền tảng
 
@@ -44,7 +58,7 @@ https://claude.ai/code/artifact/770112ad-5c83-4811-90cc-30845b1619c4 (cột Tr�
 - Dữ liệu: đã clean slate ngày 16/10. Chỉ còn dự án `attendance` (chưa run). Ba dự án thử Discovery
   (`discovery-trial*`, kết quả: đạo văn 67 mục, VMS 155, OCR 281) đã xoá hẳn theo yêu cầu người dùng tối 16/10;
   để thử tiếp D3–D6 cần tạo lại một dự án thử (repo cục bộ có `.sdlc/project.yaml` với `project:` trùng key).
-- Test lần cuối: 202 pass (bỏ test docker, test đó pass khi chạy riêng).
+- Test lần cuối: 207 pass (bỏ test docker, test đó pass khi chạy riêng).
 
 ## Việc treo, chờ người dùng
 
@@ -63,5 +77,5 @@ https://claude.ai/code/artifact/770112ad-5c83-4811-90cc-30845b1619c4 (cột Tr�
 
 ## Bước tiếp theo
 
-Sau khi người dùng chạy thử một vòng D3: D4 Baseline (checklist cổng, PO chốt, commit `requirements/` kèm file
-thô, PR), cập nhật tracker sau mỗi bước.
+Chạy thử thật cả luồng trên một dự án thử cục bộ mới với file đạo văn, dừng ở các cổng cho người dùng xem; người
+dùng kiểm tra một lần toàn bộ D1–D6 (đã thống nhất 16/10).

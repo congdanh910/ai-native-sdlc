@@ -42,6 +42,9 @@ class CompositeTeam:
     def consolidate(self, *args, **kwargs):
         return self.thinking.consolidate(*args, **kwargs)
 
+    def design_options(self, *args, **kwargs):
+        return self.thinking.design_options(*args, **kwargs)
+
     def read_minutes(self, *args, **kwargs):
         return self.thinking.read_minutes(*args, **kwargs)
 

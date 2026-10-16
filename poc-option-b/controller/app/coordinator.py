@@ -35,7 +35,8 @@ from controller.app.feature_docs import (PHASE_HEADING, FeatureRef, link_once, p
                                          tasks_header, tasks_section, tc_numbers, test_cases_header, test_cases_section,
                                          upsert_section)
 from controller.app import analysis, checklists, joblog
-from controller.app.project_docs import (SDS_PATH, SRS_PATH, Sds, Srs, check_sds_markdown, check_srs_markdown, check_srs_trace,
+from controller.app.project_docs import (SDS_PATH, SRS_PATH, Options, Sds, Srs, check_chosen_option, check_options,
+                                         check_sds_markdown, check_srs_markdown, check_srs_trace, number_options, render_options,
                                          render_sds, render_srs, sds_sync_findings, srs_features)
 from controller.app.projects.config import EffectivePolicy, effective_policy, matches_any
 from controller.app.projects.registry import mirror_for, read_snapshot
@@ -60,6 +61,7 @@ KINDS: dict[str, tuple[TeamRole, bool, RunStatus]] = {
     "review": (TeamRole.CODE_REVIEWER, False, RunStatus.REVIEWING),
     "release": (TeamRole.RELEASE_ENGINEER, True, RunStatus.PR_OPEN),
     "extract": (TeamRole.BUSINESS_ANALYST, False, RunStatus.EXTRACTING),
+    "options": (TeamRole.ARCHITECT, False, RunStatus.DESIGNING_OPTIONS),
 }
 
 
@@ -237,7 +239,7 @@ def tick_tasks(session: Session, run: Run) -> None:
 
 # ---------------------------------------------------------------- gate checklists
 
-GATE_OF_STATUS = {RunStatus.WAITING_BASELINE_APPROVAL: "baseline", RunStatus.WAITING_PLAN_APPROVAL: "plan", RunStatus.WAITING_TEST_APPROVAL: "tests",
+GATE_OF_STATUS = {RunStatus.WAITING_BASELINE_APPROVAL: "baseline", RunStatus.WAITING_OPTIONS_APPROVAL: "options", RunStatus.WAITING_PLAN_APPROVAL: "plan", RunStatus.WAITING_TEST_APPROVAL: "tests",
                   RunStatus.WAITING_PR_APPROVAL: "pr"}
 
 
@@ -259,6 +261,11 @@ def evaluate_gate(session: Session, run: Run, gate: str | None = None) -> dict |
     spec = latest_document(session, run.id, "spec")
     if gate == "baseline":
         controller = baseline_checks(session, run)
+    elif gate == "options":
+        document = latest_document(session, run.id, "options")
+        problems = check_options(Options.model_validate(document.data), json.loads(artifact(session, run.id, "baseline") or "null"))
+        controller = [checklists._result("compared", "Every option in the baseline is compared and the recommendation is one "
+                                         "of the options", problems)]
     elif gate == "srs":
         content = latest_document(session, run.id, "srs").content
         problems = check_srs_markdown(content)
@@ -270,9 +277,14 @@ def evaluate_gate(session: Session, run: Run, gate: str | None = None) -> dict |
                 check_srs_trace(content, baseline)))
     elif gate == "sds":
         srs_text = mirror_for(session.get(Project, run.project_id)).read_file(run.base_commit, SRS_PATH)
-        problems = check_sds_markdown(latest_document(session, run.id, "sds").content, srs_text)
+        content = latest_document(session, run.id, "sds").content
+        problems = check_sds_markdown(content, srs_text)
         controller = [checklists._result("outline", "SDS sections are present and every SRS story has a section 5 entry",
                                          problems)]
+        chosen = json.loads(artifact(session, run.id, "chosen_option") or "null")
+        if chosen:
+            controller.append(checklists._result("option", f"Section 9 records the chosen option ({chosen['id']} "
+                                                 f"{chosen['name']}) and why", check_chosen_option(content, chosen)))
     elif gate == "spec":
         controller = checklists.check_spec(spec.content)
         model = _spec_model(session, run)
@@ -417,7 +429,8 @@ def build_context(session: Session, run: Run, *, kind: str = "", feedback: list[
                       repository=bundle.as_input(), feedback=feedback or [], session_id=f"{run.id}:{kind}",
                       run_id=str(run.id), worktree=run.worktree_path or "", base_commit=run.base_commit or "",
                       engines=json.loads(artifact(session, run.id, "engines") or "{}"),
-                      baseline=json.loads(artifact(session, run.id, "baseline") or "null"))
+                      baseline=json.loads(artifact(session, run.id, "baseline") or "null"),
+                      chosen_option=json.loads(artifact(session, run.id, "chosen_option") or "null"))
 
 
 def _story_context(session: Session, run: Run) -> dict | None:
@@ -453,6 +466,10 @@ def load(session: Session, execution: Execution) -> Loaded:
     if execution.kind == "specify" and run.kind in PROJECT_DOCS:
         feedback = [f"Reviewer asked for changes: {reason}" for reason in session.scalars(
             select(Approval.reason).where(Approval.run_id == run.id, Approval.stage == "spec",
+                                          Approval.decision == "reject").order_by(Approval.created_at)) if reason]
+    if execution.kind == "options":
+        feedback = [f"Solution Architect asked for other options: {reason}" for reason in session.scalars(
+            select(Approval.reason).where(Approval.run_id == run.id, Approval.stage == "options",
                                           Approval.decision == "reject").order_by(Approval.created_at)) if reason]
     if execution.kind == "design_tests":
         feedback = [f"QC asked for changes: {reason}" for reason in session.scalars(
@@ -501,7 +518,11 @@ def compute(team: Team, loaded: Loaded) -> dict:
         joblog.note(doing[loaded.kind])
     if loaded.kind == "extract":
         return _extract(team, loaded)
-    if loaded.kind == "specify" and loaded.extra.get("run_kind") == RunKind.SRS:
+    if loaded.kind == "options":
+        joblog.note("Architect compares the architecture options")
+        result = {"options": team.design_options(context).model_dump()}
+        record()
+    elif loaded.kind == "specify" and loaded.extra.get("run_kind") == RunKind.SRS:
         result = {"srs": team.write_srs(context).model_dump()}
         record()
     elif loaded.kind == "specify" and loaded.extra.get("run_kind") == RunKind.SDS:
@@ -608,7 +629,7 @@ def apply(session: Session, loaded: Loaded, result: dict, team: Team) -> None:
         execution.prompt_version = ",".join(sorted({c["prompt_version"] for c in calls if c["prompt_version"]}))
     handler = {"preflight": _apply_preflight, "specify": _apply_specify, "plan": _apply_plan,
                "ground": _apply_ground, "design_tests": _apply_design_tests, "code_task": _apply_code_task, "review": _apply_review,
-               "release": _apply_release, "extract": _apply_extract}[loaded.kind]
+               "release": _apply_release, "extract": _apply_extract, "options": _apply_options}[loaded.kind]
     handler(session, run, execution, result, team)
     if execution.status == "running":
         finish(session, execution, "succeeded", result=result)
@@ -679,7 +700,22 @@ def _apply_preflight(session: Session, run: Run, execution: Execution, result: d
         transition_run(session, run, RunStatus.INGESTING, actor=COORDINATOR,
                        reason="add the raw requirement sources, then start the extraction")
         return
+    if run.kind == RunKind.SDS and modes.get("options", "gated") != "skip":
+        transition_run(session, run, RunStatus.DESIGNING_OPTIONS, actor=COORDINATOR,
+                       reason="the Architect compares the architecture options before the SDS")
+        queue(session, run, "options")
+        return
     enter_stage(session, run, "spec")
+
+
+def _apply_options(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    options = number_options(Options.model_validate(result["options"]))
+    content = render_options(options, title=run.title.removeprefix("SDS: "))
+    document = add_document(session, run.id, "options", content, author_kind="ai", author=TeamRole.ARCHITECT.value,
+                            data=options.model_dump())
+    document.commit_sha = commit_thread(session, run, "options", content, f"sdlc: architecture options v{document.version}")
+    transition_run(session, run, RunStatus.WAITING_OPTIONS_APPROVAL, actor=TeamRole.ARCHITECT.value,
+                   reason=f"{len(options.options)} options compared; the Architect recommends {options.recommendation}")
 
 
 # Project documents written before feature runs: document kind, file at the repository root, the AI role.

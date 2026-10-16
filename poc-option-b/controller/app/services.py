@@ -363,6 +363,7 @@ def resume(session: Session, run: Run, *, actor: str, decision: str, reason: str
         return
     target = RunStatus(run.resume_status or RunStatus.PREFLIGHT)
     kinds = {RunStatus.PREFLIGHT: "preflight", RunStatus.SPECIFYING: "specify", RunStatus.PLANNING: "plan",
+             RunStatus.DESIGNING_OPTIONS: "options",
              RunStatus.DESIGNING_TESTS: "design_tests",
              RunStatus.REVIEWING: "review", RunStatus.PR_OPEN: "release", RunStatus.EXTRACTING: "extract"}
     if target == RunStatus.INGESTING:  # a discovery waiting for sources has no job to queue
@@ -455,6 +456,43 @@ def pr_decision(session: Session, run: Run, *, actor: str, decision: str, reason
         transition_run(session, run, RunStatus.CLOSED_UNMERGED, actor=actor, acting_role=CO, reason=reason)
     else:
         raise DecisionError(f"unknown decision {decision}")
+
+
+# ---------------------------------------------------------------- SDS: architecture options
+
+SA = HumanRole.SOLUTION_ARCHITECT.value
+
+
+def choose_option(session: Session, run: Run, document_id: uuid.UUID, option: str, *, actor: str, reason: str,
+                  checked: list[str] | None) -> None:
+    """The Solution Architect picks the option the SDS designs; the reason goes to SDS section 9."""
+    from controller.app.project_docs import Options
+    _require(run, RunStatus.WAITING_OPTIONS_APPROVAL)
+    document = latest_document(session, run.id, "options")
+    if document is None or document.id != document_id:
+        raise DecisionError("the options changed; reload the page")
+    if not reason.strip():
+        raise DecisionError("say why this option was chosen; it goes into SDS section 9")
+    options = Options.model_validate(document.data)
+    chosen = next((o for o in options.options if o.id == option), None)
+    if chosen is None:
+        raise DecisionError(f"{option} is not one of the options")
+    checklist = _checklist(session, run, checked)
+    _approval(session, run, "options", "approve", actor, SA, reason=f"{chosen.id} {chosen.name}: {reason}",
+              document_id=document.id, checklist=checklist)
+    coordinator.store_artifact(session, run, "chosen_option", TeamRole.COORDINATOR, json.dumps({
+        **chosen.model_dump(), "reason": reason.strip(), "chosen_by": actor,
+        "others": [{"id": o.id, "name": o.name} for o in options.options if o.id != chosen.id]}))
+    coordinator.enter_stage(session, run, "spec", actor=actor, acting_role=SA)
+
+
+def redo_options(session: Session, run: Run, *, actor: str, reason: str) -> None:
+    _require(run, RunStatus.WAITING_OPTIONS_APPROVAL)
+    if not reason.strip():
+        raise DecisionError("say what the comparison misses")
+    _approval(session, run, "options", "reject", actor, SA, reason=reason)
+    transition_run(session, run, RunStatus.DESIGNING_OPTIONS, actor=actor, acting_role=SA, reason=reason)
+    coordinator.queue(session, run, "options", key=f"redo:v{run.version}")
 
 
 # ---------------------------------------------------------------- classification

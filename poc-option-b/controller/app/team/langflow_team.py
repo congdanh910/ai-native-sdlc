@@ -18,7 +18,7 @@ from controller.app.integrations.langflow import (InvalidModelOutput, LangflowCl
                                                   extract_json, role_prompt)
 from controller.app.discovery.extract import Part, compact_items, repair_chunk, repair_consolidation, repair_minutes
 from controller.app.discovery.inventory import ChunkResult, Consolidation, MinutesResult
-from controller.app.project_docs import Sds, Srs, srs_features
+from controller.app.project_docs import Options, Sds, Srs, srs_features
 from controller.app.projects.config import matches_any
 from controller.app.schemas import NOTES_HEADING, Intent, PlanPayload, Review, Spec, TestPlan, parse_criteria
 from controller.app.team import normalize
@@ -152,11 +152,22 @@ class LangflowTeam(MockTeam):
         stories = [{"id": s.id, "feature": f.prefix, "title": s.title, "actors": s.actors}
                    for f in srs_features(context.srs_md or "") for s in f.stories]
         payload = {"brief": context.intent_md, "srs": context.srs_md or "", "stories": stories,
+                   "chosen_option": context.chosen_option,
                    "current_sds": context.sds_md or "", "answers": [{"question": q, "answer": a} for q, a in context.answers],
                    "agents_md": context.agents_md, "constitution": self._constitution(context), "repository": {"files": context.repository.get("files", []),
                                                                   "symbols": context.repository.get("symbols", {})},
                    "feedback": context.feedback}
         return self._ask("sds", payload, Sds, normalize.sds, context.session_id,
+                         retries=context.policy.max_format_retries)
+
+    def design_options(self, context: RunContext) -> Options:
+        baseline = context.baseline or {}
+        relevant = [{k: i.get(k, "") for k in ("id", "type", "name", "text")} for i in baseline.get("items", [])
+                    if i["type"] in ("option", "nfr", "constraint", "integration")]
+        payload = {"brief": context.intent_md, "srs": context.srs_md or "",
+                   "baseline": {"scope": baseline.get("scope", ""), "items": relevant} if baseline else None,
+                   "agents_md": context.agents_md, "constitution": self._constitution(context), "feedback": context.feedback}
+        return self._ask("options", payload, Options, normalize.options, context.session_id,
                          retries=context.policy.max_format_retries)
 
     def plan(self, context: RunContext) -> PlanPayload:

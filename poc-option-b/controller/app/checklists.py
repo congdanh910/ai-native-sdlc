@@ -58,6 +58,11 @@ HUMAN_ITEMS = {
         Item("deferrals", "The items out of scope and the deferred questions are acceptable"),
         Item("actors", "The actors and their permissions are complete"),
     ],
+    "options": [
+        Item("meets-nfr", "The chosen option meets the quality targets and constraints of the SRS"),
+        Item("budget", "Its cost and operations fit the budget and the team that will run it"),
+        Item("data", "Where personal and sensitive data lives is acceptable"),
+    ],
     "srs": [
         Item("matches-customer", "Requirements match what the customer asked for (brief, notes, meetings)"),
         Item("complete", "Roles, features and stories are complete for this release"),

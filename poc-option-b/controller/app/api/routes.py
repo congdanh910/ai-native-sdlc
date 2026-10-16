@@ -348,6 +348,24 @@ def reject_baseline(run_id: uuid.UUID, body: Reason) -> dict:
     return _decide(run_id, lambda s, r: discovery.reject_baseline(s, r, actor=operator(), reason=body.reason))
 
 
+class OptionChoice(Body):
+    document_id: uuid.UUID
+    option: str
+    reason: str = ""
+    checked: list[str] = []
+
+
+@router.post("/runs/{run_id}/options/choose")
+def choose_option(run_id: uuid.UUID, body: OptionChoice) -> dict:
+    return _decide(run_id, lambda s, r: services.choose_option(s, r, body.document_id, body.option, actor=operator(),
+                                                               reason=body.reason, checked=body.checked))
+
+
+@router.post("/runs/{run_id}/options/redo")
+def redo_options(run_id: uuid.UUID, body: Reason) -> dict:
+    return _decide(run_id, lambda s, r: services.redo_options(s, r, actor=operator(), reason=body.reason))
+
+
 @router.get("/runs/{run_id}/workshop.md", response_class=PlainTextResponse)
 def workshop(run_id: uuid.UUID, roles: str = "") -> str:
     """The open questions of the roles that attend a meeting (comma-separated role ids; empty = every role)."""

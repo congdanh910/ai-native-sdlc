@@ -123,6 +123,10 @@ class ReadonlyTeam(LangflowTeam):
         self._in(context)
         return super().plan(context)
 
+    def design_options(self, context):
+        self._in(context)
+        return super().design_options(context)
+
     def design_tests(self, context, plan):
         self._in(context)
         return super().design_tests(context, plan)
@@ -195,6 +199,9 @@ class RoutingTeam:
 
     def plan(self, context):
         return self._call(self._for(context, "tech_lead"), "plan", context)
+
+    def design_options(self, context):  # the Architect reasons on the Tech Lead's engine
+        return self._call(self._for(context, "tech_lead"), "design_options", context)
 
     def design_tests(self, context, plan):
         return self._call(self._for(context, "qa_analyst"), "design_tests", context, plan)
