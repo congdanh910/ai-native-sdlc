@@ -96,7 +96,9 @@ class DiscoveryLimits(Strict):
     max_questions_per_round: int = Field(default=30, ge=1, le=200)
     max_source_mb: int = Field(default=50, ge=1, le=500)
     max_pages_per_source: int = Field(default=300, ge=1, le=5000)
-    pages_per_read: int = Field(default=20, ge=1, le=20)  # Claude Code reads at most 20 PDF pages per call
+    # PDF pages in one Business Analyst call: Claude Code reads at most 20, and 20 dense pages made an answer longer
+    # than the CLI's output limit (trial, 2026-10-16); a part whose answer is unusable is halved and read again.
+    pages_per_read: int = Field(default=10, ge=1, le=20)
     chars_per_read: int = Field(default=30_000, ge=2_000, le=200_000)  # text view sent in one Business Analyst call
 
 

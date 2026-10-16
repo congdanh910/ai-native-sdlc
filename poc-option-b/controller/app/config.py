@@ -75,6 +75,9 @@ class Settings(BaseSettings):
     git_push_timeout_seconds: int = Field(default=300, ge=10)
     ollama_timeout_seconds: int = Field(default=300, ge=10)  # one Qwen3 answer through Langflow
     thinking_timeout_seconds: int = Field(default=600, ge=30)  # read-only CLI call outside a project's limits
+    # macOS: hold an idle-sleep assertion (caffeinate -i) while jobs are queued or running; released when idle this long
+    sdlc_keep_awake: bool = True
+    keep_awake_release_seconds: int = Field(default=120, ge=0)
     max_format_retries: int = Field(default=2, ge=0, le=5)  # thinking-role retries outside a project's limits
     process_output_max_chars: int = Field(default=200_000, ge=10_000)  # output kept from each subprocess
     job_log_read_bytes: int = Field(default=64_000, ge=4_000)  # one poll of a job's live log

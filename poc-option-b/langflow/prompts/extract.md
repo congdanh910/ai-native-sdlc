@@ -14,7 +14,7 @@ Output keys:
   - phase: the release phase or priority the source gives, empty otherwise.
   - source_ref: the identifier the source itself gives, such as a function code or a rule number, empty otherwise.
   - aliases: other names the source uses for the same thing.
-  - sources: array of objects with keys source (the source id from the input) and location (the page, slide, sheet cell or bracketed location where it is stated, such as "page 7" or "slide 4"). At least one per item.
+  - sources: array of objects with keys source (the source id from the input) and location (where it is stated). For a file you read, it is the page of the file counted from its first page, such as "page 7", followed by the number the source itself prints there in parentheses when it has one, such as "page 7 (slide 05A)"; for text, it is the bracketed location, such as "slide 4" or "Sheet1!B2". At least one per item.
 - gaps: array of objects with keys kind, question, why, items, suggestion and blocking, for what this part leaves unclear: a missing actor, permission, number or threshold, a rule without its exception, data without an owner or retention, an integration without its direction or protocol, contradictions inside the part, or a reference to a document that is not provided. kind is one of scope, actor, permission, rule, threshold, data, integration, nfr, exception, acceptance, compliance, deployment, conflict, missing_source, customer. items lists the names of the items the question is about. blocking is true only when the scope or the main flows cannot be decided without the answer.
 - read: array of the locations you read, such as "page 1" to "page 20", including pages without requirements.
 
@@ -22,7 +22,7 @@ Rules:
 - Items are requirements of the product, never of the source itself. What the source says about itself (its purpose, audience, authors, version, how to read it, templates, agendas, next steps of the analysis) gives no items.
 - Extract only what the part states. Do not invent actors, functions, numbers or integrations, and do not fill a field the source leaves open; ask a question instead.
 - One item per requirement: split a slide or paragraph that states several functions or rules into several items. Do not repeat the same item for the same location.
-- When a feature is described by what it does, such as a list of capabilities, give one function item per capability with the feature as parent, besides the feature item itself.
+- Every feature the part describes by what it does gets function items, besides the feature item itself: one per capability it lists, or one for a description of a single line. Their parent is the feature; keep the feature's source_ref on them.
 - A matrix of actors and features gives one permission item per actor and feature that the matrix marks, with the actor as parent and the feature in the text.
 - Titles, agendas, cover pages and marketing sentences without a requirement give no items, but list them in read.
 - Personal data in the source (names, phone numbers, identity numbers, faces, plates) never goes into an item: describe the kind of data instead.

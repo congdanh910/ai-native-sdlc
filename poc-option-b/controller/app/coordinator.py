@@ -1007,7 +1007,9 @@ def _load_extract(session: Session, run: Run, loaded: Loaded) -> Loaded:
 
 def _extract(team: Team, loaded: Loaded) -> dict:
     """Every part in turn, then one consolidation pass over the merged inventory."""
+    from controller.app.discovery.extract import split
     from controller.app.discovery.inventory import apply_consolidation, merge_chunks
+    from controller.app.integrations.langflow import InvalidModelOutput
     context, parts = loaded.context, loaded.extra["parts"]
     calls: list[dict] = []
 
@@ -1017,14 +1019,27 @@ def _extract(team: Team, loaded: Loaded) -> dict:
             calls.append({"engine": call.engine, "prompt_version": call.prompt_version, "attempts": call.attempts,
                           "usage": call.usage})
 
-    chunks, known = [], {}
-    for index, part in enumerate(parts, start=1):
-        joblog.note(f"Business Analyst reads {part.filename}, {part.label} (part {index} of {len(parts)})")
-        part_context = dataclasses.replace(context, repository={"known": known}, session_id=f"{context.session_id}:{index}")
-        chunk = team.extract_part(part_context, part)
+    chunks, known, pending, index, read_parts = [], {}, list(parts), 0, []
+    while pending:
+        part, index = pending.pop(0), index + 1
+        halves = split(part)
+        joblog.note(f"Business Analyst reads {part.filename}, {part.label} (part {index}, {len(pending)} more after it)")
+        # A part that can be halved gets no format retries: a too-long answer fails again at the same size.
+        policy = context.policy.model_copy(update={"max_format_retries": 0}) if halves else context.policy
+        part_context = dataclasses.replace(context, policy=policy, repository={"known": known},
+                                           session_id=f"{context.session_id}:{index}")
+        try:
+            chunk = team.extract_part(part_context, part)
+        except InvalidModelOutput as exc:
+            if not halves:
+                raise
+            joblog.note(f"  answer unusable ({str(exc)[:160]}); reading {halves[0].label} and {halves[1].label} instead")
+            pending[:0] = halves
+            continue
         record()
         joblog.note(f"  {len(chunk.items)} item(s), {len(chunk.gaps)} question(s)")
         chunks.append((part.source_id, chunk))
+        read_parts.append({"source": part.source_id, "covers": part.label})
         for item in chunk.items:  # later parts reuse the names of earlier ones
             if item.type in ("actor", "feature", "term", "data") and item.name not in known.setdefault(item.type, []):
                 known[item.type].append(item.name)
@@ -1039,7 +1054,7 @@ def _extract(team: Team, loaded: Loaded) -> dict:
         inventory = apply_consolidation(inventory, consolidation)
         joblog.note(f"consolidation merged {before - len(inventory.items)} item(s), "
                     f"{len(inventory.gaps)} question(s) in total")
-    return {"inventory": inventory.model_dump(), "parts": [{"source": p.source_id, "covers": p.label} for p in parts],
+    return {"inventory": inventory.model_dump(), "parts": read_parts,
             "_calls": calls, "_engine": ",".join(sorted({c["engine"] for c in calls})) or None}
 
 

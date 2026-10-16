@@ -92,3 +92,32 @@ def test_the_business_analyst_reads_the_pdf_in_the_sources_folder(settings, tmp_
     assert "requirement inventory" in prompt and result.items[0].sources[0].source == "s1"
     with pytest.raises(ValueError, match="cannot read PDF"):
         ReadonlyTeam(settings, "codex").extract_part(discovery, PART)
+
+
+def test_a_part_whose_answer_is_unusable_is_halved_and_read_again(settings):
+    from controller.app.coordinator import Loaded, _extract
+    from controller.app.discovery.extract import split
+    from controller.app.integrations.langflow import InvalidModelOutput
+    from controller.app.team.mock import MockTeam
+    assert [p.label for p in split(PART)] == ["pages 1-10 of 26", "pages 11-20 of 26"]
+    text = Part("s2", "b.md", "text", "lines 3-6 of 9", text="c\nd\ne\nf")
+    assert [(p.label, p.text) for p in split(text)] == [("lines 3-4 of 9", "c\nd"), ("lines 5-6 of 9", "e\nf")]
+    assert split(Part("s1", "d.pdf", "pdf", "pages 7-7 of 26", file="d.pdf", pages="7-7")) == []
+
+    class LongAnswers(MockTeam):
+        def __init__(self):
+            self.seen = []
+
+        def extract_part(self, context, part):
+            self.seen.append((part.label, context.policy.max_format_retries))
+            if part.pages not in ("1-1", "2-2"):
+                raise InvalidModelOutput("the answer is not valid JSON: Extra data", "")
+            return super().extract_part(context, part)
+    team = LongAnswers()
+    base = context()
+    loaded = Loaded(None, "extract", None, 1, context=base,
+                    extra={"parts": [Part("s1", "d.pdf", "pdf", "pages 1-2 of 2", file="d.pdf", pages="1-2")]})
+    result = _extract(team, loaded)
+    assert team.seen == [("pages 1-2 of 2", 0), ("pages 1-1 of 2", base.policy.max_format_retries),
+                         ("pages 2-2 of 2", base.policy.max_format_retries)]
+    assert [p["covers"] for p in result["parts"]] == ["pages 1-1 of 2", "pages 2-2 of 2"]

@@ -110,14 +110,14 @@ def advance_evals() -> None:
 class StayAwake:
     """Keep macOS from idle-sleeping while the team has work; sleep would cut the GX10 tunnel."""
 
-    def __init__(self, idle_release_seconds: float = 120):
-        self.idle_release_seconds = idle_release_seconds
+    def __init__(self, idle_release_seconds: float, enabled: bool = True):
+        self.idle_release_seconds, self.enabled = idle_release_seconds, enabled
         self.process: subprocess.Popen | None = None
         self.last_work = 0.0
 
     def busy(self) -> None:
         self.last_work = time.monotonic()
-        if self.process is None and sys.platform == "darwin" and shutil.which("caffeinate"):
+        if self.enabled and self.process is None and sys.platform == "darwin" and shutil.which("caffeinate"):
             self.process = subprocess.Popen(["caffeinate", "-i", "-w", str(os.getpid())])
             log.info("holding an idle-sleep assertion while jobs run")
 
@@ -143,13 +143,17 @@ def run_forever(poll_seconds: float = 1.0) -> None:
     team = get_team()
     stopping = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stopping.set())
-    awake = StayAwake()
+    settings = get_settings()
+    awake = StayAwake(settings.keep_awake_release_seconds, enabled=settings.sdlc_keep_awake)
     log.info("worker %s started with team %s", WORKER_ID, team.engine)
     for leftover in process.kill_orphans():
         log.warning("stopped %s left behind by an earlier worker", leftover)
     next_pr_poll = 0.0
     while not stopping.is_set():
         try:
+            # Hold the assertion before the job starts: taken only after a job, the first job after an idle spell
+            # ran unprotected and the Mac slept through it (discovery trial, 2026-10-16).
+            awake.idle(_queue_has_work())
             busy = run_once(team)
             if busy:
                 awake.busy()

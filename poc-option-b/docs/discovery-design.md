@@ -138,7 +138,7 @@ discovery:
     max_questions_per_round: 30
     max_source_mb: 50
     max_pages_per_source: 300
-    pages_per_read: 20         # số trang PDF trong một lần BA đọc (Claude Code đọc tối đa 20)
+    pages_per_read: 10         # số trang PDF trong một lần BA đọc (tối đa 20); lượt hỏng vì câu trả lời quá dài thì chia đôi
     chars_per_read: 30000      # số ký tự văn bản (DOCX, XLSX, PPTX, MD) gửi trong một lần BA đọc
 ```
 
@@ -148,7 +148,7 @@ Nền tảng (`.env`): loại file nhận (`DISCOVERY_ACCEPTED_TYPES`), engine c
 
 ## 8. Đọc nguồn
 
-- **PDF và ảnh:** Claude Code đọc trực tiếp bằng công cụ Read. Một lần đọc tối đa 20 trang, nên controller chia nguồn dài thành nhiều lượt và gộp kết quả.
+- **PDF và ảnh:** Claude Code đọc trực tiếp bằng công cụ Read. Một lần đọc tối đa 20 trang (mặc định 10), nên controller chia nguồn dài thành nhiều lượt và gộp kết quả. Tài liệu dày có thể cho câu trả lời dài hơn giới hạn output của CLI; khi đó controller chia đôi lượt đó và đọc lại từng nửa, xuống tới 1 trang, thay vì thử lại cùng kích thước.
 - **DOCX, XLSX, PPTX:** chuyển sang văn bản bằng thư viện chuẩn trước (giải nén XML). Mỗi đoạn hoặc ô giữ vị trí (trang, sheet!ô, slide) để dùng làm `location`.
 - **Văn bản dán vào** (email, chat): lưu thành một nguồn `.md`.
 - Vai AI chạy ở chế độ chỉ đọc như hiện nay. Thư mục nguồn được đưa vào cho AI đọc nhưng không bao giờ ghi.

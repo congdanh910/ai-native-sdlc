@@ -65,6 +65,25 @@ def plan_parts(source_id: str, filename: str, kind: str, path: str, pages: int |
             for a, b in parts]
 
 
+def split(part: Part) -> list[Part]:
+    """Two halves of a part, or nothing when it is one page or one line. A dense part can make an answer longer than
+    the CLI's output limit; the halves are read again instead of retrying the same size (trial, 2026-10-16)."""
+    match = re.fullmatch(r"(pages|lines) (\d+)-(\d+) of (\d+)", part.label)
+    if not match or int(match[2]) >= int(match[3]):
+        return []
+    unit, start, end, total = match[1], int(match[2]), int(match[3]), match[4]
+    middle = (start + end) // 2
+    halves = []
+    for a, b in ((start, middle), (middle + 1, end)):
+        label = f"{unit} {a}-{b} of {total}"
+        if unit == "pages":
+            halves.append(Part(part.source_id, part.filename, part.kind, label, file=part.file, pages=f"{a}-{b}"))
+        else:
+            lines = part.text.splitlines()[a - start:b - start + 1]
+            halves.append(Part(part.source_id, part.filename, part.kind, label, text="\n".join(lines)))
+    return halves
+
+
 def _citation(value, part: Part) -> dict:
     """A chunk reads one source, so every citation names it; a location the model left out is the part's range."""
     location = value.get("location") if isinstance(value, dict) else value
