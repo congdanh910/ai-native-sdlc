@@ -62,13 +62,13 @@ def _plan(plan: Plan) -> dict:
 def _discovery(session: Session, run: Run) -> dict:
     """Questions by role, decisions and the project's discovery roles, for the Questions and Decisions tabs."""
     from controller.app.discovery import questions as q
-    from controller.app.discovery.service import discovery_config
+    from controller.app.discovery.service import counted_rounds, discovery_config
     run_questions, run_decisions = q.as_dicts(session, run.id)
     from controller.app.documents import latest_document
     config = discovery_config(session, run)
     latest = latest_document(session, run.id, "inventory")
     return {"roles": [r.model_dump() for r in config.roles], "questions": run_questions, "decisions": run_decisions,
-            "rounds": {"used": latest.version if latest else 0, "limit": config.limits.max_rounds}}
+            "rounds": {"used": counted_rounds(session, run.id), "limit": config.limits.max_rounds}}
 
 
 def run_detail(session: Session, run: Run) -> dict:

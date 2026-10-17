@@ -1083,7 +1083,15 @@ def _load_extract(session: Session, run: Run, loaded: Loaded) -> Loaded:
                              pages_per_read=limits.pages_per_read, chars_per_read=limits.chars_per_read)
         (minutes if source.purpose == "minutes" else parts).extend(planned)
     run_questions = q.questions(session, run.id)
+    accepted = [q.decision_id(d) for d in q.decisions(session, run.id) if d.status == "accepted"]
+    new_decisions = [d for d in accepted if d not in data.get("decisions_applied", [])]
+    removed = [sid for sid in data.get("chunks", {}) if sid not in {str(s.id) for s in sources(session, run.id)}]
+    new_input = ([f"{len({p.source_id for p in parts})} new source(s)"] if parts else []) \
+        + ([f"{len({p.source_id for p in minutes})} new minutes"] if minutes else []) \
+        + ([f"new decisions {', '.join(new_decisions)}"] if new_decisions else []) \
+        + ([f"{len(removed)} removed source(s)"] if removed else [])
     loaded.extra.update({
+        "round": (previous.version if previous else 0) + 1, "new_input": new_input if previous else ["first round"],
         "parts": parts, "minutes": minutes, "reused": reused, "run_kind": run.kind,
         "previous": {k: data.get(k, []) for k in ("items", "gaps")} if previous else None,
         "previous_parts": [p for p in data.get("parts", []) if p["source"] in reused],
@@ -1202,8 +1210,11 @@ def _extract(team: Team, loaded: Loaded) -> dict:
     joblog.note(f"{len(inventory.items)} item(s), {len(extra['decisions'])} accepted decision(s); "
                 "the Business Analyst consolidates")
     if inventory.items:
-        consolidation = team.consolidate(context, dumped["items"], dumped["gaps"], extra["decisions"], extra["asked"])
+        consolidation = team.consolidate(context, dumped["items"], dumped["gaps"], extra["decisions"], extra["asked"],
+                                         {"round": extra["round"], "new_input": extra["new_input"]})
         record()
+        if not extra["new_input"]:  # check again: nothing new to read, so only a conflict is worth a question
+            consolidation = consolidation.model_copy(update={"gaps": [g for g in consolidation.gaps if g.kind == "conflict"]})
         # A decision with a stated effect is applied as stated, after (and over) what the model read into decisions.
         stated = [{"id": item, "decision": e["id"], "status": e["effect"],
                    "text": e["new_text"] if e["effect"] == "changed" else ""}
@@ -1217,6 +1228,7 @@ def _extract(team: Team, loaded: Loaded) -> dict:
     parts = extra["previous_parts"] + [{"source": p.source_id, "covers": p.label} for p, _ in fresh]
     suggestions = [x.model_dump() for x in consolidation.suggestions] if inventory.items else []
     return {"inventory": inventory.model_dump(), "parts": parts, "chunks": stored, "suggestions": suggestions,
+            "again": not extra["new_input"],
             "minutes": [{"source": p.source_id, "covers": p.label, **m.model_dump()} for p, m in minutes],
             "minutes_read": sorted(set(extra["minutes_read"]) | {p.source_id for p, _ in minutes}),
             "decisions_applied": [d["id"] for d in extra["decisions"]],
@@ -1239,12 +1251,12 @@ def _apply_extract(session: Session, run: Run, execution: Execution, result: dic
     document = add_document(session, run.id, "inventory", content, author_kind="ai",
                             author=TeamRole.BUSINESS_ANALYST.value,
                             data={**inventory.model_dump(), "problems": problems, "coarse_citations": coarse,
-                                  "sources": names, **{k: result[k] for k in ("parts", "chunks", "minutes_read",
-                                                                               "decisions_applied")}})
+                                  "sources": names, "again": result.get("again", False),
+                                  **{k: result[k] for k in ("parts", "chunks", "minutes_read", "decisions_applied")}})
     document.commit_sha = commit_thread(session, run, "inventory", content,
                                         f"sdlc: requirement inventory v{document.version}")
     ids_by_name = {q._norm(n): i.id for i in inventory.items for n in [i.name, *i.aliases]}
-    added, left_out = q.sync_questions(session, run, inventory.gaps, document.version, config, ids_by_name)
+    added, left_out, later = q.sync_questions(session, run, inventory.gaps, document.version, config, ids_by_name)
     suggested = q.apply_suggestions(session, run, result.get("suggestions", []))
     run_questions = q.questions(session, run.id)
     by_number = {q.number(run_questions, x): x for x in run_questions}
@@ -1258,6 +1270,8 @@ def _apply_extract(session: Session, run: Run, execution: Execution, result: dic
             proposed += 1
     write_discovery_documents(session, run, config, names)
     detail = f"{len(inventory.items)} item(s), {added} new question(s)"
+    if later:
+        detail += f", {later} detail question(s) deferred to the SRS/SDS"
     if left_out:
         detail += f" ({left_out} more left for the next round by discovery.limits.max_questions_per_round)"
     if proposed:

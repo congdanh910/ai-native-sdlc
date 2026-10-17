@@ -147,10 +147,10 @@ class ReadonlyTeam(LangflowTeam):
         self.client.cwd = context.sources_dir or None  # the raw files, never the repository
         return super().extract_part(context, part)
 
-    def consolidate(self, context, items, gaps, decisions=(), asked=()):
+    def consolidate(self, context, items, gaps, decisions=(), asked=(), round_info=None):
         self._in(context)
         self.client.cwd = None  # the inventory is in the input; nothing to read
-        return super().consolidate(context, items, gaps, decisions, asked)
+        return super().consolidate(context, items, gaps, decisions, asked, round_info)
 
     def read_minutes(self, context, part, questions, items):
         self._in(context)
@@ -216,8 +216,9 @@ class RoutingTeam:
     def extract_part(self, context, part):
         return self._call(self._for(context, "business_analyst"), "extract_part", context, part)
 
-    def consolidate(self, context, items, gaps, decisions=(), asked=()):
-        return self._call(self._for(context, "business_analyst"), "consolidate", context, items, gaps, decisions, asked)
+    def consolidate(self, context, items, gaps, decisions=(), asked=(), round_info=None):
+        return self._call(self._for(context, "business_analyst"), "consolidate", context, items, gaps, decisions, asked,
+                          round_info)
 
     def read_minutes(self, context, part, questions, items):
         return self._call(self._for(context, "business_analyst"), "read_minutes", context, part, questions, items)

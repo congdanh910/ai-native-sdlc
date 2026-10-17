@@ -129,7 +129,8 @@ def _gap(raw: dict, part: Part | None) -> dict:
     sources = [_citation(c, part) for c in raw.get("sources") or []] if part else []
     return {"kind": str(raw.get("kind") or "scope"), "question": " ".join(str(raw.get("question") or "").split()),
             "why": str(raw.get("why") or "").strip(), "items": _strings(raw.get("items")), "sources": sources,
-            "suggestion": str(raw.get("suggestion") or "").strip(), "blocking": bool(raw.get("blocking"))}
+            "suggestion": str(raw.get("suggestion") or "").strip(), "blocking": bool(raw.get("blocking")),
+            "stage": str(raw.get("stage") or "baseline")}
 
 
 def repair_consolidation(data: dict) -> dict:

@@ -135,6 +135,7 @@ def start_extraction(session: Session, run: Run, *, actor: str, again: bool = Fa
     if not any(s.purpose == "requirements" for s in current):
         raise ValueError("add at least one requirement source first")
     latest = latest_document(session, run.id, "inventory")
+    nothing_new = False
     if latest:
         data = latest.data or {}
         ids = {str(s.id) for s in current}
@@ -144,13 +145,19 @@ def start_extraction(session: Session, run: Run, *, actor: str, again: bool = Fa
         accepted = {q.decision_id(d) for d in q.decisions(session, run.id) if d.status == "accepted"}
         new_decisions = accepted - set(data.get("decisions_applied", []))
         written_before_rounds = "chunks" not in data  # its questions are not asked yet
+        nothing_new = not (new_sources or new_minutes or removed or new_decisions or written_before_rounds)
         # again: the Product Owner asks the Business Analyst to check the inventory once more (links, merges,
-        # questions) with nothing new to read; only the consolidation pass runs.
-        if not (new_sources or new_minutes or removed or new_decisions or written_before_rounds or again):
+        # suggestions, conflicts) with nothing new to read; only the consolidation pass runs.
+        if nothing_new and not again:
             raise ValueError("nothing new since inventory v%d: add a source or minutes, or answer a question first"
                              % latest.version)
-    rounds = latest.version if latest else 0
+    rounds = counted_rounds(session, run.id)
     limit = discovery_config(session, run).limits.max_rounds
+    if nothing_new:  # a check-again round neither counts toward the limit nor is stopped by it
+        transition_run(session, run, RunStatus.EXTRACTING, actor=actor, acting_role="product_owner",
+                       reason=f"check again (not counted; {rounds} of at most {limit} rounds used)")
+        coordinator.queue(session, run, "extract")
+        return
     if rounds >= limit and not beyond_limit.strip():
         raise ValueError(f"the discovery already had {rounds} extraction round(s), the project's limit "
                          "(discovery.limits.max_rounds); the Product Owner can confirm another round with a reason")
@@ -158,9 +165,17 @@ def start_extraction(session: Session, run: Run, *, actor: str, again: bool = Fa
         record_event(session, "discovery.round_beyond_limit", actor=actor, acting_role="product_owner", run_id=run.id,
                      payload={"round": rounds + 1, "limit": limit, "reason": beyond_limit.strip()})
     transition_run(session, run, RunStatus.EXTRACTING, actor=actor, acting_role="product_owner",
-                   reason=f"extraction round {rounds + 1} of at most {limit}" + (" (check again)" if again else "")
+                   reason=f"extraction round {rounds + 1} of at most {limit}"
                    + (f", confirmed beyond the limit: {beyond_limit.strip()}" if rounds >= limit else ""))
     coordinator.queue(session, run, "extract")
+
+
+def counted_rounds(session: Session, run_id: uuid.UUID) -> int:
+    """Extraction rounds toward discovery.limits.max_rounds; a check-again round (nothing new to read) does not count."""
+    from controller.app.models import Document
+    return sum(1 for data in session.scalars(select(Document.data).where(Document.run_id == run_id,
+                                                                          Document.kind == "inventory"))
+               if not (data or {}).get("again"))
 
 
 def refresh_documents(session: Session, run: Run) -> None:

@@ -224,10 +224,12 @@ class MockTeam:
                 body = text[2:].strip()
                 items.append(Item(type="function", name=body[:80], text=body, parent=feature, sources=cite))
                 if "?" in body:
-                    gaps.append(Gap(kind="scope", question=body, items=[body[:80]], sources=cite))
+                    later = "[later]" in body  # a detail question the SRS settles
+                    gaps.append(Gap(kind="scope", question=body.replace("[later]", "").strip(), items=[body[:80]],
+                                    sources=cite, stage="later" if later else "baseline"))
         return ChunkResult(items=items, gaps=gaps, read=[part.label])
 
-    def consolidate(self, context: RunContext, items: list[dict], gaps: list[dict], decisions=(), asked=()):
+    def consolidate(self, context: RunContext, items: list[dict], gaps: list[dict], decisions=(), asked=(), round_info=None):
         """Each decision confirms the items it names; a decision that says "out of scope" takes them out."""
         from controller.app.discovery.inventory import Consolidation, Update
         updates = [Update(id=item, decision=d["id"], status="out_of_scope" if "out of scope" in d["text"].lower() else "confirmed")

@@ -118,7 +118,7 @@ def test_a_part_whose_answer_is_unusable_is_halved_and_read_again(settings):
     loaded = Loaded(None, "extract", None, 1, context=base,
                     extra={"parts": [Part("s1", "d.pdf", "pdf", "pages 1-2 of 2", file="d.pdf", pages="1-2")],
                            "minutes": [], "reused": {}, "previous": None, "previous_parts": [], "minutes_read": [],
-                           "questions": [], "asked": [], "decisions": []})
+                           "questions": [], "asked": [], "decisions": [], "round": 1, "new_input": ["first round"]})
     result = _extract(team, loaded)
     assert team.seen == [("pages 1-2 of 2", 0), ("pages 1-1 of 2", base.policy.max_format_retries),
                          ("pages 2-2 of 2", base.policy.max_format_retries)]
@@ -212,3 +212,21 @@ def test_a_suggestion_must_be_an_answer_not_an_instruction():
     from controller.app.discovery.extract import repair_consolidation
     assert repair_consolidation({"suggestions": [{"question": "Q-023", "suggestion": answer}, {"question": "Q-1"}]})[
         "suggestions"] == [{"question": "Q-023", "suggestion": answer}]
+
+
+def test_check_again_keeps_only_conflict_questions():
+    from controller.app.coordinator import Loaded, _extract
+    from controller.app.team.mock import MockTeam
+
+    class Asks(MockTeam):
+        def consolidate(self, context, items, gaps, decisions=(), asked=(), round_info=None):
+            self.round_info = round_info
+            return Consolidation.model_validate({"gaps": [{"kind": "scope", "question": "More detail on export?"},
+                                                          {"kind": "conflict", "question": "Slide 3 and D-002 differ?"}]})
+    team = Asks()
+    stored = {"s1": [chunk(({"type": "feature", "name": "Reports"}, "page 2")).model_dump()]}
+    extra = {"parts": [], "minutes": [], "reused": stored, "previous": None, "previous_parts": [], "minutes_read": [],
+             "questions": [], "asked": [], "decisions": [], "round": 4, "new_input": []}
+    result = _extract(team, Loaded(None, "extract", None, 1, context=context(), extra=extra))
+    assert [g["question"] for g in result["inventory"]["gaps"]] == ["Slide 3 and D-002 differ?"] and result["again"]
+    assert team.round_info == {"round": 4, "new_input": []}

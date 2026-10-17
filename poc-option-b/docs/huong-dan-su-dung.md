@@ -172,6 +172,12 @@ Trên tab **Questions**, với mỗi câu:
 
 Inbox có thẻ **Questions for you** cho từng vai còn câu hỏi mở.
 
+BA chia câu hỏi làm hai mức:
+- **Baseline:** cần chốt mới xác định được phạm vi, actor và quyền, luồng chính, luật nghiệp vụ khách hàng quyết, tích hợp, pháp lý. Những câu này hiện trong tab Questions để trả lời.
+- **Later:** chi tiết để SRS, SDS hoặc spec của từng story quyết, như thời gian chính xác, danh sách trường, hành vi màn hình, thông số kỹ thuật. Controller **tự hoãn** các câu này với lý do "for the SRS, SDS or a story's spec to settle"; chúng vào baseline ở mục câu hỏi hoãn, và run SRS nhận lại. Muốn xem thì tick **show answered, deferred, withdrawn**; muốn trả lời ngay thì bấm **Open again**.
+
+Sau vòng đầu, BA chỉ hỏi thêm về những gì *mới*: nguồn hay biên bản mới, hoặc một quyết định mâu thuẫn với mục hay quyết định khác. BA không hỏi sâu thêm vào chi tiết của một câu đã trả lời.
+
 Trên tab **Decisions**:
 - **Record a decision**: ghi quyết định trực tiếp, kèm REQ id. Chọn **Effect** để controller áp đúng như ghi: *Confirm the items*, *Put the items out of scope*, hoặc *Change the item text* (kèm nội dung mới). Không chọn effect thì BA tự đọc quyết định ở vòng sau.
 - Quyết định BA rút từ biên bản ở trạng thái **proposed**: vai sở hữu bấm **Accept** hoặc **Reject**. Accept thì câu hỏi liên quan được đánh dấu đã trả lời.
@@ -179,8 +185,8 @@ Trên tab **Decisions**:
 ### 5.4 Extract again và giới hạn số vòng
 
 - **Extract again**: chỉ đọc nguồn và biên bản **mới**, rồi áp các quyết định đã duyệt. REQ id không đổi giữa các vòng. Không có gì mới thì nút bị từ chối, để khỏi tốn hạn mức.
-- **Check the inventory again**: chỉ chạy lượt consolidate, không đọc nguồn, khi muốn BA kiểm lại toàn bộ bảng.
-- Mặc định tối đa **10 vòng** (`discovery.limits.max_rounds`). Hết số vòng thì panel hiện ô **Why another round**: PO ghi lý do rồi bấm **Confirm another round**. Mỗi vòng vượt giới hạn được ghi thành event.
+- **Check the inventory again**: chỉ chạy lượt consolidate, không đọc nguồn, khi muốn BA kiểm lại toàn bộ bảng (gắn function vào feature, gộp mục trùng, gợi ý câu trả lời). Lượt này chỉ đặt câu hỏi khi thấy mâu thuẫn, và **không tính vào số vòng**.
+- Mặc định tối đa **10 vòng** có nội dung mới (`discovery.limits.max_rounds`). Hết số vòng thì panel hiện ô **Why another round**: PO ghi lý do rồi bấm **Confirm another round**. Mỗi vòng vượt giới hạn được ghi thành event.
 
 ### 5.5 Chốt baseline
 

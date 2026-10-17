@@ -298,9 +298,14 @@ def test_the_product_owner_confirms_rounds_beyond_the_limit(db, sample_repo):
     drain()
     detail = client.get(f"/api/runs/{run}").json()
     assert detail["rounds"] == {"used": 1, "limit": 1}
-    refused = client.post(f"/api/runs/{run}/extract", params={"again": "true"}, json={})
+    detail = post(f"/api/runs/{run}/extract?again=true", {})  # check again: neither counted nor stopped
+    assert "check again (not counted" in detail["reason"]
+    drain()
+    assert client.get(f"/api/runs/{run}").json()["rounds"] == {"used": 1, "limit": 1}
+    post(f"/api/runs/{run}/sources/text", {"title": "Notes", "text": "- Print reports"})
+    refused = client.post(f"/api/runs/{run}/extract", json={})
     assert refused.status_code == 409 and "confirm another round with a reason" in refused.json()["detail"]
-    detail = post(f"/api/runs/{run}/extract?again=true", {"beyond_limit": "workshop minutes came late"})
+    detail = post(f"/api/runs/{run}/extract", {"beyond_limit": "workshop minutes came late"})
     assert detail["status"] == "EXTRACTING" and "confirmed beyond the limit: workshop minutes came late" in detail["reason"]
     drain()
     events = [e for e in client.get(f"/api/runs/{run}/events").json() if e["type"] == "discovery.round_beyond_limit"]
@@ -322,3 +327,14 @@ def test_check_again_replaces_suggestions_that_say_nothing(db, sample_repo):
     detail = client.get(f"/api/runs/{run}").json()
     assert detail["questions"][0]["suggestion"] == "Mock answer for the Product Owner to accept. (mock)"
     assert "1 suggested answer(s)" in detail["reason"]
+
+
+def test_detail_questions_are_deferred_to_the_srs_and_check_again_asks_only_conflicts(db, sample_repo):
+    run = start(sample_repo)
+    post(f"/api/runs/{run}/sources/text", {"title": "Brief", "text": "- Which formats?\n- Gap between two photos? [later]"})
+    post(f"/api/runs/{run}/extract", {})
+    drain()
+    detail = client.get(f"/api/runs/{run}").json()
+    assert [(q["question"], q["status"]) for q in detail["questions"]] == [
+        ("Which formats?", "open"), ("Gap between two photos?", "deferred")]
+    assert "for the SRS" in detail["questions"][1]["status_reason"] and "1 detail question(s) deferred" in detail["reason"]

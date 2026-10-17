@@ -65,29 +65,37 @@ def decisions(session: Session, run_id: uuid.UUID) -> list[Decision]:
     return list(session.scalars(select(Decision).where(Decision.run_id == run_id).order_by(Decision.number)))
 
 
+LATER_REASON = "for the SRS, SDS or a story's spec to settle (the Business Analyst marked it later)"
+
+
 def sync_questions(session: Session, run: Run, gaps: list[Gap], round_: int, config: Discovery,
-                   ids_by_name: dict[str, str] | None = None) -> tuple[int, int]:
-    """Add the round's questions that are not asked yet, blocking ones first, up to max_questions_per_round.
-    Item names a part's gap gives become REQ ids, so a decision on the question reaches those items.
-    Returns (added, left out by the limit)."""
+                   ids_by_name: dict[str, str] | None = None) -> tuple[int, int, int]:
+    """Add the round's questions that are not asked yet: baseline questions first (blocking first), up to
+    max_questions_per_round; questions the Business Analyst marked later are deferred at once, so the Product Owner
+    answers only what the baseline needs and the SRS run gets the rest. Item names a part's gap gives become REQ ids.
+    Returns (added, left out by the limit, deferred as later)."""
     ids_by_name = ids_by_name or {}
     existing = questions(session, run.id)
     asked = {_norm(q.question) for q in existing}
     fresh, seen = [], set()
-    for gap in sorted(gaps, key=lambda g: not g.blocking):
+    for gap in sorted(gaps, key=lambda g: (g.stage != "baseline", not g.blocking)):
         key = _norm(gap.question)
         if key and key not in asked and key not in seen:
             seen.add(key)
             fresh.append(gap)
     limit = config.limits.max_questions_per_round
-    for position, gap in enumerate(fresh[:limit], start=len(existing) + 1):
-        session.add(Clarification(run_id=run.id, position=position, question=gap.question, blocking=gap.blocking, kind=gap.kind,
-                                  owner_role=owner_for(gap.kind, config), status=OPEN, why=gap.why or None,
-                                  suggestion=useful_suggestion(gap.suggestion, gap.question),
+    kept = fresh[:limit]
+    for position, gap in enumerate(kept, start=len(existing) + 1):
+        later = gap.stage == "later" and not gap.blocking
+        session.add(Clarification(run_id=run.id, position=position, question=gap.question, blocking=gap.blocking,
+                                  kind=gap.kind, owner_role=owner_for(gap.kind, config),
+                                  status=DEFERRED if later else OPEN, status_reason=LATER_REASON if later else None,
+                                  why=gap.why or None, suggestion=useful_suggestion(gap.suggestion, gap.question),
                                   items=[ids_by_name.get(_norm(i), i) for i in gap.items],
                                   citations=[c.model_dump() for c in gap.sources], round=round_))
     session.flush()
-    return min(len(fresh), limit), max(0, len(fresh) - limit)
+    deferred = sum(1 for g in kept if g.stage == "later" and not g.blocking)
+    return len(kept) - deferred, max(0, len(fresh) - limit), deferred
 
 
 def _require(run: Run) -> None:

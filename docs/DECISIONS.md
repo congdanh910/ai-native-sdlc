@@ -30,3 +30,4 @@ Quyết định bền vững của dự án và lý do. Quyết định thiết 
 | 2026-10-16 | Người dùng sẽ kiểm tra D1–D6 một lần khi xong cả phần Discovery | Người dùng chọn |
 | 2026-10-16 | Discovery có engine riêng (`SDLC_DISCOVERY_ENGINE`); Codex đọc PDF dạng text qua pdftotext | Hết quota Claude; chỉ đổi Discovery, không đổi BA của SRS/feature |
 | 2026-10-17 | Mặc định `discovery.limits.max_rounds` = 10 (trước là 5); quá giới hạn thì PO xác nhận thêm vòng kèm lý do | Người dùng yêu cầu; vòng "check again" cũng tính vòng |
+| 2026-10-17 | Câu hỏi Discovery có mức `baseline`/`later`; câu `later` tự hoãn cho SRS/SDS; sau vòng 1 chỉ hỏi về cái mới hoặc mâu thuẫn; "check again" không tính vòng | Run "Điểm Danh" hết 10 vòng: từ vòng 5 BA hỏi sâu vào chính câu trả lời (2 giây, 60 giây, danh sách trường) |

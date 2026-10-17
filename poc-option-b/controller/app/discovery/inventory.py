@@ -46,6 +46,9 @@ class Item(Contract):
         return value
 
 
+STAGES = ("baseline", "later")
+
+
 class Gap(Contract):
     kind: str
     question: str
@@ -54,6 +57,15 @@ class Gap(Contract):
     sources: list[Citation] = []
     suggestion: str = ""
     blocking: bool = False
+    # baseline: needed to fix scope, actors, main flows, customer rules, integrations, compliance.
+    # later: detail the SRS, SDS or a story's spec settles; the controller defers it with that reason.
+    stage: str = "baseline"
+
+    @field_validator("stage")
+    @classmethod
+    def _stage(cls, value: str) -> str:
+        value = (value or "").strip().lower()
+        return value if value in STAGES else "baseline"
 
     @field_validator("kind")
     @classmethod
