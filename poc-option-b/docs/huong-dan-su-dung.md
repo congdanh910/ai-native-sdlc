@@ -23,7 +23,7 @@ flowchart LR
 | SDS | `SRS.md` đã merge + brief kiến trúc | `SDS.md` | Options (SA), SDS (Tech Lead), PR |
 | Feature | Một user story của SRS §7 | `specs/NNN-slug/`, test, code | Spec (PO), Plan (TL), Test cases (QC), PR (Code Owner) |
 
-Mỗi run kết thúc bằng một **draft PR**. Merge PR xong thì vào **Projects → Check again** để run sau thấy file mới. Dự án nhỏ không có tài liệu thô thì bỏ qua Discovery và viết SRS từ brief.
+Mỗi run kết thúc bằng một **draft PR**. Merge PR xong, run sau tự thấy file mới: khi tạo run, nếu nhánh mặc định đã đi tiếp so với lần kiểm tra trước, platform tự kiểm tra lại dự án (vài giây, vì có chạy lệnh validation). Muốn xem kết quả trước thì vào **Projects → Check again**. Dự án nhỏ không có tài liệu thô thì bỏ qua Discovery và viết SRS từ brief.
 
 ## 2. Các vai
 

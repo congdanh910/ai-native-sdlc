@@ -265,3 +265,13 @@ def test_the_architect_proposes_the_stack_and_the_solution_architect_adjusts_it(
     sds = [d for d in detail["documents"] if d["kind"] == "sds"][-1]["content"]
     assert "Adjustments: Use SQLite for the first site" in sds and "backend: Node.js 20" in sds
     assert detail["approvals"][0]["reason"].endswith("| adjustments: Use SQLite for the first site")
+
+
+def test_a_merge_after_the_project_check_is_seen_when_the_next_run_starts(db, sample_repo):
+    post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)  # checked before the SRS
+    with_srs(sample_repo)  # the SRS pull request merged afterwards
+    run = post("/api/runs", {"project": "task-board", "architecture": ARCHITECTURE, "idempotency_key": str(uuid.uuid4())},
+               status=201)
+    assert run["kind"] == "sds"
+    project = client.get("/api/projects").json()[0]
+    assert next(i for i in project["report"] if i["name"] == "SRS.md")["status"] == "ok"

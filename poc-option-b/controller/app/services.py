@@ -83,6 +83,8 @@ def create_run(session: Session, project: Project, intent: Intent | ProjectBrief
                                 "finish or cancel it first")
     if kind != RunKind.FEATURE and experiment:
         raise DecisionError(f"an {kind.upper()} run cannot be an experiment")
+    if not experiment:
+        _recheck_if_behind(session, project, actor)
     has_srs = any(i.get("name") == SRS_PATH and i.get("status") == "ok" for i in project.readiness_report.get("items", []))
     if kind == RunKind.FEATURE and has_srs and not experiment:
         if not intent.story:
@@ -120,6 +122,23 @@ def create_run(session: Session, project: Project, intent: Intent | ProjectBrief
     transition_run(session, run, RunStatus.PREFLIGHT, actor=actor, acting_role=PO)
     coordinator.queue(session, run, "preflight")
     return run
+
+
+def _recheck_if_behind(session: Session, project: Project, actor: str) -> None:
+    """The project check reads SRS.md and SDS.md on the default branch; after a merge it is out of date until someone
+    runs it again. When the branch has moved past the checked commit, run the check now, so a merged SRS counts."""
+    from controller.app.projects.registry import check_project
+    mirror = mirror_for(project)
+    try:
+        mirror.fetch()
+        head = mirror.resolve(project.default_branch)
+    except Exception:  # the check itself reports an unreachable repository
+        return
+    if head != project.checked_commit:
+        check_project(session, project, actor)
+        if project.readiness == "not_ready":
+            raise DecisionError(f"{project.default_branch} moved to {head[:12]} and the project check now fails; "
+                                "open Projects to see why")
 
 
 def answer_questions(session: Session, run: Run, answers: dict[str, str], *, actor: str) -> None:
