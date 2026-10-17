@@ -65,12 +65,12 @@ sinh phiên bản theo vòng.
 
 ## Trạng thái nền tảng
 
-- `.env`: `SDLC_TEAM_MODE=claude-readonly`, `SDLC_QWEN_ENABLED=false`, `SDLC_DOING_MODE=cli`, mọi vai suy nghĩ
-  trên `claude-readonly`; riêng Discovery: `SDLC_DISCOVERY_ENGINE=codex-readonly` (16/10 đêm, hết quota Claude). Codex
-  đọc PDF qua `pdftotext` (text có `[page N]`), không đọc được ảnh và PDF scan. Run discovery `9735e5fd` của người
-  dùng (VMS, vòng 1 trên Claude: 145 mục) đã được ghim lại BA = codex-readonly cho các vòng sau (event
-  `engines.repinned`). Codex CLI cho vai viết code (model trong `~/.codex/config.toml`).
-- Dữ liệu: dọn lần 2 ngày 17/10 theo yêu cầu: chỉ còn dự án `attendance` (chưa có run). Dự án thử `discovery-trial`
+- `.env` (17/10): **mọi vai suy nghĩ trên `codex-readonly`** (`SDLC_TEAM_MODE`, `SDLC_DEFAULT_ENGINE`, `SDLC_ENGINES`,
+  `SDLC_DISCOVERY_ENGINE`) vì hết hạn mức Claude; vai viết code vẫn Codex (`default_executor: codex`). Bản `.env` trước đó
+  lưu ở scratchpad của phiên. Quay lại Claude: đặt ba khoá về `claude-readonly`, `./sdlc down && ./sdlc up`. Codex CLI cho vai viết code (model trong `~/.codex/config.toml`).
+- Dữ liệu: dọn lần 2 ngày 17/10 theo yêu cầu: chỉ còn dự án `attendance`. Run Discovery thật đầu tiên "Điểm Danh"
+  (887374fa, VMS pptx, BA Codex) COMPLETED: PR #5 merge vào attendance (`requirements/`). Bước tiếp: Check again ở
+  Projects, rồi run SRS từ baseline. Dự án thử `discovery-trial`
   và 4 run (Discovery 160d89d8 và 9735e5fd, SRS f7ca490c, SDS 9111958c) đã xoá khỏi database và `.data/`; kết quả chạy
   thử chỉ còn ghi lại ở mục trên.
 - Test lần cuối: 211 pass (bỏ test docker, test đó pass khi chạy riêng).

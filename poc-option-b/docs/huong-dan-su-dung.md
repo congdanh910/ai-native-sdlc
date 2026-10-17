@@ -80,8 +80,8 @@ Discovery có thêm vai trả lời câu hỏi theo cấu hình dự án: mặc 
 
 | Khoá | Giá trị đang dùng | Ý nghĩa |
 |---|---|---|
-| `SDLC_TEAM_MODE` | `claude-readonly` | Engine cơ bản của các vai suy nghĩ |
-| `SDLC_ENGINES` | mọi vai `claude-readonly` | Engine từng vai: `business_analyst`, `tech_lead`, `qa_analyst`, `code_reviewer` |
+| `SDLC_TEAM_MODE` | `codex-readonly` (từ 17/10, hết hạn mức Claude) | Engine cơ bản của các vai suy nghĩ, cả nút Draft with AI |
+| `SDLC_ENGINES` | mọi vai `codex-readonly` | Engine từng vai: `business_analyst`, `tech_lead`, `qa_analyst`, `code_reviewer` |
 | `SDLC_DISCOVERY_ENGINE` | `codex-readonly` | BA của run Discovery, khi khác `SDLC_ENGINES`; để trống thì dùng như các run khác |
 | `SDLC_DOING_MODE` | `cli` | Codex/Claude viết test và code thật (`mock` để thử không gọi AI) |
 | `SDLC_QWEN_ENABLED` | `false` | Qwen trên GX10 đã tắt |
@@ -242,7 +242,7 @@ Trang một run gồm: thanh pipeline, panel **your decision** (việc đang ch�
 
 ## 10. Engine và hạn mức
 
-- Hết hạn mức Claude: đặt `SDLC_DISCOVERY_ENGINE=codex-readonly` để Discovery chạy bằng Codex. Muốn đổi cả vai khác thì sửa `SDLC_ENGINES`. Sau đó `./sdlc down && ./sdlc up`.
+- Hết hạn mức Claude: đặt `SDLC_DISCOVERY_ENGINE=codex-readonly` để Discovery chạy bằng Codex. Muốn đổi cả vai khác thì sửa `SDLC_ENGINES`, `SDLC_DEFAULT_ENGINE` và `SDLC_TEAM_MODE`. Sau đó `./sdlc down && ./sdlc up`. Từ 17/10 mọi vai đang chạy Codex; quay lại Claude thì đặt ba khoá đó về `claude-readonly`.
 - Codex đọc PDF qua `pdftotext` (mỗi dòng gắn `[page N]`, nên vẫn trích được trang). Codex **không đọc được ảnh và PDF scan**: gặp loại đó job sẽ dừng và báo lý do. Codex chỉ nhận chữ nên đọc bảng, sơ đồ kém hơn Claude, và tách mục chi tiết hơn.
 - Run đang mở giữ engine lúc tạo. Muốn đổi engine của run đang mở thì hiện phải nhờ người vận hành (xem `docs/BACKLOG.md`, mục 2.6).
 
