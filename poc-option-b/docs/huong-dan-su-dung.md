@@ -238,6 +238,22 @@ Muốn bỏ bước Options thì đặt `stages.options: skip` trong `.sdlc/proj
 
 Developer báo test sai (`DISPUTE`), hoặc một bước lỗi, thì run dừng ở `NEEDS_HUMAN`: chọn **Let QA update the tests**, **Keep the tests**, **Resume**, **Replan** hoặc **Cancel run**, kèm lý do.
 
+### Khi một cổng chưa đạt (mọi loại run)
+
+Ở cổng nào cũng có ba hướng: **tự sửa** (Edit, lưu thành phiên bản mới của người), **yêu cầu AI làm lại** (Reject kèm lý do), hoặc **huỷ**. Lý do anh ghi được gửi nguyên văn cho vai AI ở lần làm lại, cùng bản nháp trước của nó, để nó sửa đúng chỗ và giữ nguyên ID.
+
+| Cổng | Tự sửa | Yêu cầu AI làm lại | Ai nhận góp ý |
+|---|---|---|---|
+| Baseline (Discovery) | Ghi quyết định ở tab Decisions, rồi Extract again | **Back to clarifying** | BA, qua quyết định |
+| SRS / SDS | **Edit** → Save as new version | **Reject: rewrite**; sau khi đã mở PR: **Request changes** | BA / Architect, kèm bản nháp mới nhất |
+| Options (SDS) | Chọn phương án và ghi lý do | **Ask for other options** | Architect |
+| Spec (feature) | **Edit** | **Reject: rewrite** | BA, kèm spec trước |
+| Plan | **Edit** (JSON) | **Reject: replan** | Tech Lead |
+| Test cases (Quality) | **Edit JSON** | **Reject: redesign tests**, hoặc **Reject: replan** | QA Analyst, hoặc Tech Lead |
+| PR (feature) | Sửa trên GitHub | **Request changes** (đội sửa code tiếp) hoặc **Review again** | Developer, Code Reviewer |
+
+**Viết góp ý thế nào cho hiệu quả:** nêu *cái gì sai*, *ở đâu* và *muốn thành thế nào*. Ví dụ: *"Tách story Check-in và Check-out thành 2 story; bỏ yêu cầu xuất Excel khỏi §3 vì REQ-045 đã ngoài phạm vi"* hiệu quả hơn nhiều so với *"chưa đúng"*. Mỗi ý một dòng; dẫn REQ id, AC id hay số mục SRS khi có thể. Góp ý của mọi lần làm lại trước vẫn được gửi kèm, nên không cần nhắc lại.
+
 ## 9. Các trang của control room
 
 | Trang | Dùng để |

@@ -468,13 +468,20 @@ def load(session: Session, execution: Execution) -> Loaded:
             and (plan.grounding_report or {}).get("status") == "fail"):
         feedback = list(plan.grounding_report["findings"])
         loaded.extra["regenerated_from"] = str(plan.id)
-    if execution.kind == "specify" and run.kind in PROJECT_DOCS:
-        # Reasons of a rejected draft at the gate, and of changes asked on the pull request.
+    if execution.kind == "specify":
+        # Reasons of a rejected draft at the gate, and (SRS, SDS) of changes asked on the pull request.
+        asked = (Approval.stage == "spec") & (Approval.decision == "reject")
+        if run.kind in PROJECT_DOCS:
+            asked = asked | ((Approval.stage == "pr") & (Approval.decision == "request_changes"))
         feedback = [f"Reviewer asked for changes: {reason}" for reason in session.scalars(
-            select(Approval.reason).where(Approval.run_id == run.id,
-                                          ((Approval.stage == "spec") & (Approval.decision == "reject"))
-                                          | ((Approval.stage == "pr") & (Approval.decision == "request_changes")))
-            .order_by(Approval.created_at)) if reason]
+            select(Approval.reason).where(Approval.run_id == run.id, asked).order_by(Approval.created_at)) if reason]
+    if execution.kind == "plan":
+        # A replan the Tech Lead or the QC asked for carries their reasons, besides any grounding findings.
+        feedback += [f"{'Tech Lead rejected the plan' if stage == 'plan' else 'QC asked for changes'}: {reason}"
+                     for stage, reason in session.execute(
+                         select(Approval.stage, Approval.reason).where(
+                             Approval.run_id == run.id, Approval.stage.in_(("plan", "tests")),
+                             Approval.decision == "reject").order_by(Approval.created_at)) if reason]
     if execution.kind == "options":
         feedback = [f"Solution Architect asked for other options: {reason}" for reason in session.scalars(
             select(Approval.reason).where(Approval.run_id == run.id, Approval.stage == "options",

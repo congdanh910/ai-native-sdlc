@@ -141,6 +141,8 @@ class LangflowTeam(MockTeam):
                    "answers": [{"question": q, "answer": a} for q, a in context.answers],
                    "repository": {"files": context.repository.get("files", []),
                                   "symbols": context.repository.get("symbols", {})}}
+        if context.feedback:  # a rewrite after the Product Owner rejected the spec
+            payload |= {"feedback": context.feedback, "previous_spec": context.spec_md or ""}
         return self._ask("spec", payload, Spec, normalize.spec, context.session_id,
                          retries=context.policy.max_format_retries)
 

@@ -387,3 +387,35 @@ def test_busy_gx10_postpones_without_using_an_attempt(db, sample_repo):
         assert (execution.status, execution.attempts) == ("queued", 0)
         assert execution.available_at > jobs.now() and "GPU" in execution.error
     assert status(run_id) == RunStatus.SPECIFYING
+
+
+def test_rejection_reasons_reach_the_business_analyst_and_the_tech_lead(db, sample_repo):
+    from controller.app.coordinator import load
+    from controller.app.models import Execution
+    seen: list[tuple[str, list[str], str | None]] = []
+
+    class Recording(MockTeam):
+        def specify(self, context):
+            seen.append(("spec", list(context.feedback), context.spec_md))
+            return super().specify(context)
+
+        def plan(self, context):
+            seen.append(("plan", list(context.feedback), None))
+            return super().plan(context)
+    team = Recording()
+    run_id = new_run(add_project(sample_repo))
+    drain(team)
+    with session_scope() as session:
+        run = services.get_run(session, run_id)
+        first = latest_document(session, run_id, "spec").content
+        services.reject_spec(session, run, actor=OPERATOR, reason="Due dates must use the team's time zone",
+                             next_step="redo")
+    drain(team)
+    assert seen[-1] == ("spec", ["Reviewer asked for changes: Due dates must use the team's time zone"], first)
+    approve_spec(run_id)
+    drain(team)
+    with session_scope() as session:
+        services.reject_plan(session, services.get_run(session, run_id), actor=OPERATOR,
+                             reason="Keep the date rules in src/tasks.js", next_step="redo")
+    drain(team)
+    assert seen[-1][0] == "plan" and "Tech Lead rejected the plan: Keep the date rules in src/tasks.js" in seen[-1][1]
