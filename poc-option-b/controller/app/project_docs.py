@@ -405,6 +405,10 @@ def render_srs(srs: Srs, *, author: str, today: date | None = None, baseline: di
                     [[f"`{r.role}`", r.description, r.persona] for r in srs.roles]), ""]
     heading(3, "1.6 Out of Scope")
     out += [*_bullets(srs.out_of_scope), ""]
+    heading(3, "1.7 Related Documents")
+    out += ["- `requirements/baseline.md`: the requirement baseline this SRS is built on, when there is one",
+            "- `requirements/sources/`: the raw requirement sources, when they are committed",
+            f"- [SDS.md]({SDS_PATH}): the design that implements this SRS, once written", ""]
 
     heading(2, "2. Conceptual Domain Model")
     heading(3, "2.1 Domain Entity")
@@ -414,6 +418,10 @@ def render_srs(srs: Srs, *, author: str, today: date | None = None, baseline: di
     out += [*_table(["Subject", "Verb Phrase", "Object", "Type", "Cardinality", "Constraint"],
                     [[r.subject, r.verb, r.object, r.type, r.cardinality, r.constraint]
                      for r in srs.relationships]), ""]
+    if srs.relationships:  # the domain diagram of the GRM SRS, drawn from the relationships
+        out += ["Domain diagram:", "", *mermaid_flow([e.name for e in srs.entities],
+                                                      [(r.subject, r.object, f"{r.verb} {r.cardinality}".strip())
+                                                       for r in srs.relationships])]
     heading(3, "2.3 Business Rules")
     out += [*_table(["Rule ID", "Statement", "Entities Involved"],
                     [[b.id, b.statement, b.entities] for b in srs.business_rules]), ""]
