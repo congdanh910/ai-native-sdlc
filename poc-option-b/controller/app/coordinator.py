@@ -1029,6 +1029,16 @@ def _apply_release(session: Session, run: Run, execution: Execution, result: dic
                    if release.simulated else f"draft PR {release.url}")
 
 
+def recheck_after_merge(session: Session, project: Project) -> None:
+    """A merge changes what the next runs build on (SRS.md, SDS.md, requirements/, code): check the project again at
+    once, so the Projects page and the story list of a feature request show it without a Check again."""
+    from controller.app.projects.registry import check_project
+    try:
+        check_project(session, project, actor="github")
+    except Exception as exc:  # the next run start checks again anyway
+        log.warning("project %s: check after a merge failed: %s", project.key, exc)
+
+
 def poll_pull_requests(session: Session) -> None:
     """Read CI, review and merge state of open draft PRs; a merge of the exact pushed head completes the run."""
     rows = session.execute(select(Run, PullRequest, Project).join(PullRequest, PullRequest.run_id == Run.id)
@@ -1055,6 +1065,7 @@ def poll_pull_requests(session: Session) -> None:
             pull.merged_sha = state.merged_sha
             transition_run(session, run, RunStatus.COMPLETED, actor="github", acting_role="code_owner",
                            reason=f"PR #{pull.number} merged as {state.merged_sha} (head {state.head_sha[:12]})")
+            recheck_after_merge(session, project)
         elif state.state == "MERGED":
             to_needs_human(session, run, f"PR #{pull.number} was merged with head {state.head_sha[:12]}, "
                                          f"not the head the team pushed ({(pull.head_sha or '')[:12]})")

@@ -461,6 +461,7 @@ def pr_decision(session: Session, run: Run, *, actor: str, decision: str, reason
         pull.merged_sha, pull.review_status = pull.head_sha, "approved"
         transition_run(session, run, RunStatus.COMPLETED, actor=actor, acting_role=CO,
                        reason="simulated merge recorded (B2 has no real pull request)")
+        coordinator.recheck_after_merge(session, session.get(Project, run.project_id))
     elif decision == "request_changes":
         if not (reason or "").strip():
             raise DecisionError("say which changes the team should make")

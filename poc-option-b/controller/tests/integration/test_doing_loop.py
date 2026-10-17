@@ -119,14 +119,18 @@ def test_polling_completes_only_on_a_merge_of_the_pushed_head(db, sample_repo, t
     states = iter([PullState("OPEN", head, None, "pending", "pending"),
                    PullState("MERGED", head, "b" * 40, "success", "approved")])
     monkeypatch.setattr(coordinator.github, "pull_state", lambda slug, number: next(states))
+    checked: list[str] = []
+    monkeypatch.setattr("controller.app.projects.registry.check_project",
+                        lambda session, project, actor: checked.append(project.key))
     with session_scope() as session:
         coordinator.poll_pull_requests(session)
-    assert status(runs[0]) == "WAITING_PR_APPROVAL"
+    assert status(runs[0]) == "WAITING_PR_APPROVAL" and checked == []
     with session_scope() as session:
         coordinator.poll_pull_requests(session)
     with session_scope() as session:
         pull = session.scalar(select(PullRequest).where(PullRequest.run_id == runs[0]))
         assert (status(runs[0]), pull.merged_sha, pull.ci_status) == ("COMPLETED", "b" * 40, "success")
+    assert checked == ["task-board"]  # the merge is checked at once, without a Check again
 
 
 def test_a_merge_of_another_head_needs_a_human(db, sample_repo, tmp_path, monkeypatch):
