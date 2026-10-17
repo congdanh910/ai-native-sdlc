@@ -1,4 +1,4 @@
-import { forwardRef, useState, type ButtonHTMLAttributes, type ReactNode, type TextareaHTMLAttributes,
+import { forwardRef, useEffect, useState, type ButtonHTMLAttributes, type ReactNode, type TextareaHTMLAttributes,
   type InputHTMLAttributes, type SelectHTMLAttributes } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -141,8 +141,42 @@ export function Empty({ children }: { children: ReactNode }) {
   return <div className="rounded-xl border border-dashed border-line-strong bg-panel px-6 py-10 text-center text-muted">{children}</div>;
 }
 
+let mermaidId = 0;
+
+/** A ```mermaid block drawn as a diagram; the library loads only when a page has one. A diagram that does not
+ * parse stays as its source. */
+function MermaidBlock({ code }: { code: string }) {
+  const [svg, setSvg] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let live = true;
+    import("mermaid").then(async ({ default: mermaid }) => {
+      mermaid.initialize({ startOnLoad: false, securityLevel: "strict",
+        theme: document.documentElement.classList.contains("dark") ? "dark" : "default" });
+      try {
+        const { svg } = await mermaid.render(`mermaid-${++mermaidId}`, code);
+        if (live) setSvg(svg);
+      } catch {
+        if (live) setFailed(true);
+      }
+    }).catch(() => live && setFailed(true));
+    return () => { live = false; };
+  }, [code]);
+  if (failed || !svg) return <pre><code>{code}</code></pre>;
+  return <div className="my-3 overflow-x-auto rounded-lg border border-line bg-panel p-3" dangerouslySetInnerHTML={{ __html: svg }} />;
+}
+
 export function Markdown({ source }: { source: string }) {
-  return <div className="md"><ReactMarkdown remarkPlugins={[remarkGfm]}>{source}</ReactMarkdown></div>;
+  return (
+    <div className="md">
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
+        code({ className, children, ...rest }) {
+          if (/language-mermaid/.test(className ?? "")) return <MermaidBlock code={String(children).replace(/\n$/, "")} />;
+          return <code className={className} {...rest}>{children}</code>;
+        },
+      }}>{source}</ReactMarkdown>
+    </div>
+  );
 }
 
 export function Tabs<T extends string>({ tabs, value, onChange }: { tabs: { id: T; label: string; count?: number }[]; value: T; onChange: (id: T) => void }) {
