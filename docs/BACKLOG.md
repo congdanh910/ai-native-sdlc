@@ -23,6 +23,7 @@ _Cập nhật: 2026-10-17. Mỗi mục ghi vì sao nó nằm đây và lúc nào
 | 2.8 | Khách hàng tự trả lời câu hỏi trên nền tảng; đồng bộ câu hỏi với Jira/email; đọc ghi âm/video họp | Ngoài phạm vi theo thiết kế (mục 11), cần tài khoản và phân quyền |
 | 2.9 | Hướng dẫn riêng theo vai cho từng dự án, ví dụ `.sdlc/prompts/business_analyst.md` trong repo dự án: nối sau hướng dẫn lõi, không đổi được định dạng đầu ra, tính vào prompt version của run, sửa qua PR | Người dùng hỏi về tuỳ chỉnh prompt (17/10); hiện chỉ có AGENTS.md/constitution chung cho mọi vai. Đây là cách các công cụ lớn đang làm (CLAUDE.md, AGENTS.md, Copilot instructions) |
 | 2.10 | Discovery mới kế thừa baseline cũ (bảng requirement, quyết định, nguồn) thay vì bắt đầu từ trống | Hiện sửa requirement sau khi baseline đã merge thì phải mở discovery mới và tải lại nguồn (17/10) |
+| 2.11 | Ngôn ngữ tài liệu: `documents.language` (auto / vi / en) trong project.yaml, ô "Document language" khi tạo run, ngôn ngữ truyền vào mọi prompt; khung template giữ tiếng Anh, có thể thêm tiêu đề song ngữ (`documents.headings: bilingual`) | Hiện nội dung tự theo ngôn ngữ nguồn nhưng chỉ prompt Discovery dặn rõ; SRS/SDS/spec/plan có thể ra tiếng Anh tuỳ engine. Người dùng: "tính sau" (17/10) |
 
 ## 3. Nền tảng và vận hành
 
