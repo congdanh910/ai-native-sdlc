@@ -8,6 +8,7 @@ import { Pipeline } from "../components/Pipeline";
 import { DecisionPanel } from "../components/Decision";
 import { CoverageMatrix, GroundingSummary } from "../components/Coverage";
 import { JobLog } from "../components/JobLog";
+import { JobPrompts } from "../components/Prompts";
 import { DecisionsTab, QuestionsTab } from "../components/Questions";
 import { rememberProject } from "./Runs";
 import { RequirementsTab } from "../components/Requirements";
@@ -255,8 +256,12 @@ function WorkTab({ run }: { run: RunDetail }) {
   const [chosen, setChosen] = useState<string | null>(null);
   const [closed, setClosed] = useState(false);
   const open = run.executions.find((e) => e.id === (chosen ?? (closed ? null : running?.id)));
+  const [promptOf, setPromptOf] = useState<string | null>(null);
+  const prompted = run.executions.find((e) => e.id === promptOf);
   return (
     <div className="flex flex-col gap-3">
+      {prompted ? <JobPrompts key={prompted.id} runId={run.id} executionId={prompted.id}
+        title={`${prompted.kind}${prompted.task ? ` ${prompted.task}` : ""} · ${role(prompted.role)}`} onClose={() => setPromptOf(null)} /> : null}
       {open ? <JobLog key={open.id} runId={run.id} executionId={open.id}
         title={`${open.kind}${open.task ? ` ${open.task}` : ""} · ${role(open.role)}`}
         onClose={() => { setChosen(null); setClosed(true); }} /> : null}
@@ -274,6 +279,7 @@ function WorkTab({ run }: { run: RunDetail }) {
                 <td className="border-b border-line px-3 py-2">{e.attempts}</td>
                 <td className="border-b border-line px-3 py-2 text-xs text-bad">{e.error}</td>
                 <td className="border-b border-line px-3 py-2 text-right">
+                  {e.engine ? <button type="button" className="mr-3 text-xs font-semibold text-accent hover:underline" onClick={() => setPromptOf(e.id)}>Prompt</button> : null}
                   <button type="button" className="text-xs font-semibold text-accent hover:underline" onClick={() => { setChosen(e.id); setClosed(false); }}>Log</button>
                 </td>
               </tr>

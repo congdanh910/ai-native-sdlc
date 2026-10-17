@@ -6,6 +6,7 @@ because thinking roles have no side effects.
 """
 
 from collections.abc import Callable
+import json
 import time
 from typing import TypeVar
 
@@ -97,6 +98,8 @@ class LangflowTeam(MockTeam):
             request = dict(payload)
             if problems:
                 request["format_feedback"] = problems
+            if not live:  # the read-only CLIs save the exact text they send themselves
+                joblog.save_prompt(f"{role}-qwen3", f"{prompt.text}\n\n{json.dumps(request, indent=1, ensure_ascii=False)}\n")
             raw = self.client.run(prompt.endpoint, request, session_id=f"{session_id}:{role}:{attempt}")
             try:
                 result = contract.model_validate(repair(extract_json(raw)))

@@ -21,6 +21,7 @@ import shlex
 import sys
 import tempfile
 
+from controller.app import joblog
 from controller.app.doing.process import ProcessResult, run_bounded
 
 GUARD = Path(__file__).with_name("guard.py")
@@ -96,6 +97,7 @@ class ClaudeExecutor:
                 "--tools", ",".join(tools), "--allowedTools", *tools, "--settings", json.dumps(settings)]
 
     def run(self, session: Session) -> SessionResult:
+        joblog.save_prompt(f"{session.role}-claude", session.prompt)
         env = _base_env() | {"SDLC_GUARD_ROOT": str(session.worktree), "SDLC_GUARD_ALLOW": json.dumps(session.writable),
                              "SDLC_GUARD_DENY": json.dumps(session.protected)}
         result = self.runner(self.args(session), cwd=session.worktree, timeout=session.timeout,
@@ -126,6 +128,7 @@ class CodexExecutor:
                 "--json", "--output-last-message", str(last_message), "-"]
 
     def run(self, session: Session) -> SessionResult:
+        joblog.save_prompt(f"{session.role}-codex", session.prompt)
         with tempfile.TemporaryDirectory(prefix="sdlc-codex-") as tmp:
             last = Path(tmp) / "last-message.txt"
             result = self.runner(self.args(session, last), cwd=session.worktree, timeout=session.timeout,

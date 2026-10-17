@@ -34,3 +34,23 @@ def test_a_subprocess_streams_into_the_job_log(tmp_path, monkeypatch):
     assert "exited 0" in text
     more, _ = joblog.read(run_id, execution_id, offset)
     assert more == ""
+
+
+def test_a_job_keeps_the_exact_prompts_it_sent(tmp_path, monkeypatch, settings):
+    import json, uuid
+    from controller.app import joblog
+    from controller.app.doing.process import ProcessResult
+    from controller.app.team.readonly import CliReasoningClient
+    monkeypatch.setattr(joblog, "DATA_DIR", tmp_path)
+    run, execution = uuid.uuid4(), uuid.uuid4()
+    joblog.start(run, execution, "extract (business_analyst)")
+    client = CliReasoningClient("claude", runner=lambda args, cwd, timeout, input_text, env: ProcessResult(
+        args, 0, json.dumps({"result": "{}", "is_error": False}), 1.0))
+    client.run("sdlc-v3-consolidate", {"items": [{"id": "REQ-001", "name": "Điểm danh"}]}, session_id="s")
+    joblog.stop()
+    listed = joblog.list_prompts(run, execution)
+    assert [p["name"] for p in listed] == ["01-consolidate-claude.md"]
+    text = joblog.read_prompt(run, execution, "01-consolidate-claude.md")
+    assert "Business Analyst" in text and '"name": "Điểm danh"' in text  # instructions, then the run's JSON
+    assert joblog.read_prompt(run, execution, "../x.log") is None
+    assert "prompt saved: 01-consolidate-claude.md" in joblog.read(run, execution)[0]

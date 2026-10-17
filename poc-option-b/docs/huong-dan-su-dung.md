@@ -240,7 +240,26 @@ Trang một run gồm: thanh pipeline, panel **your decision** (việc đang ch�
 - Codex đọc PDF qua `pdftotext` (mỗi dòng gắn `[page N]`, nên vẫn trích được trang). Codex **không đọc được ảnh và PDF scan**: gặp loại đó job sẽ dừng và báo lý do. Codex chỉ nhận chữ nên đọc bảng, sơ đồ kém hơn Claude, và tách mục chi tiết hơn.
 - Run đang mở giữ engine lúc tạo. Muốn đổi engine của run đang mở thì hiện phải nhờ người vận hành (xem `docs/BACKLOG.md`, mục 2.6).
 
-## 11. Giới hạn cấu hình được
+## 11. Prompt: xem và tuỳ chỉnh
+
+**AI nhận được gì.** Mỗi lần gọi AI gửi một prompt gồm hai phần:
+1. **Hướng dẫn của vai**: file `langflow/prompts/<vai>.md` trong repo nền tảng (ví dụ `extract.md`, `consolidate.md`, `srs.md`, `options.md`), cộng `common.md`.
+2. **Dữ liệu JSON của đúng run đó**: bảng requirement, câu hỏi, quyết định, SRS… Kiến thức của dự án (`AGENTS.md`, `.specify/memory/constitution.md`, `REVIEW.md`) nằm trong phần JSON này.
+
+**Xem prompt.** Tab **Jobs, logs & decisions** → nút **Prompt** trên dòng của job. Mỗi lần gọi trong job (từng lượt đọc, lượt consolidate, mỗi lần thử lại) là một prompt, xem được nguyên văn và **Copy** được. Mã **prompt version** (hash của hướng dẫn) cho biết run đã chạy bản hướng dẫn nào. Job chạy trước ngày 17/10/2026 chưa lưu prompt.
+
+**Tuỳ chỉnh.** Hệ thống chia hai lớp, giống cách Claude Code (`CLAUDE.md`), Codex (`AGENTS.md`), GitHub Copilot (`.github/copilot-instructions.md`) hay spec-kit (`constitution.md`) đang làm:
+
+| Lớp | Ai sửa | Sửa ở đâu | Áp cho |
+|---|---|---|---|
+| Kiến thức và luật của dự án | Đội dự án, qua PR | `AGENTS.md`, `.specify/memory/constitution.md`, `REVIEW.md` trong repo dự án | Mọi vai, chỉ dự án đó |
+| Hướng dẫn lõi của từng vai | Đội nền tảng | `langflow/prompts/*.md` trong repo nền tảng | Mọi dự án |
+
+- Muốn AI dùng đúng thuật ngữ, vai, quy ước hay luật nghiệp vụ của dự án: ghi vào `AGENTS.md` hoặc `constitution.md` của dự án. Đây là cách nên dùng.
+- Hướng dẫn lõi quy định định dạng đầu ra (JSON theo schema mà controller kiểm), quy tắc trích nguồn và an toàn. Sửa sai một dòng có thể làm hỏng mọi run, nên không sửa trên giao diện. Sửa trong repo nền tảng, rồi kiểm bằng Evals trước khi dùng.
+- Chưa có hướng dẫn riêng *theo vai* cho từng dự án (ví dụ thêm lưu ý chỉ cho BA của một dự án): xem `docs/BACKLOG.md`, mục 2.9.
+
+## 12. Giới hạn cấu hình được
 
 Không có giới hạn nào cố định trong code. Giới hạn theo dự án nằm trong `.sdlc/project.yaml`, được ghim vào run lúc preflight, nên **sửa file chỉ ảnh hưởng run mới**.
 
@@ -259,7 +278,7 @@ Không có giới hạn nào cố định trong code. Giới hạn theo dự án
 | `discovery.question_owners` | xem thiết kế | Loại câu hỏi → vai trả lời |
 | `discovery.commit_sources` | `true` | File thô vào `requirements/sources/` |
 
-## 12. Xử lý sự cố
+## 13. Xử lý sự cố
 
 | Thấy gì | Làm gì |
 |---|---|
@@ -273,7 +292,7 @@ Không có giới hạn nào cố định trong code. Giới hạn theo dự án
 | Dự án báo **not ready** | Mở dòng lỗi ở Projects, sửa trong repo, push, **Check again** |
 | Giao diện không đổi sau khi cập nhật | Tải lại trang (Cmd+R) |
 
-## 13. Dữ liệu ở đâu
+## 14. Dữ liệu ở đâu
 
 | Lưu gì | Ở đâu |
 |---|---|
@@ -282,10 +301,11 @@ Không có giới hạn nào cố định trong code. Giới hạn theo dự án
 | Baseline, SRS, SDS, specs | Repo dự án, qua PR |
 | File nguồn của Discovery | `.data/projects/<dự án>/sources/<run>/` (kèm bản văn bản cho Codex) |
 | Log từng job | `.data/logs/<run>/jobs/`; xem trực tiếp ở tab **Jobs, logs & decisions** |
+| Prompt từng lần gọi AI | `.data/logs/<run>/jobs/<job>.prompts/`; nút **Prompt** ở cùng tab |
 
 Mỗi lần gọi AI là một phiên CLI mới, không lưu hội thoại. Phiên đó chỉ nhận dữ liệu của đúng run, được dựng từ database. Vai suy nghĩ chỉ được đọc; vai viết code chạy trong sandbox; validation chạy trong container không mạng.
 
-## 14. Tài liệu liên quan
+## 15. Tài liệu liên quan
 
 - Thiết kế Discovery: [discovery-design.md](discovery-design.md)
 - Cách áp quy trình công ty: [aif-mapping.md](aif-mapping.md), hướng dẫn review: [huong-dan-review-aif.md](huong-dan-review-aif.md)

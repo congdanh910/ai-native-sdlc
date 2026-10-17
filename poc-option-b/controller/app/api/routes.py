@@ -240,6 +240,22 @@ def execution_log(run_id: uuid.UUID, execution_id: uuid.UUID, offset: int = 0) -
     return {"text": text, "offset": next_offset, "status": status}
 
 
+@router.get("/runs/{run_id}/executions/{execution_id}/prompts")
+def execution_prompts(run_id: uuid.UUID, execution_id: uuid.UUID, name: str = "") -> dict:
+    """The prompts the job's calls sent, in order; with `name`, the text of one."""
+    with session_scope() as session:
+        execution = session.get(Execution, execution_id)
+        if execution is None or execution.run_id != run_id:
+            raise HTTPException(404, "job not found")
+        version = execution.prompt_version
+    if name:
+        text = joblog.read_prompt(run_id, execution_id, name)
+        if text is None:
+            raise HTTPException(404, "prompt not found")
+        return {"name": name, "text": text}
+    return {"prompts": joblog.list_prompts(run_id, execution_id), "prompt_version": version}
+
+
 class TextSource(Body):
     title: str = Field(min_length=1, max_length=120)
     text: str = Field(min_length=1)

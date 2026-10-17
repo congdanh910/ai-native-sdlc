@@ -13,6 +13,7 @@ from pathlib import Path
 import shlex
 import tempfile
 
+from controller.app import joblog
 from controller.app.config import Settings
 from controller.app.doing.executors import LIMIT, _base_env
 from controller.app.doing.process import run_bounded
@@ -48,7 +49,8 @@ class CliReasoningClient:
 
     def run(self, endpoint: str, payload: dict, *, session_id: str) -> str:
         role = endpoint.removeprefix(FLOW_PREFIX)
-        prompt = f"{role_prompt(role).text}\n{READONLY_NOTE}\n\n{json.dumps(payload, indent=1)}\n"
+        prompt = f"{role_prompt(role).text}\n{READONLY_NOTE}\n\n{json.dumps(payload, indent=1, ensure_ascii=False)}\n"
+        joblog.save_prompt(f"{role}-{self.cli}", prompt)
         with tempfile.TemporaryDirectory(prefix="sdlc-readonly-") as tmp:
             cwd = self.cwd if self.cwd and Path(self.cwd).is_dir() else tmp
             last = Path(tmp) / "last-message.txt"

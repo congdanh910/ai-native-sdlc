@@ -8,6 +8,7 @@ events from the Claude and Codex CLIs are summarised to one readable line each. 
 from contextvars import ContextVar
 from datetime import datetime
 import json
+import re
 from pathlib import Path
 import threading
 import uuid
@@ -52,6 +53,37 @@ def stream(path: Path | None, program: str, line: str) -> None:
     text = summarise(line.rstrip("\n"))
     if text:
         _append(path, f"[{_now()}] {program}: {_redact(text)}\n")
+
+
+def prompts_dir(run_id, execution_id) -> Path:
+    return DATA_DIR / "logs" / str(run_id) / "jobs" / f"{execution_id}.prompts"
+
+
+def save_prompt(label: str, text: str) -> None:
+    """The exact prompt one call of the running job sent to a model or CLI, kept next to the job's log so a person
+    can read what the role received. Secrets are redacted as in the log."""
+    path = _current.get()
+    if path is None:
+        return
+    folder = path.with_suffix(".prompts")
+    folder.mkdir(parents=True, exist_ok=True)
+    number = len(list(folder.glob("*.md"))) + 1
+    name = f"{number:02d}-{re.sub(r'[^a-z0-9_-]+', '-', label.lower()).strip('-')[:60]}.md"
+    (folder / name).write_text(_redact(text))
+    note(f"prompt saved: {name} ({len(text):,} characters)")
+
+
+def list_prompts(run_id, execution_id) -> list[dict]:
+    folder = prompts_dir(run_id, execution_id)
+    return [{"name": f.name, "size": f.stat().st_size} for f in sorted(folder.glob("*.md"))] if folder.is_dir() else []
+
+
+def read_prompt(run_id, execution_id, name: str) -> str | None:
+    folder = prompts_dir(run_id, execution_id)
+    target = folder / name
+    if not re.fullmatch(r"[\w.-]+\.md", name) or not target.is_file():
+        return None
+    return target.read_text(errors="replace")
 
 
 def read(run_id, execution_id, offset: int = 0) -> tuple[str, int]:

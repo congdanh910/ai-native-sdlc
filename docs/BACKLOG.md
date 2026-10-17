@@ -22,6 +22,7 @@ _Cập nhật: 2026-10-17. Mỗi mục ghi vì sao nó nằm đây và lúc nào
 | 2.6 | Đổi engine của một run đang mở ngay trên giao diện | 16/10 phải dùng script để ghim lại engine run 9735e5fd (có event `engines.repinned`) |
 | 2.7 | Vai Discovery chỉnh trên UI | Người dùng: mặc định PO, BA, SA, TA, QC, DPO, Sales là đủ; "linh hoạt trên UI để sau" |
 | 2.8 | Khách hàng tự trả lời câu hỏi trên nền tảng; đồng bộ câu hỏi với Jira/email; đọc ghi âm/video họp | Ngoài phạm vi theo thiết kế (mục 11), cần tài khoản và phân quyền |
+| 2.9 | Hướng dẫn riêng theo vai cho từng dự án, ví dụ `.sdlc/prompts/business_analyst.md` trong repo dự án: nối sau hướng dẫn lõi, không đổi được định dạng đầu ra, tính vào prompt version của run, sửa qua PR | Người dùng hỏi về tuỳ chỉnh prompt (17/10); hiện chỉ có AGENTS.md/constitution chung cho mọi vai. Đây là cách các công cụ lớn đang làm (CLAUDE.md, AGENTS.md, Copilot instructions) |
 
 ## 3. Nền tảng và vận hành
 
