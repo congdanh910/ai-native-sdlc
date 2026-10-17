@@ -30,12 +30,19 @@ function QuestionCard({ run, q, open, onChange }: { run: RunDetail; q: Question;
       </div>
       <b>{q.question}</b>
       {q.why ? <span className="text-sm text-muted">{q.why}</span> : null}
-      {q.suggestion ? <span className="text-sm text-muted">Suggestion: {q.suggestion}</span> : null}
+      {q.suggestion ? (
+        <div className="flex flex-wrap items-start gap-2 rounded-md border border-line bg-side px-3 py-2 text-sm">
+          <span className="min-w-0 flex-1"><span className="font-semibold text-ink-2">Suggested answer:</span> {q.suggestion}</span>
+          {open && q.status === "open" ? (
+            <Button className="h-7 shrink-0 px-2 text-xs" onClick={() => setAnswer(q.suggestion ?? "")}>Use as answer</Button>
+          ) : null}
+        </div>
+      ) : null}
       {q.answer ? <div className="rounded-md bg-good-soft px-3 py-2 text-sm">{q.answer}<span className="ml-2 text-xs text-muted">· {q.answered_by}</span></div> : null}
       {q.status_reason && q.status !== "answered" ? <span className="text-xs text-muted">{q.status}: {q.status_reason}</span> : null}
       {open && q.status === "open" ? (
         <div className="flex flex-col gap-2">
-          <Textarea aria-label={`Answer to ${q.number}`} className="min-h-16" placeholder={q.suggestion ?? "Your answer, or what the customer said (say who)"} value={answer} onChange={(e) => setAnswer(e.target.value)} />
+          <Textarea aria-label={`Answer to ${q.number}`} className="min-h-16" placeholder="Your answer, or what the customer said (say who)" value={answer} onChange={(e) => setAnswer(e.target.value)} />
           <div className="flex flex-wrap items-center gap-2">
             <ActionButton variant="primary" disabled={!answer.trim()} success={`${q.number} answered`} action={() => post("answer", { answer })}>Answer</ActionButton>
             <ActionButton action={withReason("deferred", "deferred")}>Defer</ActionButton>

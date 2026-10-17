@@ -305,3 +305,20 @@ def test_the_product_owner_confirms_rounds_beyond_the_limit(db, sample_repo):
     drain()
     events = [e for e in client.get(f"/api/runs/{run}/events").json() if e["type"] == "discovery.round_beyond_limit"]
     assert len(events) == 1
+
+
+def test_check_again_replaces_suggestions_that_say_nothing(db, sample_repo):
+    from controller.app.db import session_scope
+    from controller.app.models import Clarification
+    run = start(sample_repo)
+    post(f"/api/runs/{run}/sources/text", {"title": "Brief", "text": "- Which formats?"})
+    post(f"/api/runs/{run}/extract", {})
+    drain()
+    with session_scope() as session:  # what the first rounds of the attendance discovery wrote
+        session.query(Clarification).filter(Clarification.run_id == uuid.UUID(run)).update(
+            {"suggestion": "Xác định các định dạng cần xuất."})
+    post(f"/api/runs/{run}/extract?again=true", {})
+    drain()
+    detail = client.get(f"/api/runs/{run}").json()
+    assert detail["questions"][0]["suggestion"] == "Mock answer for the Product Owner to accept. (mock)"
+    assert "1 suggested answer(s)" in detail["reason"]

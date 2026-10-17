@@ -232,7 +232,9 @@ class MockTeam:
         from controller.app.discovery.inventory import Consolidation, Update
         updates = [Update(id=item, decision=d["id"], status="out_of_scope" if "out of scope" in d["text"].lower() else "confirmed")
                    for d in decisions for item in d.get("items", [])]
-        return Consolidation(updates=updates)
+        suggestions = [{"question": a["id"], "suggestion": "Mock answer for the Product Owner to accept. (mock)"}
+                       for a in asked if isinstance(a, dict) and a.get("needs_suggestion")]
+        return Consolidation(updates=updates, suggestions=suggestions)
 
     def read_minutes(self, context: RunContext, part, questions: list[dict], items: list[dict]):
         """A line "Decision: ..." is a decision; "(Q-001)" in it answers that question, REQ ids in it are its items."""

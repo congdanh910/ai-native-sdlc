@@ -234,7 +234,7 @@ class LangflowTeam(MockTeam):
                          retries=context.policy.max_format_retries)
 
     def consolidate(self, context: RunContext, items: list[dict], gaps: list[dict], decisions: list[dict] = (),
-                    asked: list[str] = ()) -> Consolidation:
+                    asked: list[dict] = ()) -> Consolidation:
         payload = {"request": context.intent_md, "items": compact_items(items),
                    "gaps": [{"kind": g["kind"], "question": g["question"]} for g in gaps],
                    "decisions": list(decisions), "asked": list(asked),

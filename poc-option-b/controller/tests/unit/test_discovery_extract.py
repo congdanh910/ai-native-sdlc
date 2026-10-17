@@ -198,3 +198,17 @@ def test_out_of_scope_items_cited_by_the_srs_are_not_unknown():
     rows = "\n".join(render_trace(srs, baseline))
     assert "| REQ-002 | feature (out of scope) | Archive |" in rows
     assert check_srs_trace(rows, baseline) == []
+
+
+def test_a_suggestion_must_be_an_answer_not_an_instruction():
+    from controller.app.discovery.questions import useful_suggestion
+    question = "Hướng dẫn nghiêng trái, nghiêng phải áp dụng khi đăng ký mẫu khuôn mặt hay khi ghi nhận từng lượt vào/ra?"
+    assert useful_suggestion("Xác định bước thực hiện và điều kiện hoàn tất việc lấy các góc khuôn mặt.", question) is None
+    assert useful_suggestion("Provide the tested threshold and its approval.", "What is the threshold?") is None
+    assert useful_suggestion("  ", question) is None
+    assert useful_suggestion(question, question) is None  # the question again
+    answer = "Áp dụng khi đăng ký mẫu khuôn mặt: lấy đủ 3 góc mới lưu mẫu; lượt vào/ra chỉ cần nhìn camera. (thông lệ)"
+    assert useful_suggestion(answer, question) == answer
+    from controller.app.discovery.extract import repair_consolidation
+    assert repair_consolidation({"suggestions": [{"question": "Q-023", "suggestion": answer}, {"question": "Q-1"}]})[
+        "suggestions"] == [{"question": "Q-023", "suggestion": answer}]

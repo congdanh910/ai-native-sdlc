@@ -142,7 +142,11 @@ def repair_consolidation(data: dict) -> dict:
     links = [{"id": str(l["id"]).strip(), "parent": " ".join(str(l["parent"]).split())}
              for l in data.get("links") or [] if isinstance(l, dict) and l.get("id") and str(l.get("parent") or "").strip()]
     updates = [u for u in data.get("updates") or [] if isinstance(u, dict)]
-    return {"merges": merges, "gaps": [g for g in gaps if g["question"]], "links": links, "updates": updates}
+    suggestions = [{"question": str(x["question"]).strip(), "suggestion": " ".join(str(x["suggestion"]).split())}
+                   for x in data.get("suggestions") or []
+                   if isinstance(x, dict) and x.get("question") and str(x.get("suggestion") or "").strip()]
+    return {"merges": merges, "gaps": [g for g in gaps if g["question"]], "links": links, "updates": updates,
+            "suggestions": suggestions}
 
 
 def compact_items(items: list[dict]) -> list[dict]:

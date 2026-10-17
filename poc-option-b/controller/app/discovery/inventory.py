@@ -113,8 +113,14 @@ class Link(Contract):
     parent: str = Field(min_length=1)
 
 
+class SuggestedAnswer(Contract):
+    question: str  # Q-023
+    suggestion: str
+
+
 class Consolidation(Contract):
     """The Business Analyst's pass over the whole merged inventory."""
+    suggestions: list[SuggestedAnswer] = []  # answers it suggests for open questions asked in earlier rounds
     merges: list[Merge] = []
     gaps: list[Gap] = []
     updates: list[Update] = []  # what the accepted decisions change

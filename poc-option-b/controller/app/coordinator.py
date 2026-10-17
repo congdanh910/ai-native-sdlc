@@ -1090,7 +1090,9 @@ def _load_extract(session: Session, run: Run, loaded: Loaded) -> Loaded:
         "minutes_read": data.get("minutes_read", []),
         "questions": [{"id": q.number(run_questions, x), "kind": x.kind, "question": x.question, "items": x.items or []}
                       for x in run_questions if x.status == q.OPEN],
-        "asked": [x.question for x in run_questions],
+        "asked": [{"id": q.number(run_questions, x), "question": x.question, "status": x.status,
+                   "needs_suggestion": x.status == q.OPEN and not q.useful_suggestion(x.suggestion, x.question)}
+                  for x in run_questions],
         "decisions": [{"id": q.decision_id(d), "text": d.text, "items": d.items}
                       for d in q.decisions(session, run.id) if d.status == "accepted"],
         "effects": [{"id": q.decision_id(d), "items": d.items, "effect": d.effect, "new_text": d.new_text or ""}
@@ -1213,7 +1215,8 @@ def _extract(team: Team, loaded: Loaded) -> dict:
         joblog.note(f"consolidation merged {before - len(inventory.items)} item(s), "
                     f"applied {len(consolidation.updates)} update(s), {len(inventory.gaps)} question(s) in total")
     parts = extra["previous_parts"] + [{"source": p.source_id, "covers": p.label} for p, _ in fresh]
-    return {"inventory": inventory.model_dump(), "parts": parts, "chunks": stored,
+    suggestions = [x.model_dump() for x in consolidation.suggestions] if inventory.items else []
+    return {"inventory": inventory.model_dump(), "parts": parts, "chunks": stored, "suggestions": suggestions,
             "minutes": [{"source": p.source_id, "covers": p.label, **m.model_dump()} for p, m in minutes],
             "minutes_read": sorted(set(extra["minutes_read"]) | {p.source_id for p, _ in minutes}),
             "decisions_applied": [d["id"] for d in extra["decisions"]],
@@ -1242,6 +1245,7 @@ def _apply_extract(session: Session, run: Run, execution: Execution, result: dic
                                         f"sdlc: requirement inventory v{document.version}")
     ids_by_name = {q._norm(n): i.id for i in inventory.items for n in [i.name, *i.aliases]}
     added, left_out = q.sync_questions(session, run, inventory.gaps, document.version, config, ids_by_name)
+    suggested = q.apply_suggestions(session, run, result.get("suggestions", []))
     run_questions = q.questions(session, run.id)
     by_number = {q.number(run_questions, x): x for x in run_questions}
     proposed = 0
@@ -1258,6 +1262,8 @@ def _apply_extract(session: Session, run: Run, execution: Execution, result: dic
         detail += f" ({left_out} more left for the next round by discovery.limits.max_questions_per_round)"
     if proposed:
         detail += f", {proposed} decision(s) from minutes to accept"
+    if suggested:
+        detail += f", {suggested} suggested answer(s)"
     if problems:
         detail += f"; {len(problems)} problem(s) to review"
     transition_run(session, run, RunStatus.CLARIFYING, actor=TeamRole.BUSINESS_ANALYST.value,

@@ -26,6 +26,23 @@ def _norm(text: str) -> str:
     return re.sub(r"\W+", " ", text.lower()).strip()
 
 
+# A suggestion is an answer the role can accept. One that tells the role what to do ("Define the steps", "Cung cấp
+# ngưỡng"), or repeats the question, says nothing: 23 of 25 suggestions of the attendance discovery were like that.
+DIRECTIVE = re.compile(r"^(xác định|xác nhận|cung cấp|mô tả|nêu|làm rõ|liệt kê|quy định|lập|chọn|ánh xạ|gắn|giữ là|"
+                       r"define|provide|describe|specify|clarify|list|confirm|decide|choose|identify|determine|state)\b",
+                       re.IGNORECASE)
+
+
+def useful_suggestion(suggestion: str | None, question: str) -> str | None:
+    text = " ".join((suggestion or "").split())
+    if not text or DIRECTIVE.match(text):
+        return None
+    words, asked = set(_norm(text).split()), set(_norm(question).split())
+    if words and len(words & asked) / len(words) > 0.8:  # mostly the question's own words
+        return None
+    return text
+
+
 def owner_for(kind: str, config: Discovery) -> str:
     return config.question_owners.get(kind) or config.approvers.get("baseline") or config.roles[0].id
 
@@ -66,7 +83,7 @@ def sync_questions(session: Session, run: Run, gaps: list[Gap], round_: int, con
     for position, gap in enumerate(fresh[:limit], start=len(existing) + 1):
         session.add(Clarification(run_id=run.id, position=position, question=gap.question, blocking=gap.blocking, kind=gap.kind,
                                   owner_role=owner_for(gap.kind, config), status=OPEN, why=gap.why or None,
-                                  suggestion=gap.suggestion or None,
+                                  suggestion=useful_suggestion(gap.suggestion, gap.question),
                                   items=[ids_by_name.get(_norm(i), i) for i in gap.items],
                                   citations=[c.model_dump() for c in gap.sources], round=round_))
     session.flush()
@@ -203,6 +220,23 @@ def decide(session: Session, run: Run, number_: int, accept: bool, *, actor: str
             question.status = ANSWERED
     record_event(session, f"decision.{decision.status}", actor=actor, acting_role=decision.role, run_id=run.id,
                  payload={"decision": decision_id(decision), "reason": reason})
+
+
+def apply_suggestions(session: Session, run: Run, suggested: list[dict]) -> int:
+    """Drop suggestions of open questions that say nothing, then take the Business Analyst's new ones for open
+    questions without one. Returns how many questions got a suggestion."""
+    run_questions = questions(session, run.id)
+    by_number = {number(run_questions, q): q for q in run_questions}
+    for question in run_questions:
+        if question.status == OPEN:
+            question.suggestion = useful_suggestion(question.suggestion, question.question)
+    given = 0
+    for entry in suggested:
+        question = by_number.get(entry.get("question", ""))
+        text = useful_suggestion(entry.get("suggestion"), question.question) if question else None
+        if question and question.status == OPEN and not question.suggestion and text:
+            question.suggestion, given = text, given + 1
+    return given
 
 
 def open_count(session: Session, run_id: uuid.UUID) -> dict[str, int]:
