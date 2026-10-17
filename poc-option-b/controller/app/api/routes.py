@@ -371,12 +371,14 @@ class OptionChoice(Body):
     option: str
     reason: str = ""
     checked: list[str] = []
+    adjustments: str = ""  # the Solution Architect's changes to the chosen option
 
 
 @router.post("/runs/{run_id}/options/choose")
 def choose_option(run_id: uuid.UUID, body: OptionChoice) -> dict:
     return _decide(run_id, lambda s, r: services.choose_option(s, r, body.document_id, body.option, actor=operator(),
-                                                               reason=body.reason, checked=body.checked))
+                                                               reason=body.reason, checked=body.checked,
+                                                               adjustments=body.adjustments))
 
 
 @router.post("/runs/{run_id}/options/redo")

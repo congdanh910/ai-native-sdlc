@@ -229,9 +229,15 @@ def options(data: dict) -> dict:
             for key in ("pros", "cons"):
                 value = option.get(key)
                 option[key] = [line.strip("-* ").strip() for line in value.splitlines() if line.strip()] if isinstance(value, str) else value or []
-            for key in ("nfr_fit", "cost", "risks", "personal_data", "operations", "summary"):
+            for key in ("nfr_fit", "cost", "risks", "personal_data", "operations", "summary", "deployment", "integrations"):
                 if isinstance(option.get(key), list):
                     option[key] = "; ".join(str(x) for x in option[key])
+            stack = option.get("stack") or []
+            if isinstance(stack, dict):  # {"backend": "Node.js", ...}
+                stack = [{"layer": k, "technology": v} for k, v in stack.items()]
+            option["stack"] = [x if isinstance(x, dict) else {"layer": str(x).split(":", 1)[0].strip(),
+                                                              "technology": str(x).split(":", 1)[-1].strip()}
+                               for x in (stack if isinstance(stack, list) else [stack])]
             out.append(option)
     data["options"] = out
     data["questions"] = [{"question": q, "blocking": False} if isinstance(q, str) else q for q in data.get("questions") or []]

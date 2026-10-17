@@ -556,16 +556,30 @@ API_ID = re.compile(r"API-[A-Z]{2,4}-\d{2}")
 
 
 class ArchitectureBrief(Contract):
+    """The SDS run's input. With propose_stack the Architect proposes the stack, deployment and integrations in the
+    Options step from the SRS, the baseline and the repository; what the brief fills in is a constraint it follows."""
     title: str = Field(min_length=3, max_length=200)
-    stack: str = Field(min_length=1)
+    stack: str = ""
     deployment: str = ""
     integrations: str = ""
     notes: str = ""
+    propose_stack: bool = False
+
+    @model_validator(mode="after")
+    def _stack(self) -> "ArchitectureBrief":
+        if not self.propose_stack and not self.stack.strip():
+            raise ValueError("name the technology and stack, or let the Architect propose it")
+        return self
 
 
 def render_architecture_brief(brief: ArchitectureBrief) -> str:
     sections = [("Technology and stack", brief.stack), ("Deployment and infrastructure", brief.deployment),
                 ("Integrations", brief.integrations), ("Notes", brief.notes)]
+    if brief.propose_stack:
+        lead = ("The Architect proposes the stack, deployment and integrations in the Options step, from the SRS, the "
+                "requirement baseline and the repository. What this brief states is a constraint the options follow.\n\n")
+        body = "\n\n".join(f"## {heading} (constraint)\n\n{text.strip()}" for heading, text in sections if text.strip())
+        return f"# Architecture brief: {brief.title}\n\n{lead}{body}\n".rstrip() + "\n"
     body = "\n\n".join(f"## {heading}\n\n{text.strip() or '_None._'}" for heading, text in sections)
     return f"# Architecture brief: {brief.title}\n\n{body}\n"
 
@@ -904,11 +918,20 @@ def _section_text(markdown: str, number: str) -> str:
 
 # ---------------------------------------------------------------- architecture options (the SDS run's first step)
 
+class StackChoice(Contract):
+    layer: str  # frontend, backend, database, AI / ML, messaging, hosting ...
+    technology: str
+    why: str = ""
+
+
 class ArchOption(Contract):
     id: str = ""  # PA1, PA2 ... assigned by the controller
     name: str = Field(min_length=2)
     summary: str
     refs: list[str] = []  # baseline option items it comes from; empty when the Architect proposes it
+    stack: list[StackChoice] = []  # what each layer runs on, and why
+    deployment: str = ""  # where it runs: environments, hosting, devices
+    integrations: str = ""  # how it connects to the other systems
     nfr_fit: str = ""  # how it meets the quality targets
     cost: str = ""
     risks: str = ""
@@ -937,7 +960,8 @@ def number_options(options: Options) -> Options:
 
 def render_options(options: Options, *, title: str) -> str:
     options = number_options(options)
-    rows = [("Summary", "summary"), ("Quality targets", "nfr_fit"), ("Cost", "cost"), ("Risks", "risks"),
+    rows = [("Summary", "summary"), ("Deployment", "deployment"), ("Integrations", "integrations"),
+            ("Quality targets", "nfr_fit"), ("Cost", "cost"), ("Risks", "risks"),
             ("Personal data", "personal_data"), ("Operations", "operations")]
     out = [f"# Architecture options: {title}", "", options.context.strip(), "",
            *_table(["", *[f"{o.id} {o.name}" for o in options.options]],
@@ -946,6 +970,10 @@ def render_options(options: Options, *, title: str) -> str:
                       ["Cons", *["; ".join(o.cons) or "—" for o in options.options]],
                       ["From the baseline", *[", ".join(o.refs) or "proposed by the Architect" for o in options.options]]]),
            "", f"**Recommendation:** {options.recommendation}. {options.reason.strip()}", ""]
+    for option in options.options:
+        if option.stack:
+            out += [f"### {option.id} {option.name}: stack", "",
+                    *_table(["Layer", "Technology", "Why"], [[c.layer, c.technology, c.why] for c in option.stack]), ""]
     return "\n".join(out)
 
 

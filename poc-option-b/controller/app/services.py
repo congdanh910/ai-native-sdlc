@@ -479,8 +479,9 @@ SA = HumanRole.SOLUTION_ARCHITECT.value
 
 
 def choose_option(session: Session, run: Run, document_id: uuid.UUID, option: str, *, actor: str, reason: str,
-                  checked: list[str] | None) -> None:
-    """The Solution Architect picks the option the SDS designs; the reason goes to SDS section 9."""
+                  checked: list[str] | None, adjustments: str = "") -> None:
+    """The Solution Architect picks the option the SDS designs, with adjustments to it if any (another database, an
+    added queue); the reason and the adjustments go to SDS section 9."""
     from controller.app.project_docs import Options
     _require(run, RunStatus.WAITING_OPTIONS_APPROVAL)
     document = latest_document(session, run.id, "options")
@@ -493,10 +494,11 @@ def choose_option(session: Session, run: Run, document_id: uuid.UUID, option: st
     if chosen is None:
         raise DecisionError(f"{option} is not one of the options")
     checklist = _checklist(session, run, checked)
-    _approval(session, run, "options", "approve", actor, SA, reason=f"{chosen.id} {chosen.name}: {reason}",
+    _approval(session, run, "options", "approve", actor, SA, reason=f"{chosen.id} {chosen.name}: {reason}"
+              + (f" | adjustments: {adjustments.strip()}" if adjustments.strip() else ""),
               document_id=document.id, checklist=checklist)
     coordinator.store_artifact(session, run, "chosen_option", TeamRole.COORDINATOR, json.dumps({
-        **chosen.model_dump(), "reason": reason.strip(), "chosen_by": actor,
+        **chosen.model_dump(), "reason": reason.strip(), "chosen_by": actor, "adjustments": adjustments.strip(),
         "others": [{"id": o.id, "name": o.name} for o in options.options if o.id != chosen.id]}))
     coordinator.enter_stage(session, run, "spec", actor=actor, acting_role=SA)
 

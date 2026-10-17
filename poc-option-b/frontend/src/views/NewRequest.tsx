@@ -62,8 +62,9 @@ function validateDoc(fields: readonly DocField[], values: Record<string, string>
 
 /** A project document request: a brief the Business Analyst turns into SRS.md, or an architecture brief the
  * Architect turns into SDS.md. Both come before any feature run. */
-function DocumentForm({ project, fields, bodyKey, submit, allowBaseline }: { project: string; fields: readonly DocField[]; bodyKey: "brief" | "architecture" | "discovery"; submit: string; allowBaseline?: boolean }) {
+function DocumentForm({ project, fields, bodyKey, submit, allowBaseline, allowProposal }: { project: string; fields: readonly DocField[]; bodyKey: "brief" | "architecture" | "discovery"; submit: string; allowBaseline?: boolean; allowProposal?: boolean }) {
   const [fromBaseline, setFromBaseline] = useState(false);
+  const [propose, setPropose] = useState(!!allowProposal);  // the Architect proposes the stack in the Options step
   const [, navigate] = useLocation();
   const idempotencyKey = useMemo(() => crypto.randomUUID(), []);
   const [brief, setBrief] = useState<Record<string, string>>(() => Object.fromEntries(fields.map(([k]) => [k, ""])));
@@ -72,11 +73,17 @@ function DocumentForm({ project, fields, bodyKey, submit, allowBaseline }: { pro
   const update = (key: string, value: string) => {
     const next = { ...brief, [key]: value };
     setBrief(next);
-    if (tried) setErrors(validateDoc(fields, next, fromBaseline));
+    if (tried) setErrors(validateDoc(fields, next, fromBaseline || propose));
   };
   const shown = fromBaseline ? fields.filter(([key]) => key === "title" || key === "summary" || key === "constraints") : fields;
   return (
     <>
+      {allowProposal ? (
+        <label className="flex items-start gap-2 rounded-lg border border-line p-3 text-sm">
+          <input type="checkbox" className="mt-1" checked={propose} onChange={(e) => { setPropose(e.target.checked); setErrors({}); }} />
+          <span><b>Let the Architect propose the stack</b>, deployment and integrations from the SRS, the requirement baseline and the repository. It compares options with a full stack each; the Solution Architect picks one, adjusts it and confirms before the SDS is written. What you fill in below is a constraint the options must follow.</span>
+        </label>
+      ) : null}
       {allowBaseline ? (
         <label className="flex items-start gap-2 rounded-lg border border-line p-3 text-sm">
           <input type="checkbox" className="mt-1" checked={fromBaseline} onChange={(e) => { setFromBaseline(e.target.checked); setErrors({}); }} />
@@ -84,7 +91,7 @@ function DocumentForm({ project, fields, bodyKey, submit, allowBaseline }: { pro
         </label>
       ) : null}
       {shown.map(([key, label, hint, required]) => (
-        <Field key={key} label={fromBaseline && key === "summary" ? "Notes" : label} hint={fromBaseline && key !== "title" ? "optional" : hint || undefined} htmlFor={`brief-${key}`} required={required && (!fromBaseline || key === "title")} error={errors[key]}>
+        <Field key={key} label={fromBaseline && key === "summary" ? "Notes" : label} hint={(fromBaseline || propose) && key !== "title" ? `optional${propose ? ": a constraint the options must follow" : ""}` : hint || undefined} htmlFor={`brief-${key}`} required={required && (!(fromBaseline || propose) || key === "title")} error={errors[key]}>
           {key === "title" ? (
             <Input id={`brief-${key}`} value={brief[key]} maxLength={200} aria-invalid={errors[key] ? true : undefined} onChange={(e) => update(key, e.target.value)} />
           ) : (
@@ -95,14 +102,14 @@ function DocumentForm({ project, fields, bodyKey, submit, allowBaseline }: { pro
       <div>
         <ActionButton variant="primary" action={async () => {
           setTried(true);
-          const local = validateDoc(fields, brief, fromBaseline);
+          const local = validateDoc(fields, brief, fromBaseline || propose);
           setErrors(local);
           if (Object.keys(local).length) {
             document.getElementById(`brief-${Object.keys(local)[0]}`)?.focus();
             throw new ApiError(`Fill in ${Object.keys(local).length} required field(s) before submitting.`);
           }
           try {
-            const body = fromBaseline ? { ...brief, from_baseline: true } : brief;
+            const body = fromBaseline ? { ...brief, from_baseline: true } : allowProposal ? { ...brief, propose_stack: propose } : brief;
             const run = await api<RunSummary>("/api/runs", { method: "POST", body: { project, [bodyKey]: body, idempotency_key: idempotencyKey } });
             navigate(`/runs/${run.id}`);
           } catch (error) {
@@ -211,7 +218,7 @@ export function NewRequestView() {
             ) : null}
             {kind === "discovery" ? <DocumentForm key="discovery" project={chosen} fields={DISCOVERY} bodyKey="discovery" submit="Start discovery, then add sources" />
               : kind === "srs" ? <DocumentForm key="srs" project={chosen} fields={BRIEF} bodyKey="brief" submit="Write SRS.md" allowBaseline />
-        : kind === "sds" ? <DocumentForm key="sds" project={chosen} fields={ARCHITECTURE} bodyKey="architecture" submit="Submit, write SDS.md" /> : FIELDS.map(([key, label, hint, required]) => {
+        : kind === "sds" ? <DocumentForm key="sds" project={chosen} fields={ARCHITECTURE} bodyKey="architecture" submit="Submit, write SDS.md" allowProposal /> : FIELDS.map(([key, label, hint, required]) => {
               const props = {
                 id: key,
                 value: intent[key],

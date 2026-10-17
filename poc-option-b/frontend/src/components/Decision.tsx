@@ -343,6 +343,7 @@ function OptionsPanel({ run, doc, checklist, checked, post }: { run: RunDetail; 
   const recommended = /\*\*Recommendation:\*\* (PA\d+)/.exec(doc.content)?.[1] ?? options[0] ?? "";
   const [option, setOption] = useState(recommended);
   const [why, setWhy] = useState("");
+  const [adjust, setAdjust] = useState("");
   return (
     <Panel run={run} title={`Architecture options v${doc.version}`}>
       <p className="m-0 text-sm text-muted">The Architect compared the options; you pick the one the SDS designs. Your reason goes into SDS section 9.</p>
@@ -353,9 +354,10 @@ function OptionsPanel({ run, doc, checklist, checked, post }: { run: RunDetail; 
         ))}
       </div>
       {checklist}
+      <Field label="Adjustments to the chosen option" hint="optional: what you add or change before the SDS is written, such as another database or an added queue" htmlFor="option-adjust"><Textarea id="option-adjust" className="min-h-14" value={adjust} onChange={(e) => setAdjust(e.target.value)} placeholder="Use PostgreSQL instead of MySQL; add Redis for the event queue" /></Field>
       <Field label="Why this option" htmlFor="option-why"><Textarea id="option-why" className="min-h-16" value={why} onChange={(e) => setWhy(e.target.value)} placeholder="Against the quality targets, constraints and cost; required, also to ask for other options" /></Field>
       <div className="flex flex-wrap gap-2">
-        <ActionButton variant="primary" disabled={!option || !why.trim()} success={`${option} chosen; the Architect writes the SDS`} action={() => post("options/choose", { document_id: doc.id, option, reason: why, checked })}>Choose {option}</ActionButton>
+        <ActionButton variant="primary" disabled={!option || !why.trim()} success={`${option} chosen; the Architect writes the SDS`} action={() => post("options/choose", { document_id: doc.id, option, reason: why, checked, adjustments: adjust })}>Choose {option}</ActionButton>
         <ActionButton variant="danger" disabled={!why.trim()} action={() => post("options/redo", { reason: why })}>Ask for other options</ActionButton>
       </div>
     </Panel>

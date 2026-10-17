@@ -241,3 +241,27 @@ def test_changes_asked_on_an_srs_pull_request_rewrite_the_document_from_its_last
     assert detail["status"] == "WAITING_SPEC_APPROVAL"
     assert [d["version"] for d in detail["documents"] if d["kind"] == "srs"] == [1, 2]
     assert [(a["stage"], a["decision"]) for a in detail["approvals"]][-1] == ("pr", "request_changes")
+
+
+def test_the_architect_proposes_the_stack_and_the_solution_architect_adjusts_it(db, sample_repo):
+    with_srs(sample_repo)
+    post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
+    refused = client.post("/api/runs", json={"project": "task-board", "architecture": {"title": "Attendance"},
+                                              "idempotency_key": str(uuid.uuid4())})
+    assert refused.status_code == 422  # no stack and no proposal asked for
+    run = post("/api/runs", {"project": "task-board", "idempotency_key": str(uuid.uuid4()), "architecture": {
+        "title": "Attendance", "propose_stack": True, "deployment": "Must run on the office network"}}, status=201)
+    drain()
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    brief = [d for d in detail["documents"] if d["kind"] == "intent"][-1]["content"]
+    assert "The Architect proposes the stack" in brief and "## Deployment and infrastructure (constraint)" in brief
+    options = [d for d in detail["documents"] if d["kind"] == "options"][-1]
+    assert "### PA1 Single server: stack" in options["content"] and "| backend | Node.js 20 |" in options["content"]
+    post(f"/api/runs/{run['id']}/options/choose", {"document_id": options["id"], "option": "PA1", "reason": "office network",
+                                                    "adjustments": "Use SQLite for the first site",
+                                                    "checked": [h["id"] for h in detail["checklist"]["human"]]})
+    drain()
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    sds = [d for d in detail["documents"] if d["kind"] == "sds"][-1]["content"]
+    assert "Adjustments: Use SQLite for the first site" in sds and "backend: Node.js 20" in sds
+    assert detail["approvals"][0]["reason"].endswith("| adjustments: Use SQLite for the first site")

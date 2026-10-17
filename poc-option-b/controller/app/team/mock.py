@@ -117,13 +117,17 @@ class MockTeam:
                     "refs": [i["id"]]} for i in named]
         while len(options) < 2:
             options.append({"name": ["Single server", "Managed cloud"][len(options)], "summary": "Mock Architect option"})
+        for option in options:  # a proposed stack, as when the brief leaves it to the Architect
+            option["stack"] = [{"layer": "backend", "technology": "Node.js 20", "why": "the repository's stack"},
+                               {"layer": "database", "technology": "PostgreSQL 16", "why": "relational data"}]
         return Options.model_validate({"context": f"Where {context.title} runs.", "options": options,
                                        "recommendation": options[0]["name"], "reason": "Mock Architect: the first option."})
 
     def write_sds(self, context: RunContext) -> Sds:
         """One object and table per SRS feature, one decision for the stack named in the brief."""
         features = srs_features(context.srs_md or "")
-        stack = _section(context.intent_md, "Technology and stack") or "Not chosen"
+        stack = (_section(context.intent_md, "Technology and stack") or _section(context.intent_md, "Technology and stack (constraint)")
+                 or (", ".join(f"{c['layer']}: {c['technology']}" for c in (context.chosen_option or {}).get("stack", []))) or "Not chosen")
         answered = {question for question, _ in context.answers}
         questions = [{"question": line[len("[blocking]"):].strip(), "blocking": True}
                      for line in _items(_section(context.intent_md, "Notes")) if line.lower().startswith("[blocking]")
@@ -142,7 +146,10 @@ class MockTeam:
                            "stories": [s.id for s in f.stories]} for f in features],
             "decisions": ([{"title": "Architecture Option", "context": "The Solution Architect chose between the options.",
                             "decision": f"{context.chosen_option['id']} {context.chosen_option['name']}: "
-                                        f"{context.chosen_option['reason']}"}] if context.chosen_option else [])
+                                        f"{context.chosen_option['reason']}"
+                                        + (f" Adjustments: {context.chosen_option['adjustments']}"
+                                           if context.chosen_option.get("adjustments") else "")}]
+                          if context.chosen_option else [])
                          + [{"title": "Technology Stack Selection", "context": "The brief names the stack.",
                              "decision": stack.splitlines()[0]}],
             "questions": questions, "concerns": ["Mock Architect: no model was called."]})

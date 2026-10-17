@@ -220,10 +220,13 @@ Nếu baseline chưa merge, run dừng ở `NEEDS_HUMAN` với lý do "merge the
 
 ## 7. SDS và bước Options
 
-1. **New request → Project SDS** (cần `SRS.md` đã merge): điền stack, deployment, tích hợp, ghi chú.
-2. **Options** (bật mặc định): Architect so sánh 2–4 phương án kiến trúc, gồm mọi phương án có trong baseline cộng phương án tự đề xuất. Mỗi phương án được đánh giá theo NFR, chi phí, rủi ro, nơi lưu dữ liệu nhạy cảm và việc vận hành; Architect nêu phương án khuyến nghị.
-3. Cổng Options (vai SA): đọc bảng so sánh, chọn phương án, ghi **Why this option** (bắt buộc), tick checklist rồi bấm **Choose PAx**. Hoặc ghi lý do rồi bấm **Ask for other options** để Architect so sánh lại.
-4. Architect viết `SDS.md` (§1–§13); mục §9.1 "Architecture Option" ghi phương án đã chọn, lý do của SA, các phương án đã cân nhắc. Ở cổng SDS (Tech Lead), controller kiểm thêm rằng dòng Decision của §9 có ghi phương án đã chọn. Duyệt, merge PR, **Check again**.
+1. **New request → Project SDS** (cần `SRS.md` đã merge). Ô **Let the Architect propose the stack** được tick sẵn: chỉ cần tên sản phẩm. Ô Stack, Deployment, Integrations thành tuỳ chọn; điều gì anh điền vào đó là **ràng buộc** mà mọi phương án phải theo (ví dụ "bắt buộc PostgreSQL", "chạy trong mạng nội bộ"). Bỏ tick thì phải tự điền stack như cách cũ.
+2. **Options** (bật mặc định): Architect so sánh 2–4 phương án kiến trúc, gồm mọi phương án có trong baseline cộng phương án tự đề xuất. Mỗi phương án có **stack theo từng lớp** (frontend, backend, database, AI, hạ tầng, giám sát…) kèm lý do, **deployment** và **tích hợp**. Tất cả suy ra từ SRS, baseline và stack hiện có của repo (`AGENTS.md`). Mỗi phương án được đánh giá theo NFR, chi phí, rủi ro, nơi lưu dữ liệu nhạy cảm, vận hành, kèm phương án Architect khuyến nghị.
+3. Cổng Options (vai SA): đọc bảng so sánh và bảng stack của từng phương án, rồi chọn phương án.
+   - Ghi **Adjustments to the chosen option** nếu muốn bổ sung hoặc sửa, ví dụ "dùng PostgreSQL thay MySQL; thêm Redis cho hàng đợi". Architect phải áp đúng các điều chỉnh này.
+   - Ghi **Why this option** (bắt buộc), tick checklist rồi bấm **Choose PAx**.
+   - Muốn Architect so sánh lại với góp ý thì ghi lý do rồi bấm **Ask for other options**.
+4. Architect viết `SDS.md` (§1–§13) theo stack của phương án đã chọn cộng các điều chỉnh; mục §9.1 "Architecture Option" ghi phương án đã chọn, lý do của SA, các điều chỉnh và các phương án đã cân nhắc. Ở cổng SDS (Tech Lead), controller kiểm thêm rằng dòng Decision của §9 có ghi phương án đã chọn. Duyệt, merge PR, **Check again**.
 
 Muốn bỏ bước Options thì đặt `stages.options: skip` trong `.sdlc/project.yaml`.
 
