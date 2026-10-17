@@ -8,7 +8,7 @@ clarification loop.
 
 import re
 
-from controller.app.project_docs import Sds, Srs, srs_features
+from controller.app.project_docs import Sds, Srs, srs_features, srs_flows, srs_state_entities
 from controller.app.projects.config import matches_any
 from controller.app.schemas import (Criterion, Intent, PlanPayload, PlanTask, Question, Review, Spec, TestCase,
                                     TestPlan, parse_criteria)
@@ -143,7 +143,7 @@ class MockTeam:
             "stack": [{"term": "Application", "meaning": stack.splitlines()[0]}],
             "purposes": {s.id: f"Let {s.actors} {s.title.lower()}." for f in features for s in f.stories},
             "endpoints": [{"method": "GET", "path": f"/api/v1/{f.prefix.lower()}", "feature": f.prefix,
-                           "stories": [s.id for s in f.stories]} for f in features],
+                           "stories": [s.id for s in f.stories], "response": '{"items": []}'} for f in features],
             "decisions": ([{"title": "Architecture Option", "context": "The Solution Architect chose between the options.",
                             "decision": f"{context.chosen_option['id']} {context.chosen_option['name']}: "
                                         f"{context.chosen_option['reason']}"
@@ -152,6 +152,19 @@ class MockTeam:
                           if context.chosen_option else [])
                          + [{"title": "Technology Stack Selection", "context": "The brief names the stack.",
                              "decision": stack.splitlines()[0]}],
+            # Enough of every part for the depth check: diagrams of the context, data, flows, lifecycles and sign-in.
+            "actors": ["User"], "external_systems": [{"name": "Identity provider", "purpose": "sign-in"}],
+            "states": [{"object": name, "states": [{"term": "Active", "meaning": "in use"}, {"term": "Inactive", "meaning": "retired"}],
+                        "transitions": [{"source": "Active", "target": "Inactive", "trigger": "retire"}]}
+                       for name in srs_state_entities(context.srs_md or "")],
+            "tables": [{"name": f.prefix.lower(), "fields": [{"name": "id", "type": "uuid", "required": True}]} for f in features]
+                      or [{"name": "item", "fields": [{"name": "id", "type": "uuid", "required": True}]}],
+            "process": [{"name": flow, "participants": ["User", "Application"],
+                         "messages": [{"source": "User", "target": "Application", "text": "request"}]}
+                        for flow in srs_flows(context.srs_md or "")],
+            "dtos": [{"name": f"{f.prefix}Response", "object": f.name, "fields": [{"name": "id", "type": "string"}]}
+                     for f in features] or [{"name": "ItemResponse", "fields": [{"name": "id", "type": "string"}]}],
+            "auth": {"method": "Session cookie", "flow": [{"source": "User", "target": "Application", "text": "sign in"}]},
             "questions": questions, "concerns": ["Mock Architect: no model was called."]})
 
     def plan(self, context: RunContext) -> PlanPayload:

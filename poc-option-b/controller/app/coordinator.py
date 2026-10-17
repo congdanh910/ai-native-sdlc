@@ -36,7 +36,7 @@ from controller.app.feature_docs import (PHASE_HEADING, FeatureRef, link_once, p
                                          upsert_section)
 from controller.app import analysis, checklists, joblog
 from controller.app.project_docs import (SDS_PATH, SRS_PATH, Options, Sds, Srs, check_chosen_option, check_options,
-                                         check_sds_markdown, check_srs_markdown, check_srs_trace, number_options, render_options,
+                                         check_sds_depth, check_sds_markdown, check_srs_markdown, check_srs_trace, number_options, render_options,
                                          render_sds, render_srs, sds_sync_findings, srs_features)
 from controller.app.projects.config import EffectivePolicy, effective_policy, matches_any
 from controller.app.projects.registry import mirror_for, read_snapshot
@@ -280,7 +280,9 @@ def evaluate_gate(session: Session, run: Run, gate: str | None = None) -> dict |
         content = latest_document(session, run.id, "sds").content
         problems = check_sds_markdown(content, srs_text)
         controller = [checklists._result("outline", "SDS sections are present and every SRS story has a section 5 entry",
-                                         problems)]
+                                         problems),
+                      checklists._result("depth", "The design has its diagrams (context, data, every SRS flow and "
+                                         "lifecycle, sign-in), DTOs and API specifications", check_sds_depth(content, srs_text))]
         chosen = json.loads(artifact(session, run.id, "chosen_option") or "null")
         if chosen:
             controller.append(checklists._result("option", f"Section 9 records the chosen option ({chosen['id']} "

@@ -19,7 +19,7 @@ from controller.app.integrations.langflow import (InvalidModelOutput, LangflowCl
                                                   extract_json, role_prompt)
 from controller.app.discovery.extract import Part, compact_items, repair_chunk, repair_consolidation, repair_minutes
 from controller.app.discovery.inventory import ChunkResult, Consolidation, MinutesResult
-from controller.app.project_docs import Options, Sds, Srs, srs_features
+from controller.app.project_docs import SDS_PARTS, Options, Sds, Srs, sds_part_model, srs_features
 from controller.app.projects.config import matches_any
 from controller.app.schemas import NOTES_HEADING, Intent, PlanPayload, Review, Spec, TestPlan, parse_criteria
 from controller.app.team import normalize
@@ -154,16 +154,29 @@ class LangflowTeam(MockTeam):
                          retries=context.policy.max_format_retries)
 
     def write_sds(self, context: RunContext) -> Sds:
+        """Four passes, one part of the outline each, every pass reading what the earlier ones wrote."""
         stories = [{"id": s.id, "feature": f.prefix, "title": s.title, "actors": s.actors}
                    for f in srs_features(context.srs_md or "") for s in f.stories]
-        payload = {"brief": context.intent_md, "srs": context.srs_md or "", "stories": stories,
-                   "chosen_option": context.chosen_option,
-                   "current_sds": context.sds_md or "", "answers": [{"question": q, "answer": a} for q, a in context.answers],
-                   "agents_md": context.agents_md, "constitution": self._constitution(context), "repository": {"files": context.repository.get("files", []),
-                                                                  "symbols": context.repository.get("symbols", {})},
-                   "feedback": context.feedback}
-        return self._ask("sds", payload, Sds, normalize.sds, context.session_id,
-                         retries=context.policy.max_format_retries)
+        base = {"brief": context.intent_md, "srs": context.srs_md or "", "stories": stories,
+                "chosen_option": context.chosen_option,
+                "current_sds": context.sds_md or "", "answers": [{"question": q, "answer": a} for q, a in context.answers],
+                "agents_md": context.agents_md, "constitution": self._constitution(context),
+                "repository": {"files": context.repository.get("files", []), "symbols": context.repository.get("symbols", {})},
+                "feedback": context.feedback}
+        design: dict = {}
+        calls = []
+        for index, part in enumerate(SDS_PARTS, start=1):
+            joblog.note(f"Architect writes part {index} of {len(SDS_PARTS)} ({part})")
+            answer = self._ask(part, {**base, "part": f"{index} of {len(SDS_PARTS)}: {part}", "design_so_far": design},
+                               sds_part_model(part), lambda data, p=part: normalize.sds_part(data, p),
+                               f"{context.session_id}:{part}", retries=context.policy.max_format_retries)
+            calls.append(self.last_call)
+            design.update(answer.model_dump())
+        if calls:  # one record for the job: the passes' attempts and time together
+            self.last_call = CallRecord(calls[-1].engine, ",".join(c.prompt_version or "" for c in calls),
+                                        sum(c.attempts for c in calls),
+                                        usage={"seconds": round(sum((c.usage or {}).get("seconds", 0) for c in calls), 1)})
+        return Sds.model_validate(design)
 
     def design_options(self, context: RunContext) -> Options:
         baseline = context.baseline or {}

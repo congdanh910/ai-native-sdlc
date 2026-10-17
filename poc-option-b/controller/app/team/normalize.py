@@ -4,6 +4,7 @@ Only shape is repaired (a list where a string is expected, missing ids). Content
 never invented; anything else fails validation and is sent back to the model.
 """
 
+import json
 import re
 
 LINE_PREFIX = re.compile(r"^\s*(?:[-*]|\d+[.)])\s*")
@@ -293,7 +294,85 @@ def sds(data: dict) -> dict:
     for decision in data["decisions"]:
         if isinstance(decision, dict):
             decision["options"] = as_list(decision.get("options"))
+    for key in ("constraints", "storage", "migration", "future", "done"):
+        if key in data:
+            data[key] = as_list(data.get(key))
+    for key in ("definitions", "relationships", "external_systems", "key_scenarios", "observability"):
+        if key in data:
+            data[key] = _flatten_rows(as_list(data.get(key)))
+    if isinstance(data.get("actors"), str):
+        data["actors"] = as_list(data["actors"])
+    for item in data.get("states") or []:
+        if isinstance(item, dict):
+            item["states"] = _flatten_rows([x if isinstance(x, dict) else {"term": str(x), "meaning": ""}
+                                            for x in as_list(item.get("states"))])
+            item["transitions"] = _flatten_rows(as_list(item.get("transitions")))
+    for key in ("tables", "dtos"):
+        for row in data.get(key) or []:
+            if isinstance(row, dict):
+                row["fields"] = [_column(c) for c in as_list(row.get("fields"))]
+    for scenario in data["process"]:
+        if isinstance(scenario, dict):
+            for key in ("participants", "alternatives"):
+                scenario[key] = as_list(scenario.get(key))
+            scenario["messages"] = [_message(m) for m in as_list(scenario.get("messages")) if _message(m)]
+    for endpoint in data["endpoints"]:
+        if isinstance(endpoint, dict):
+            for key in ("request", "response"):
+                if isinstance(endpoint.get(key), (dict, list)):
+                    endpoint[key] = json.dumps(endpoint[key], ensure_ascii=False, indent=1)
+            endpoint["errors"] = as_list(endpoint.get("errors"))
+    for screen in data["screens"]:
+        if isinstance(screen, dict):
+            screen["layout"] = as_list(screen.get("layout"))
+    for component in data["components"]:
+        if isinstance(component, dict):
+            component["calls"] = as_list(component.get("calls"))
+    for key in ("frontend", "backend"):
+        tier = data.get(key)
+        if isinstance(tier, dict):
+            for list_key in ("stack", "responsibilities", "conventions"):
+                tier[list_key] = as_list(tier.get(list_key))
+            if isinstance(tier.get("structure"), list):
+                tier["structure"] = "\n".join(str(x) for x in tier["structure"])
+            tier["layers"] = _flatten_rows(as_list(tier.get("layers")))
+        elif key in data and not tier:
+            data[key] = {}
+    auth = data.get("auth")
+    if isinstance(auth, dict):
+        auth["flow"] = [_message(m) for m in as_list(auth.get("flow")) if _message(m)]
+    metrics = []
+    for metric in data["metrics"]:
+        if isinstance(metric, dict) and "name" not in metric and "term" in metric:
+            metric = {"name": metric["term"], "definition": metric.get("meaning", ""), "target": metric.get("target", "")}
+        metrics.append(metric)
+    data["metrics"] = metrics
     return data
+
+
+def _column(value) -> dict:
+    if isinstance(value, dict):
+        out = {k: v for k, v in value.items() if k in ("name", "type", "notes", "required")}
+        out.setdefault("type", "text")
+        out["required"] = bool(out.get("required"))
+        return out
+    name, _, kind = str(value).partition(":")
+    return {"name": name.strip(), "type": kind.strip() or "text"}
+
+
+def _message(value) -> dict | None:
+    if isinstance(value, dict) and value.get("source") and value.get("target"):
+        return {"source": str(value["source"]), "target": str(value["target"]), "text": str(value.get("text") or "")}
+    match = re.match(r"\s*(.+?)\s*-+>>?\s*(.+?)\s*:\s*(.+)", str(value)) if isinstance(value, str) else None
+    return {"source": match[1], "target": match[2], "text": match[3]} if match else None
+
+
+def sds_part(data: dict, part: str) -> dict:
+    """One pass of the SDS: normalised like a whole SDS, then only the part's keys."""
+    from controller.app.project_docs import SDS_PARTS
+    keys = SDS_PARTS[part]
+    full = sds({**{k: v for k, v in data.items() if k in keys}})
+    return {k: v for k, v in full.items() if k in keys}
 
 
 STATUS_WORDS = {"pass": "pass", "passed": "pass", "ok": "pass", "yes": "pass", "true": "pass", "satisfied": "pass",
@@ -320,7 +399,8 @@ SRS_ROWS = ("definitions", "roles", "entities", "relationships", "business_rules
 SDS_ROWS = ("traceability", "objects", "screens", "components", "stack", "modules", "tables", "deployment",
             "errors", "threats", "authorization", "nfr", "metrics", "conventions", "integrations")
 KEEP_LISTS = {"actors", "steps", "alternatives", "negatives", "stories", "requirements", "states", "changes",
-              "options", "refs"}
+              "options", "refs", "layout", "calls", "fields", "errors", "transitions", "participants", "messages",
+              "flow"}
 
 
 def _flatten_rows(rows) -> list:

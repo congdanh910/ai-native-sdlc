@@ -597,9 +597,34 @@ class DomainObject(Contract):
     notes: str = ""
 
 
+class Relation(Contract):
+    subject: str
+    verb: str
+    object: str
+    cardinality: str = ""  # such as 1..n
+
+
+class Transition(Contract):
+    source: str
+    target: str
+    trigger: str = ""
+
+
+class ObjectStates(Contract):
+    object: str
+    states: list[Term] = Field(min_length=1)  # state -> meaning
+    transitions: list[Transition] = []
+
+
 class Screen(Contract):
     name: str
     roles: str
+    purpose: str
+    layout: list[str] = []  # the wireframe in words: regions, fields, actions, empty and error states
+
+
+class ExternalSystem(Contract):
+    name: str
     purpose: str
 
 
@@ -607,22 +632,51 @@ class Component(Contract):
     name: str
     responsibility: str
     technology: str = ""
+    calls: list[str] = []  # names of components or external systems it calls
+
+
+class Tier(Contract):
+    """The frontend or the backend of the development view."""
+    stack: list[str] = []
+    style: str = ""  # such as package-by-layer, feature folders
+    structure: str = ""  # the folder tree, one path per line
+    layers: list[Term] = []  # layer -> responsibility
+    responsibilities: list[str] = []
+    conventions: list[str] = []
+
+
+class Column(Contract):
+    name: str
+    type: str
+    notes: str = ""
+    required: bool = False
 
 
 class Table(Contract):
     name: str
-    columns: str
+    columns: str = ""  # older SDS: one line
+    fields: list[Column] = []
     notes: str = ""
 
 
 class Node(Contract):
     name: str
     runs: str
+    environment: str = ""
+
+
+class Message(Contract):
+    source: str
+    target: str
+    text: str
 
 
 class Scenario(Contract):
     name: str
-    steps: list[str] = Field(min_length=1)
+    steps: list[str] = []
+    participants: list[str] = []
+    messages: list[Message] = []  # the sequence diagram
+    alternatives: list[str] = []
 
 
 class Endpoint(Contract):
@@ -632,6 +686,15 @@ class Endpoint(Contract):
     stories: list[str] = []
     purpose: str = ""
     id: str = ""
+    request: str = ""  # body or query, as a short JSON example or a field list
+    response: str = ""
+    errors: list[str] = []  # error codes of §6.6
+
+
+class Dto(Contract):
+    name: str
+    object: str = ""  # the domain object it maps to
+    fields: list[Column] = Field(min_length=1)
 
 
 class ErrorCode(Contract):
@@ -665,41 +728,95 @@ class Integration(Contract):
     name: str
     purpose: str
     interface: str = ""
+    direction: str = ""  # in, out, both
+    protocol: str = ""
+
+
+class AuthDesign(Contract):
+    method: str = ""
+    flow: list[Message] = []  # the sign-in sequence
+    session: str = ""
+    password_policy: str = ""
+    lockout: str = ""
+    notes: str = ""
+
+
+class Metric(Contract):
+    name: str
+    definition: str
+    target: str = ""
 
 
 class Sds(Contract):
     purpose: str
     scope: str
     assumptions: list[str] = []
+    constraints: list[str] = []
+    definitions: list[Term] = []
     traceability: list[Trace] = Field(min_length=1)
     objects: list[DomainObject] = []
+    relationships: list[Relation] = []
+    states: list[ObjectStates] = []
     ui_principles: list[str] = []
     screens: list[Screen] = []
     context: str
+    actors: list[str] = []
+    external_systems: list[ExternalSystem] = []
     components: list[Component] = Field(min_length=1)
     stack: list[Term] = Field(min_length=1)  # layer -> technology
+    frontend: Tier = Tier()
+    backend: Tier = Tier()
     modules: list[Term] = []  # repository path -> purpose
+    storage: list[str] = []
     tables: list[Table] = []
+    migration: list[str] = []
     process: list[Scenario] = []
     deployment: list[Node] = []
+    key_scenarios: list[Term] = []
     principles: list[str] = []
     purposes: dict[str, str] = {}  # SRS story id -> its Purpose for §5
     api_standards: list[str] = []
+    dtos: list[Dto] = []
     endpoints: list[Endpoint] = []
     errors: list[ErrorCode] = []
     authentication: str = ""
+    auth: AuthDesign = AuthDesign()
     authorization: list[Term] = []  # role -> what it may do
     threats: list[Threat] = []
     data_protection: list[str] = []
     secrets: list[str] = []
     nfr: list[Approach] = []
     decisions: list[Decision] = Field(min_length=1)
-    metrics: list[Term] = []
+    metrics: list[Metric | Term] = []
+    observability: list[Term] = []  # logs, metrics, traces, alerts -> what is captured
     future: list[str] = []
     conventions: list[Term] = []
+    done: list[str] = []  # definition of done for coding agents
     integrations: list[Integration] = []
     questions: list[Question] = []
     concerns: list[str] = []
+
+
+# The SDS is written in four passes, each one a part of the outline, so that every part gets the room it needs:
+# a single answer for all thirteen sections came out thin (attendance, 2026-10-17).
+SDS_PARTS: dict[str, tuple[str, ...]] = {
+    "sds-model": ("purpose", "scope", "assumptions", "constraints", "definitions", "traceability", "objects",
+                  "relationships", "states", "ui_principles", "screens", "questions"),
+    "sds-architecture": ("context", "actors", "external_systems", "components", "stack", "frontend", "backend",
+                         "modules", "storage", "tables", "migration", "process", "deployment", "key_scenarios",
+                         "principles"),
+    "sds-interfaces": ("api_standards", "dtos", "endpoints", "errors", "authentication", "auth", "authorization",
+                       "threats", "data_protection", "secrets", "nfr"),
+    "sds-operations": ("decisions", "metrics", "observability", "future", "conventions", "done", "integrations",
+                       "purposes", "concerns"),
+}
+
+
+def sds_part_model(part: str) -> type[BaseModel]:
+    """The contract of one pass: the Sds fields of that part, required where Sds requires them."""
+    from pydantic import create_model
+    return create_model(f"Sds_{part.replace('-', '_')}", __base__=Contract,
+                        **{name: (Sds.model_fields[name].annotation, Sds.model_fields[name]) for name in SDS_PARTS[part]})
 
 
 def number_sds(sds: Sds, features: list[SrsFeature]) -> Sds:
@@ -720,8 +837,65 @@ def number_sds(sds: Sds, features: list[SrsFeature]) -> Sds:
 PURPOSE_LATER = "_Purpose to be written by the Design step of this story's run._"
 
 
+# ---------------------------------------------------------------- Mermaid, drawn by the controller from data, so it parses
+
+def _label(text: str) -> str:
+    return re.sub(r"[\"`;#{}\[\]<>|]", " ", " ".join(str(text).split())).strip()[:80] or "?"
+
+
+def _ident(text: str) -> str:
+    return re.sub(r"\W+", "_", str(text), flags=re.ASCII).strip("_")[:40] or "x"
+
+
+def _mermaid(lines: list[str]) -> list[str]:
+    return ["```mermaid", *lines, "```", ""]
+
+
+def mermaid_flow(nodes: list[str], edges: list[tuple[str, str, str]], direction: str = "LR") -> list[str]:
+    ids = {name: f"n{index}" for index, name in enumerate(dict.fromkeys(nodes + [x for e in edges for x in e[:2]]))}
+    lines = [f"flowchart {direction}", *[f'    {ids[name]}["{_label(name)}"]' for name in ids]]
+    for source, target, text in edges:
+        arrow = f' -- "{_label(text)}" --> ' if text else " --> "
+        lines.append(f"    {ids[source]}{arrow}{ids[target]}")
+    return _mermaid(lines)
+
+
+def mermaid_sequence(participants: list[str], messages: list[Message]) -> list[str]:
+    names = list(dict.fromkeys([*participants, *[x for m in messages for x in (m.source, m.target)]]))
+    ids = {name: f"P{index}" for index, name in enumerate(names)}
+    return _mermaid(["sequenceDiagram", *[f"    participant {ids[n]} as {_label(n)}" for n in names],
+                     *[f"    {ids[m.source]}->>{ids[m.target]}: {_label(m.text)}" for m in messages]])
+
+
+def mermaid_states(states: ObjectStates) -> list[str]:
+    ids = {state.term: f"S{index}" for index, state in enumerate(states.states)}
+    for t in states.transitions:
+        for name in (t.source, t.target):
+            ids.setdefault(name, f"S{len(ids)}")
+    lines = ["stateDiagram-v2", *[f'    state "{_label(name)}" as {sid}' for name, sid in ids.items()]]
+    if states.states:
+        lines.append(f"    [*] --> {ids[states.states[0].term]}")
+    lines += [f"    {ids[t.source]} --> {ids[t.target]}" + (f" : {_label(t.trigger)}" if t.trigger else "")
+              for t in states.transitions]
+    return _mermaid(lines)
+
+
+def mermaid_erd(tables: list[Table]) -> list[str]:
+    lines = ["erDiagram"]
+    for table in tables:
+        lines.append(f"    {_ident(table.name)} {{")
+        lines += [f"        {_ident(c.type) or 'text'} {_ident(c.name)}" for c in table.fields]
+        lines.append("    }")
+    return _mermaid(lines)
+
+
+def _text_block(text: str) -> list[str]:
+    return ["```text", text.strip("\n"), "```", ""] if text.strip() else []
+
+
 def render_sds(sds: Sds, features: list[SrsFeature], *, product: str, author: str, today: date | None = None) -> str:
-    """Markdown in the company SDS outline (sections 1-13); section 5 mirrors SRS section 7 story by story."""
+    """Markdown in the company SDS outline (sections 1-13, as in the GRM SDS); section 5 mirrors SRS section 7 story
+    by story. Diagrams are drawn from the design's data."""
     sds = number_sds(sds, features)
     today = today or date.today()
     out: list[str] = []
@@ -753,50 +927,120 @@ def render_sds(sds: Sds, features: list[SrsFeature], *, product: str, author: st
     heading(3, "1.2 Scope")
     out += [sds.scope.strip(), ""]
     heading(3, "1.3 Assumptions and Constraints")
+    heading(4, "1.3.1 Assumptions")
     out += [*_bullets(sds.assumptions), ""]
-    heading(3, "1.4 Related Documents")
-    out += [f"- [SRS.md]({SRS_PATH}): requirements this design implements", ""]
+    heading(4, "1.3.2 Constraints")
+    out += [*_bullets(sds.constraints), ""]
+    heading(3, "1.4 Definitions and Acronyms")
+    out += [*_table(["Term", "Definition"], [[d.term, d.meaning] for d in sds.definitions]), ""]
+    heading(3, "1.5 Related Documents")
+    out += [f"- [SRS.md]({SRS_PATH}): requirements this design implements",
+            "- `requirements/baseline.md`: the requirement baseline of discovery, when there is one",
+            "- `.specify/memory/constitution.md`: the project's rules, when there is one", ""]
 
     heading(2, "2. Technical Domain Model")
     heading(3, "2.1 Domain Layer Traceability")
     out += [f"> **Last synced with SRS §2.1 Domain Entity:** {today.isoformat()}", "",
-            *_table(["SRS §2.1 Domain Entity", "SDS §2.2 Domain Object", "SDS §4.3.3 Database Entity", "Notes"],
+            *_table(["SRS §2.1 Domain Entity", "SDS §2.2 Domain Object", "SDS §4.3.4 Database Entity", "Notes"],
                     [[f"`{t.entity}`" if t.entity != "N/A" else "N/A", f"`{t.object}`",
                       f"`{t.table}`" if t.table else "", t.notes] for t in sds.traceability]), ""]
     heading(3, "2.2 Domain Object")
     out += [*_table(["Object", "Description", "Implementation Notes"],
                     [[o.name, o.description, o.notes] for o in sds.objects]), ""]
-    heading(3, "2.3 Domain Object State")
-    out += [f"States and transitions follow [SRS §2.4](SRS.md#2-4-domain-object-state).", ""]
+    heading(3, "2.3 Domain Object Relationships")
+    if sds.relationships:
+        out += [*_table(["Object", "Relation", "Object", "Cardinality"],
+                        [[r.subject, r.verb, r.object, r.cardinality] for r in sds.relationships]), "",
+                *mermaid_flow([], [(r.subject, r.object, f"{r.verb} {r.cardinality}".strip()) for r in sds.relationships])]
+    else:
+        out += [NOT_COVERED, ""]
+    heading(3, "2.4 Domain Object State Transition Diagram")
+    if not sds.states:
+        out += ["No domain object has a lifecycle of its own.", ""]
+    for index, states in enumerate(sds.states, start=1):
+        heading(4, f"2.4.{index} {states.object} State")
+        out += [*mermaid_states(states),
+                *_table(["State", "Meaning"], [[st.term, st.meaning] for st in states.states]), ""]
+        if states.transitions:
+            out += [*_table(["From", "To", "Trigger"], [[t.source, t.target, t.trigger] for t in states.transitions]), ""]
 
     heading(2, "3. UI Design")
     heading(3, "3.1 UI/UX Principles")
     out += [*_bullets(sds.ui_principles), ""]
-    heading(3, "3.2 Screens")
-    out += [*_table(["Screen", "Roles", "Purpose"], [[s.name, s.roles, s.purpose] for s in sds.screens]), ""]
+    heading(3, "3.2 Wireframes - UI/UX")
+    out += [*_table(["Screen", "Roles", "Purpose"], [[sc.name, sc.roles, sc.purpose] for sc in sds.screens]), ""]
+    for index, screen in enumerate([sc for sc in sds.screens if sc.layout], start=1):
+        heading(4, f"3.2.{index} {screen.name}")
+        out += [*_bullets(screen.layout), ""]
 
     heading(2, "4. Architecture Design")
     heading(3, "4.1 System Context")
     out += [sds.context.strip(), ""]
+    if sds.actors or sds.external_systems:
+        system = product or "System"
+        out += ["Primary actors:", "", *_bullets(sds.actors), "", "External systems:", "",
+                *_bullets([f"{e.name}: {e.purpose}" for e in sds.external_systems]), "",
+                *mermaid_flow([], [(a, system, "") for a in sds.actors] + [(system, e.name, e.purpose[:30])
+                                                                           for e in sds.external_systems])]
     heading(3, "4.2 Logical View")
     out += [*_table(["Component", "Responsibility", "Technology"],
                     [[c.name, c.responsibility, c.technology] for c in sds.components]), ""]
+    calls = [(c.name, target, "") for c in sds.components for target in c.calls]
+    if calls:
+        out += mermaid_flow([c.name for c in sds.components], calls)
     heading(3, "4.3 Development View")
     heading(4, "4.3.1 Technology Stack")
     out += [*_table(["Layer", "Technology"], [[t.term, t.meaning] for t in sds.stack]), ""]
-    heading(4, "4.3.2 Repository Layout")
+    for number, title, tier in (("4.3.2", "Frontend Architecture", sds.frontend), ("4.3.3", "Backend Architecture", sds.backend)):
+        heading(4, f"{number} {title}")
+        if tier == Tier():
+            out += [NOT_COVERED, ""]
+            continue
+        if tier.style:
+            out += [tier.style.strip(), ""]
+        if tier.stack:
+            out += ["Tech stack:", "", *_bullets(tier.stack), ""]
+        if tier.responsibilities:
+            out += ["Responsibilities:", "", *_bullets(tier.responsibilities), ""]
+        if tier.structure:
+            out += ["Structure:", "", *_text_block(tier.structure)]
+        if tier.layers:
+            out += [*_table(["Layer", "Responsibility"], [[l.term, l.meaning] for l in tier.layers]), ""]
+        if tier.conventions:
+            out += ["Coding conventions:", "", *_bullets(tier.conventions), ""]
+    heading(4, "4.3.4 Data Design")
+    if sds.storage:
+        out += ["Storage choices:", "", *_bullets(sds.storage), ""]
+    if any(t.fields for t in sds.tables):
+        out += ["Physical data schema:", "", *mermaid_erd([t for t in sds.tables if t.fields])]
+    for table in sds.tables:
+        if table.fields:
+            out += [f"**`{table.name}`**" + (f": {table.notes}" if table.notes else ""), "",
+                    *_table(["Column", "Type", "Required", "Notes"],
+                            [[f"`{c.name}`", c.type, "yes" if c.required else "", c.notes] for c in table.fields]), ""]
+    plain = [t for t in sds.tables if not t.fields]
+    if plain:
+        out += [*_table(["Table", "Columns", "Notes"], [[f"`{t.name}`", t.columns, t.notes] for t in plain]), ""]
+    if sds.migration:
+        out += ["Migration strategy:", "", *_bullets(sds.migration), ""]
+    heading(4, "4.3.5 Repository Layout")
     out += [*_table(["Path", "Purpose"], [[f"`{m.term}`", m.meaning] for m in sds.modules]), ""]
-    heading(4, "4.3.3 Database Schema")
-    out += [*_table(["Table", "Columns", "Notes"], [[f"`{t.name}`", t.columns, t.notes] for t in sds.tables]), ""]
     heading(3, "4.4 Process View")
     if not sds.process:
         out += [NOT_COVERED, ""]
     for index, scenario in enumerate(sds.process, start=1):
         heading(4, f"4.4.{index} {scenario.name}")
-        out += [*[f"{n}. {step}" for n, step in enumerate(scenario.steps, start=1)], ""]
+        if scenario.messages:
+            out += mermaid_sequence(scenario.participants, scenario.messages)
+        if scenario.steps:
+            out += [*[f"{n}. {step}" for n, step in enumerate(scenario.steps, start=1)], ""]
+        if scenario.alternatives:
+            out += ["Alternative and error paths:", "", *_bullets(scenario.alternatives), ""]
     heading(3, "4.5 Physical View")
-    out += [*_table(["Node", "Runs"], [[n.name, n.runs] for n in sds.deployment]), ""]
-    heading(3, "4.6 Architecture Principles")
+    out += [*_table(["Node", "Runs", "Environment"], [[n.name, n.runs, n.environment] for n in sds.deployment]), ""]
+    heading(3, "4.6 Key Scenarios")
+    out += [*_table(["Scenario", "How the architecture handles it"], [[k.term, k.meaning] for k in sds.key_scenarios]), ""]
+    heading(3, "4.7 Architecture Principles")
     out += [*_bullets(sds.principles), ""]
 
     heading(2, "5. Product Features and User Story Specification")
@@ -812,12 +1056,28 @@ def render_sds(sds: Sds, features: list[SrsFeature], *, product: str, author: st
     heading(3, "6.1 API Design Standards")
     out += [*_bullets(sds.api_standards), ""]
     heading(3, "6.2 Data Transfer Objects (DTOs) and Domain Mapping")
-    out += ["_Added by the Design step of each story's run._", ""]
+    if not sds.dtos:
+        out += ["_Added by the Design step of each story's run._", ""]
+    for dto in sds.dtos:
+        out += [f"**`{dto.name}`**" + (f" (maps `{dto.object}`)" if dto.object else ""), "",
+                *_table(["Field", "Type", "Required", "Notes"],
+                        [[f"`{c.name}`", c.type, "yes" if c.required else "", c.notes] for c in dto.fields]), ""]
     heading(3, "6.3 API Index")
     out += [*_table(["API ID", "Endpoint", "Feature"],
                     [[f"`{e.id}`", f"`{e.method.upper()} {e.path}`", e.feature] for e in sds.endpoints]), ""]
     heading(3, "6.4 API Specification")
-    out += ["_Added by the Design step of each story's run._", ""]
+    specified = [e for e in sds.endpoints if e.request or e.response]
+    if not specified:
+        out += ["_Added by the Design step of each story's run._", ""]
+    for endpoint in specified:
+        heading(4, f"{endpoint.id} {endpoint.method.upper()} {endpoint.path}")
+        out += [endpoint.purpose.strip(), ""] if endpoint.purpose else []
+        if endpoint.request:
+            out += ["Request:", "", "```json", endpoint.request.strip(), "```", ""]
+        if endpoint.response:
+            out += ["Response:", "", "```json", endpoint.response.strip(), "```", ""]
+        if endpoint.errors:
+            out += ["Errors: " + ", ".join(f"`{code}`" for code in endpoint.errors), ""]
     heading(3, "6.5 API -> User Story Traceability")
     out += [*_table(["API ID", "User Stories", "Purpose"],
                     [[f"`{e.id}`", ", ".join(e.stories), e.purpose] for e in sds.endpoints]), ""]
@@ -827,7 +1087,16 @@ def render_sds(sds: Sds, features: list[SrsFeature], *, product: str, author: st
 
     heading(2, "7. Security Design")
     heading(3, "7.1 User Authentication")
-    out += [sds.authentication.strip() or NOT_COVERED, ""]
+    auth = sds.auth
+    if auth == AuthDesign():
+        out += [sds.authentication.strip() or NOT_COVERED, ""]
+    else:
+        out += [line for line in [auth.method.strip(), sds.authentication.strip()] if line] + [""]
+        if auth.flow:
+            out += ["Sign-in flow:", "", *mermaid_sequence([], auth.flow)]
+        out += [*_table(["Aspect", "Design"], [[k, v] for k, v in (("Session", auth.session), ("Password policy",
+                                                                   auth.password_policy), ("Lockout", auth.lockout),
+                                                                  ("Notes", auth.notes)) if v]), ""]
     heading(3, "7.2 User Authorization")
     out += [*_table(["Role", "Allowed"], [[f"`{a.term}`", a.meaning] for a in sds.authorization]), ""]
     heading(3, "7.3 Threat Modeling")
@@ -853,15 +1122,22 @@ def render_sds(sds: Sds, features: list[SrsFeature], *, product: str, author: st
             out += [f"**Consequences:** {decision.consequences.strip()}", ""]
 
     heading(2, "10. Product Metrics")
-    out += [*_table(["Metric", "Definition"], [[m.term, m.meaning] for m in sds.metrics]), ""]
+    heading(3, "10.1 Core Metrics")
+    out += [*_table(["Metric", "Definition", "Target"],
+                    [[m.name, m.definition, m.target] if isinstance(m, Metric) else [m.term, m.meaning, ""]
+                     for m in sds.metrics]), ""]
+    heading(3, "10.2 Technical Observability")
+    out += [*_table(["Signal", "What is captured"], [[o.term, o.meaning] for o in sds.observability]), ""]
     heading(2, "11. Future Enhancements")
     out += [*_bullets(sds.future), ""]
     heading(2, "12. Appendix")
     heading(3, "12.1 Naming Conventions")
     out += [*_table(["Item", "Convention"], [[c.term, c.meaning] for c in sds.conventions]), ""]
+    heading(3, "12.2 Definition of Done for Coding Agents")
+    out += [*_bullets(sds.done), ""]
     heading(2, "13. External Integrations")
-    out += [*_table(["Integration", "Purpose", "Interface"],
-                    [[i.name, i.purpose, i.interface] for i in sds.integrations]), ""]
+    out += [*_table(["Integration", "Purpose", "Direction", "Interface", "Protocol"],
+                    [[i.name, i.purpose, i.direction, i.interface, i.protocol] for i in sds.integrations]), ""]
     return "\n".join(out).rstrip() + "\n"
 
 
@@ -883,6 +1159,47 @@ def check_sds_markdown(content: str, srs: str | None = None) -> list[str]:
         missing = [s for s in expected if s not in found]
         if missing:
             problems.append(f"section 5 has no entry for SRS stories {', '.join(missing)}")
+    return problems
+
+
+def srs_state_entities(srs: str) -> list[str]:
+    """Entities with a lifecycle in SRS section 2.4 ("#### 2.4.1 FaceTemplate State")."""
+    text = TAGS.sub("", srs)
+    return re.findall(r"^####\s+2\.4\.\d+\s+(.+?)\s+State\b", text, re.MULTILINE)
+
+
+def srs_flows(srs: str) -> list[str]:
+    """Business flows of SRS section 6 ("### 6.1 Nhận diện và điểm danh")."""
+    text = TAGS.sub("", _section_text(srs, "6."))
+    return [name.strip() for name in re.findall(r"^###\s+6\.\d+\s+(.+?)\s*$", text, re.MULTILINE)]
+
+
+def check_sds_depth(content: str, srs: str | None) -> list[str]:
+    """What a reviewable SDS must hold beyond its outline, after the GRM SDS: diagrams of the context, the data,
+    every business flow and every lifecycle, a sign-in flow, DTOs and specified APIs."""
+    text = TAGS.sub("", content)
+    sections = {number: _section_text(text, number) for number in ("2.", "4.", "6.", "7.")}
+
+    def sub(section: str, number: str) -> str:
+        match = re.search(rf"^###\s+{re.escape(number)}\s.*?$(.*?)(?=^###\s|\Z)", sections[section], re.MULTILINE | re.DOTALL)
+        return match[1] if match else ""
+    problems = []
+    if "```mermaid" not in sub("4.", "4.1"):
+        problems.append("§4.1 has no system context diagram (actors and external systems)")
+    if "erDiagram" not in sections["4."]:
+        problems.append("§4.3.4 has no data schema diagram (tables with their columns)")
+    if srs:
+        flows, sequences = srs_flows(srs), sub("4.", "4.4").count("sequenceDiagram")
+        if sequences < len(flows):
+            problems.append(f"§4.4 has {sequences} sequence diagram(s) for {len(flows)} SRS business flow(s)")
+        lifecycles, diagrams = srs_state_entities(srs), sub("2.", "2.4").count("stateDiagram")
+        if diagrams < len(lifecycles):
+            problems.append(f"§2.4 has {diagrams} state diagram(s) for {len(lifecycles)} SRS entities with a lifecycle")
+    for number, what in (("6.2", "DTOs"), ("6.4", "API specifications")):
+        if "_Added by the Design step" in sub("6.", number) or not sub("6.", number).strip():
+            problems.append(f"§{number} has no {what} for the core objects")
+    if "sequenceDiagram" not in sub("7.", "7.1"):
+        problems.append("§7.1 has no sign-in flow")
     return problems
 
 

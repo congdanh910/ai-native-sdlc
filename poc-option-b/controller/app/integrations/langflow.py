@@ -18,7 +18,7 @@ from controller.app.config import PROJECT_ROOT, Settings, get_settings
 
 PROMPTS = PROJECT_ROOT / "langflow" / "prompts"
 FLOW_PREFIX = "sdlc-v3-"
-ROLES = ("intent-draft", "spec", "srs", "sds", "plan", "test-design", "review", "extract", "consolidate", "minutes", "options")
+ROLES = ("intent-draft", "spec", "srs", "sds-model", "sds-architecture", "sds-interfaces", "sds-operations", "plan", "test-design", "review", "extract", "consolidate", "minutes", "options")
 
 
 class LangflowError(RuntimeError):
