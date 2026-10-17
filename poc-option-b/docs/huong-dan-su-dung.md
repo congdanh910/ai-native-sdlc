@@ -163,6 +163,7 @@ Bảng requirement dùng một schema chung cho mọi dự án (15 loại mục)
 ### 5.3 Làm rõ: câu hỏi và quyết định
 
 Trên tab **Questions**, với mỗi câu:
+- **Suggested answer**: câu trả lời BA gợi ý kèm căn cứ (slide, trang, hoặc "thông lệ"). Bấm **Use as answer** để điền vào ô trả lời, sửa nếu cần rồi bấm **Answer**. BA không có căn cứ thì không gợi ý; gợi ý chỉ lặp lại câu hỏi hay ra lệnh ("Xác định…", "Cung cấp…") bị controller bỏ đi. Câu hỏi mở chưa có gợi ý sẽ được gợi ý ở lượt **Check the inventory again** hoặc **Extract again** sau.
 - **Answer**: gõ câu trả lời. Nếu là ý của khách hàng thì ghi rõ "từ khách hàng, qua Sales". Câu trả lời tự thành một quyết định.
 - **Defer**: hoãn sang sau, kèm lý do. Câu hoãn không chặn baseline và được ghi vào baseline.
 - **Withdraw**: rút câu hỏi không còn đúng, kèm lý do.
