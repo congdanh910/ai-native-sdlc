@@ -72,7 +72,9 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
         <p className="m-0 text-muted">
           {need.action === "ingesting"
             ? `Add the raw requirements in the Sources tab (drag and drop, or paste text); ${sources} added so far. The Business Analyst then reads every source part by part and writes the requirement inventory; every item cites the page, slide or cell it comes from.`
-            : `Inventory v${rounds} is in the Requirements tab (round ${run.rounds?.used ?? rounds} of ${run.rounds?.limit ?? "?"}). Answer the questions (Questions tab), add sources or minutes, then extract again: only what is new is read.`}
+            : (run.questions ?? []).some((q) => q.status === "open")
+              ? `Inventory v${rounds} is in the Requirements tab (round ${run.rounds?.used ?? rounds} of ${run.rounds?.limit ?? "?"}). Answer the questions (Questions tab), add sources or minutes, then extract again: only what is new is read.`
+              : `No open questions (inventory v${rounds}, round ${run.rounds?.used ?? rounds} of ${run.rounds?.limit ?? "?"}). Next: prepare the baseline below. If you recorded decisions after this version, extract again first so the inventory includes them.`}
         </p>
         {need.action === "clarifying" ? (
           <div className="flex flex-wrap gap-2 text-xs">
@@ -100,7 +102,7 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
           {need.action === "ingesting" ? "Start extraction" : "Extract again"}</ActionButton>
           {need.action === "clarifying" ? <ActionButton success="The Business Analyst checks the inventory again" action={() => post("extract?again=true", {})}>Check the inventory again</ActionButton> : null}</div>
         {need.action === "clarifying" ? (
-          <details className="rounded-lg border border-line p-3">
+          <details className="rounded-lg border border-line p-3" open={!(run.questions ?? []).some((q) => q.status === "open")}>
             <summary className="cursor-pointer text-sm font-semibold">Prepare the baseline (Product Owner)</summary>
             <div className="mt-2 flex flex-col gap-2">
               <p className="m-0 text-sm text-muted">The baseline is inventory v{rounds} with the accepted decisions. At its gate the controller checks that no blocking question or conflict is open, every feature in scope has functions and quality targets have numbers; you tick the review items, then requirements/ goes to the repository through a draft PR.</p>
