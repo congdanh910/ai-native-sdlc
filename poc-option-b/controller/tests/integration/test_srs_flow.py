@@ -217,3 +217,27 @@ def test_the_sds_records_the_chosen_option_in_section_9(db, sample_repo):
     assert check_chosen_option(sds, chosen) == []
     assert check_chosen_option(sds.replace("PA2 Managed cloud", "a cloud"), chosen) == [
         "section 9 does not record the chosen option PA2 Managed cloud"]
+
+
+def test_changes_asked_on_an_srs_pull_request_rewrite_the_document_from_its_last_draft(db, sample_repo):
+    from controller.app.coordinator import build_context
+    post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
+    run = post("/api/runs", {"project": "task-board", "brief": BRIEF, "idempotency_key": str(uuid.uuid4())}, status=201)
+    drain()
+    srs = srs_document(run["id"])
+    post(f"/api/runs/{run['id']}/approve-spec", {"document_id": srs["id"], "sha256": srs["sha256"], "checked": TICKS})
+    drain()
+    refused = client.post(f"/api/runs/{run['id']}/pr-decision", json={"decision": "request_changes", "reason": ""})
+    assert refused.status_code == 409
+    detail = post(f"/api/runs/{run['id']}/pr-decision", {"decision": "request_changes",
+                                                         "reason": "Split check-in and check-out into two stories"})
+    assert detail["status"] == "SPECIFYING"
+    with session_scope() as session:
+        from controller.app.models import Run as RunModel
+        context = build_context(session, session.get(RunModel, uuid.UUID(run["id"])), kind="specify")
+        assert context.srs_md == srs["content"]  # the last draft, not the empty SRS of the base commit
+    drain()
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    assert detail["status"] == "WAITING_SPEC_APPROVAL"
+    assert [d["version"] for d in detail["documents"] if d["kind"] == "srs"] == [1, 2]
+    assert [(a["stage"], a["decision"]) for a in detail["approvals"]][-1] == ("pr", "request_changes")

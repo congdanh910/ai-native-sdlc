@@ -207,6 +207,14 @@ def test_the_baseline_gate_then_requirements_in_the_repository(db, sample_repo):
     assert files == ["requirements/baseline.json", "requirements/baseline.md", "requirements/decisions.md",
                      "requirements/inventory.md", "requirements/questions.md", "requirements/sources.md",
                      "requirements/sources/Brief.md"]
+    back = post(f"/api/runs/{run}/pr-decision", {"decision": "request_changes", "reason": "scope note is wrong"})
+    assert back["status"] == "CLARIFYING"  # the next approved baseline updates the same PR
+    detail = post(f"/api/runs/{run}/baseline", {"scope": "Phase 1: reports only"})
+    baseline = [d for d in detail["documents"] if d["kind"] == "baseline"][-1]
+    post(f"/api/runs/{run}/baseline/approve", {"document_id": baseline["id"], "checked": ticks})
+    drain()
+    detail = client.get(f"/api/runs/{run}").json()
+    assert detail["status"] == "WAITING_PR_APPROVAL"
     post(f"/api/runs/{run}/pr-decision", {"decision": "approve", "checked": [h["id"] for h in detail["checklist"]["human"]]})
     assert client.get(f"/api/runs/{run}").json()["status"] == "COMPLETED"
 

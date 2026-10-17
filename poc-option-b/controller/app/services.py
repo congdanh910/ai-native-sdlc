@@ -447,6 +447,16 @@ def pr_decision(session: Session, run: Run, *, actor: str, decision: str, reason
             raise DecisionError("say which changes the team should make")
         _corrected(run)
         pull.review_status = "changes_requested"
+        if run.kind in (RunKind.SRS, RunKind.SDS):
+            # The document is written again with the reason as feedback, goes through its gate again, and the
+            # same draft PR gets the new version.
+            transition_run(session, run, RunStatus.SPECIFYING, actor=actor, acting_role=CO, reason=reason)
+            coordinator.queue(session, run, "specify", key=f"pr-changes:v{run.version}")
+            return
+        if run.kind == RunKind.DISCOVERY:
+            # Back to clarifying; the next approved baseline updates the same draft PR.
+            transition_run(session, run, RunStatus.CLARIFYING, actor=actor, acting_role=CO, reason=reason)
+            return
         transition_run(session, run, RunStatus.CODING, actor=actor, acting_role=CO, reason=reason)
         for task in coordinator.current_tasks(session, run):
             transition_task(session, task, TaskStatus.READY, actor=actor, reason=f"changes requested: {reason}")

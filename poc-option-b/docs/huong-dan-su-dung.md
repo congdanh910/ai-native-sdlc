@@ -206,6 +206,18 @@ Trên tab **Decisions**:
 
 Nếu baseline chưa merge, run dừng ở `NEEDS_HUMAN` với lý do "merge the discovery pull request first".
 
+### Khi SRS (hoặc SDS) chưa đạt
+
+| Tình huống | Làm gì |
+|---|---|
+| Sai ít, anh tự sửa được | **Edit** ở cổng, sửa Markdown, **Save as new version**. Controller kiểm lại khung và truy vết; bản sửa ghi là của người |
+| Cần AI viết lại theo góp ý | Ghi rõ cần đổi gì vào ô **Reason**, bấm **Reject: rewrite**. BA (hoặc Architect) nhận **bản nháp mới nhất cùng góp ý**, sửa đúng chỗ, giữ nguyên ID, rồi cổng duyệt lại |
+| Đã qua cổng, mở PR rồi mới thấy sai | Ở panel PR, ghi lý do rồi bấm **Request changes**. Run quay về bước viết tài liệu như trên; duyệt xong thì **cùng PR đó** được cập nhật |
+| Sai từ gốc requirement (thiếu, sai phạm vi) | Sửa ở Discovery: bổ sung nguồn hoặc quyết định trong một discovery mới, chốt baseline mới, merge, rồi chạy lại SRS từ baseline đó |
+| Không cần nữa | **Reject: cancel run**, hoặc **Close without merge** ở bước PR |
+
+Ở bước PR của **Discovery**, **Request changes** đưa run về Clarifying; lần chốt baseline sau sẽ cập nhật cùng PR đó.
+
 ## 7. SDS và bước Options
 
 1. **New request → Project SDS** (cần `SRS.md` đã merge): điền stack, deployment, tích hợp, ghi chú.

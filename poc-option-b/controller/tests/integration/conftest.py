@@ -23,9 +23,11 @@ def database():
 
 @pytest.fixture
 def db(database, tmp_path, monkeypatch):
-    # The operator's .env may put discovery on another engine; tests run on the default engines.
+    # The operator's .env may put roles or discovery on other engines (Codex when the Claude quota is out); tests
+    # pin the engines they were written for.
     from controller.app.config import get_settings
-    monkeypatch.setenv("SDLC_DISCOVERY_ENGINE", "")
+    for key, value in {"SDLC_DISCOVERY_ENGINE": "", "SDLC_ENGINES": "", "SDLC_DEFAULT_ENGINE": "claude-readonly"}.items():
+        monkeypatch.setenv(key, value)
     get_settings.cache_clear()
     with database.begin() as connection:
         connection.execute(text(f"truncate {', '.join(TABLES)} restart identity cascade"))
