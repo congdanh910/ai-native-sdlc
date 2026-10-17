@@ -1,5 +1,6 @@
 """Team API used by the web control room. Every decision is made as SDLC_OPERATOR."""
 
+import logging
 from pathlib import Path
 from typing import Literal
 import uuid
@@ -23,6 +24,7 @@ from controller.app.schemas import Intent
 from controller.app.states import STAGE_STARTER, HumanRole
 from controller.app.team import get_team
 
+log = logging.getLogger("sdlc.web")
 router = APIRouter(prefix="/api")
 
 
@@ -136,6 +138,19 @@ def _decide(run_id: uuid.UUID, action) -> dict:
         raise HTTPException(404, str(exc)) from exc
     except (services.DecisionError, ValueError) as exc:
         raise HTTPException(409, str(exc)) from exc
+
+
+class ClientError(Body):
+    message: str = Field(max_length=2000)
+    stack: str = Field(default="", max_length=8000)
+    where: str = Field(default="", max_length=32)
+    url: str = Field(default="", max_length=500)
+
+
+@router.post("/client-errors", status_code=204)
+def client_error(body: ClientError) -> None:
+    """A crash of the control room in the browser, written to the API log for diagnosis."""
+    log.error("control room error (%s) at %s: %s\n%s", body.where, body.url, body.message, body.stack)
 
 
 @router.get("/meta")

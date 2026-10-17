@@ -104,3 +104,14 @@ def test_each_job_has_a_live_log(db, sample_repo, tmp_path, monkeypatch):
     assert later["text"] == "" and later["offset"] == log["offset"]
     other = client.get(f"/api/runs/{uuid.uuid4()}/executions/{specify['id']}/log")
     assert other.status_code == 404
+
+
+def test_a_control_room_crash_is_written_to_the_api_log(db, caplog):
+    import logging
+    from fastapi.testclient import TestClient
+    from controller.app.main import app
+    with caplog.at_level(logging.ERROR, logger="sdlc.web"):
+        response = TestClient(app, headers={"X-SDLC-Client": "web"}).post(
+            "/api/client-errors", json={"message": "x is undefined", "stack": "at RunView", "where": "render",
+                                        "url": "http://127.0.0.1:8770/#/runs/1"})
+    assert response.status_code == 204 and "x is undefined" in caplog.text and "at RunView" in caplog.text
