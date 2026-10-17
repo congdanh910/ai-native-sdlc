@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
+# Operator CLI for the AI-native SDLC POC. Run from anywhere.
 set -euo pipefail
-project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$project_root"
-if [[ ! -x .venv/bin/python ]]; then
-  echo "Python environment missing; run 'uv sync --locked' in $project_root" >&2
-  exit 1
-fi
-exec .venv/bin/python -m scripts.sdlc "$@"
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$here"
+exec uv run --quiet --locked python -m cli.sdlc "$@"

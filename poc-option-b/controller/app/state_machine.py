@@ -1,65 +1,55 @@
-from datetime import datetime, timezone
-from uuid import uuid4
+"""Explicit, transactional, version-checked state transitions."""
 
 from sqlalchemy import update
 from sqlalchemy.orm import Session
 
-from controller.app.models import Event, Run
+from controller.app.events import record_event
+from controller.app.models import Run, Task
+from controller.app.states import RUN_TRANSITIONS, TASK_TRANSITIONS, RunStatus, TaskStatus
 
 
-TRANSITIONS: dict[str, frozenset[str]] = {
-    "RECEIVED": frozenset({"ANALYZING", "CANCELLED"}),
-    "ANALYZING": frozenset({"PLANNING", "FAILED", "NEEDS_HUMAN", "CANCELLED"}),
-    "PLANNING": frozenset({"WAITING_PLAN_APPROVAL", "FAILED", "NEEDS_HUMAN", "CANCELLED"}),
-    "WAITING_PLAN_APPROVAL": frozenset({"READY", "NEEDS_HUMAN", "CANCELLED"}),
-    "READY": frozenset({"CODING", "CANCELLED"}),
-    "CODING": frozenset({"VALIDATING", "CANCELLING", "FAILED", "NEEDS_HUMAN"}),
-    "CANCELLING": frozenset({"CANCELLED", "NEEDS_HUMAN"}),
-    "VALIDATING": frozenset({"REVIEWING", "FAILED", "NEEDS_HUMAN"}),
-    "REVIEWING": frozenset({"PR_READY", "FAILED", "NEEDS_HUMAN"}),
-    "PR_READY": frozenset({"WAITING_PR_APPROVAL", "NEEDS_HUMAN", "CANCELLED"}),
-    "WAITING_PR_APPROVAL": frozenset({"COMPLETED", "NEEDS_HUMAN", "CANCELLED"}),
-    "NEEDS_HUMAN": frozenset({"CANCELLED"}),
-    "FAILED": frozenset({"VALIDATING"}),
-    "CANCELLED": frozenset(),
-    "COMPLETED": frozenset(),
-}
-
-
-class ConflictError(Exception):
+class InvalidTransition(Exception):
     pass
 
 
-class NotFoundError(Exception):
+class StaleVersion(Exception):
     pass
 
 
-class CancellationRequested(Exception):
-    pass
-
-
-def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def event(session: Session, run_id, event_type: str, payload: dict) -> None:
-    session.add(Event(id=uuid4(), run_id=run_id, event_type=event_type, payload_jsonb=payload))
-
-
-def transition(session: Session, run: Run, target: str, expected_version: int | None = None) -> Run:
-    if target not in TRANSITIONS.get(run.status, frozenset()):
-        raise ConflictError(f"invalid transition: {run.status} -> {target}")
-    if expected_version is not None and run.version != expected_version:
-        raise ConflictError("stale run version")
-    statement = (
-        update(Run)
-        .where(Run.id == run.id, Run.status == run.status, Run.version == run.version)
-        .values(status=target, version=Run.version + 1, updated_at=utc_now())
-        .execution_options(synchronize_session=False)
-    )
-    if session.execute(statement).rowcount != 1:
-        raise ConflictError("run changed concurrently")
-    session.expire(run)
-    session.refresh(run)
-    event(session, run.id, "run.transition", {"status": target, "version": run.version})
+def transition_run(session: Session, run: Run, to: RunStatus, *, actor: str, acting_role: str | None = None,
+                   reason: str | None = None, expected_version: int | None = None, **changes) -> Run:
+    """Move a run to `to`. The UPDATE only applies if the version is unchanged since it was read."""
+    current = RunStatus(run.status)
+    if to not in RUN_TRANSITIONS[current]:
+        raise InvalidTransition(f"run cannot go from {current} to {to}")
+    version = run.version if expected_version is None else expected_version
+    if version != run.version:
+        raise StaleVersion(f"run is at version {run.version}, not {version}")
+    values = {"status": to.value, "version": version + 1, "status_reason": reason, **changes}
+    result = session.execute(update(Run).where(Run.id == run.id, Run.version == version).values(**values)
+                             .execution_options(synchronize_session=False))
+    if result.rowcount != 1:
+        raise StaleVersion("run changed concurrently; reload and retry")
+    for key, value in values.items():
+        setattr(run, key, value)
+    record_event(session, "run.transition", actor=actor, acting_role=acting_role, run_id=run.id,
+                 project_id=run.project_id,
+                 payload={"from": current.value, "to": to.value, "version": run.version, "reason": reason})
     return run
+
+
+def transition_task(session: Session, task: Task, to: TaskStatus, *, actor: str, reason: str | None = None,
+                    **changes) -> Task:
+    current = TaskStatus(task.status)
+    if to not in TASK_TRANSITIONS[current]:
+        raise InvalidTransition(f"task {task.external_task_id} cannot go from {current} to {to}")
+    values = {"status": to.value, "version": task.version + 1, **changes}
+    result = session.execute(update(Task).where(Task.id == task.id, Task.version == task.version).values(**values)
+                             .execution_options(synchronize_session=False))
+    if result.rowcount != 1:
+        raise StaleVersion("task changed concurrently; reload and retry")
+    for key, value in values.items():
+        setattr(task, key, value)
+    record_event(session, "task.transition", actor=actor, run_id=task.run_id,
+                 payload={"task": task.external_task_id, "from": current.value, "to": to.value, "reason": reason})
+    return task

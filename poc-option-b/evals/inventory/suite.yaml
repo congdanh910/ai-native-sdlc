@@ -1,0 +1,22 @@
+# Plan-only eval suite for the second pilot project (Python, standard library).
+# Golden plans were written by the platform team (Claude, 2026-10-14) from AGENTS.md: rules in items.py,
+# persistence in store.py, wiring in cli.py. Replace them with human-approved plans when they exist.
+name: inventory
+project: inventory                   # register https://github.com/congdanh910/ai-native-inventory-demo, branch main
+base_commit: 15cb8da4e99d774d47cc272e2e1502bcc80037c5
+cases:
+  - id: low-stock
+    feature: features/01-low-stock.md
+    golden: golden/01-low-stock.json
+  - id: categories
+    feature: features/02-categories.md
+    golden: golden/02-categories.json
+  - id: history
+    feature: features/03-history.md
+    golden: golden/03-history.json
+  - id: csv-export
+    feature: features/04-csv-export.md
+    golden: golden/04-csv-export.json
+  - id: search
+    feature: features/05-search.md
+    golden: golden/05-search.json

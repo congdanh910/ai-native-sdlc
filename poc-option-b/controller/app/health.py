@@ -1,0 +1,242 @@
+"""Health checks shared by `sdlc doctor` and the API readiness endpoint."""
+
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
+import json
+from pathlib import Path
+import subprocess
+
+import httpx
+from sqlalchemy import Engine, text
+
+from controller.app import capacity, migrations
+from controller.app.compose import run_compose
+from controller.app.config import ENV_FILE, PLACEHOLDER, Settings
+from controller.app.processes import WORKER
+from controller.app.tunnel import tunnel_status
+
+OK, WARN, FAIL = "ok", "warn", "fail"
+
+
+@dataclass(frozen=True)
+class Check:
+    name: str
+    status: str
+    detail: str
+    hint: str = ""
+
+    def as_dict(self) -> dict:
+        return asdict(self)
+
+
+def _guard(name: str, hint: str, func: Callable[[], Check]) -> Check:
+    try:
+        return func()
+    except Exception as exc:  # a failing check must never break the report
+        return Check(name, FAIL, _short_error(exc), hint)
+
+
+def _short_error(exc: Exception) -> str:
+    """First line of the innermost error, without library boilerplate."""
+    root = exc.orig if getattr(exc, "orig", None) is not None else exc
+    message = str(root).strip().splitlines()[0] if str(root).strip() else type(root).__name__
+    return message[:200]
+
+
+def env_file_placeholders(path: Path = ENV_FILE) -> list[str]:
+    """Keys in .env whose value still contains CHANGE_ME, including keys only compose reads."""
+    keys = []
+    for line in path.read_text().splitlines():
+        key, sep, value = line.partition("=")
+        if sep and not line.lstrip().startswith("#") and PLACEHOLDER in value:
+            keys.append(key.strip())
+    return keys
+
+
+def check_config(settings: Settings) -> Check:
+    if not ENV_FILE.is_file():
+        return Check("config", FAIL, ".env is missing", "Run ./sdlc init")
+    missing = sorted(set(settings.placeholders()) | set(env_file_placeholders()))
+    if missing:
+        return Check("config", FAIL, "placeholder values: " + ", ".join(missing),
+                     "Edit .env or rerun ./sdlc init with the GX10 options")
+    problems = settings.gx10_problems() if settings.sdlc_qwen_enabled else []
+    if problems:
+        return Check("config", FAIL, "; ".join(problems), "Edit the GX10_* values in .env")
+    try:
+        engines = settings.default_engines
+    except ValueError as exc:
+        return Check("config", FAIL, str(exc), "Edit SDLC_ENGINES, SDLC_DEFAULT_ENGINE or SDLC_QWEN_ENABLED in .env")
+    qwen = "Qwen on GX10 enabled" if settings.sdlc_qwen_enabled else "Qwen disabled"
+    return Check("config", OK, f"operator {settings.sdlc_operator}; {qwen}; engines "
+                               + ", ".join(f"{role}={engine}" for role, engine in engines.items()))
+
+
+def check_docker() -> Check:
+    def run() -> Check:
+        result = subprocess.run(["docker", "info", "--format", "{{.ServerVersion}}"],
+                                capture_output=True, text=True, timeout=15, check=False)
+        if result.returncode:
+            return Check("docker", FAIL, "Docker is not reachable", "Start Docker Desktop")
+        return Check("docker", OK, f"engine {result.stdout.strip()}")
+    return _guard("docker", "Install or start Docker Desktop", run)
+
+
+def check_postgres(engine: Engine) -> Check:
+    def run() -> Check:
+        with engine.connect() as connection:
+            version = connection.execute(text("show server_version")).scalar_one()
+        return Check("postgres", OK, f"server {version}")
+    return _guard("postgres", "Run ./sdlc up", run)
+
+
+def check_migrations(engine: Engine) -> Check:
+    def run() -> Check:
+        current, head = migrations.current_revision(engine), migrations.head_revision()
+        if current != head:
+            return Check("migrations", FAIL, f"database at {current}, code at {head}", "Run ./sdlc up")
+        return Check("migrations", OK, f"at {head}")
+    return _guard("migrations", "Run ./sdlc up", run)
+
+
+def check_langflow(settings: Settings) -> Check:
+    def run() -> Check:
+        response = httpx.get(f"{settings.langflow_url}/health_check", timeout=5)
+        body = response.json()
+        if response.status_code != 200 or body.get("db") != "ok":
+            return Check("langflow", FAIL, f"HTTP {response.status_code}: {body}", "Check ./sdlc logs langflow")
+        return Check("langflow", OK, settings.langflow_url)
+    return _guard("langflow", "Run ./sdlc up", run)
+
+
+def check_tunnel(settings: Settings) -> Check:
+    status = tunnel_status(settings)
+    port = settings.ollama_tunnel_port
+    if status.state == "owned":
+        return Check("tunnel", OK, f"127.0.0.1:{port} (started by sdlc, pid {status.pid})")
+    if status.state == "external":
+        return Check("tunnel", OK, f"127.0.0.1:{port} (opened outside sdlc)")
+    return Check("tunnel", FAIL, f"nothing listens on 127.0.0.1:{port}", "Run ./sdlc up")
+
+
+def check_ollama(settings: Settings) -> Check:
+    def run() -> Check:
+        response = httpx.get(f"{settings.ollama_url}/api/tags", timeout=8)
+        response.raise_for_status()
+        names = {model.get("name") for model in response.json().get("models", [])}
+        if settings.ollama_model not in names:
+            return Check("ollama", FAIL, f"model {settings.ollama_model} not found; have {sorted(names)}",
+                         "Pull the model on GX10 or change OLLAMA_MODEL")
+        return Check("ollama", OK, f"{settings.ollama_model} available")
+    return _guard("ollama", "Check the tunnel and the GX10 Ollama container", run)
+
+
+def check_langflow_to_ollama(settings: Settings) -> Check:
+    url = f"{settings.ollama_url_from_langflow}/api/tags"
+    code = f"import urllib.request; urllib.request.urlopen({url!r}, timeout=8)"
+
+    def run() -> Check:
+        result = run_compose("exec", "-T", "langflow", "python", "-c", code, timeout=30)
+        if result.returncode and "not running" in result.stderr:
+            return Check("langflow->ollama", FAIL, "Langflow container is not running", "Run ./sdlc up")
+        if result.returncode:
+            return Check("langflow->ollama", FAIL, f"Langflow cannot reach {url}",
+                         "The tunnel must listen on 127.0.0.1; check Docker host networking")
+        return Check("langflow->ollama", OK, url)
+    return _guard("langflow->ollama", "Run ./sdlc up", run)
+
+
+def check_gx10_capacity(settings: Settings) -> Check:
+    def run() -> Check:
+        sample = capacity.sample(settings)
+        detail = f"{sample.available_mib} MiB free, GPU {sample.gpu_util_percent}%"
+        reasons = capacity.evaluate(sample, min_available_mib=settings.gx10_min_available_mib,
+                                    max_gpu_util=settings.gx10_max_gpu_util)
+        if reasons:
+            return Check("gx10-capacity", WARN, f"{detail}; " + "; ".join(reasons),
+                         "Model calls will wait until GX10 has capacity")
+        return Check("gx10-capacity", OK, detail)
+    result = _guard("gx10-capacity", "Check SSH access to GX10", run)
+    # Capacity is informational here; the worker enforces it before each model call.
+    return result if result.status != FAIL else Check(result.name, WARN, result.detail, result.hint)
+
+
+def check_api(settings: Settings) -> Check:
+    def run() -> Check:
+        response = httpx.get(f"{settings.api_url}/health/live", timeout=3)
+        response.raise_for_status()
+        return Check("api", OK, settings.api_url)
+    return _guard("api", "Run ./sdlc up", run)
+
+
+def check_flows(settings: Settings) -> Check:
+    from controller.app.integrations.langflow import client_from_settings
+
+    def run() -> Check:
+        drift = client_from_settings(settings).flow_drift(settings.ollama_model, settings.ollama_num_ctx)
+        if drift:
+            status = FAIL if settings.sdlc_team_mode == "qwen3" else WARN
+            return Check("flows", status, "; ".join(drift), "Run ./sdlc up to sync langflow/prompts into Langflow")
+        return Check("flows", OK, f"5 role flows match langflow/prompts (team mode {settings.sdlc_team_mode})")
+    return _guard("flows", "Run ./sdlc up", run)
+
+
+def check_worker() -> Check:
+    pid = WORKER.pid()
+    if pid is None:
+        return Check("worker", FAIL, "the team worker is not running; runs will not move", "Run ./sdlc up")
+    return Check("worker", OK, f"pid {pid}")
+
+
+def _run(args: list[str]) -> subprocess.CompletedProcess:
+    return subprocess.run(args, capture_output=True, text=True, timeout=30, check=False)
+
+
+def check_executors(settings: Settings) -> list[Check]:
+    """Doing roles: Codex and Claude Code logged in with a subscription, gh logged in for draft PRs."""
+    if settings.coding_is_mocked:
+        return [Check("doing roles", OK, "mocked (SDLC_DOING_MODE=mock); no CLI, container or GitHub is used")]
+
+    def codex() -> Check:
+        login = _run(["codex", "login", "status"])
+        text = (login.stdout + login.stderr).strip()
+        if login.returncode or "ChatGPT" not in text:
+            return Check("codex", FAIL, text or "not logged in", "Run codex login (ChatGPT subscription, not an API key)")
+        return Check("codex", OK, f"{_run(['codex', '--version']).stdout.strip()}, {text}")
+
+    def claude() -> Check:
+        data = json.loads(_run(["claude", "auth", "status"]).stdout or "{}")
+        if not data.get("loggedIn") or data.get("authMethod") != "claude.ai":
+            return Check("claude", FAIL, f"auth {data.get('authMethod') or 'none'}",
+                         "Run claude and log in with your claude.ai subscription")
+        return Check("claude", OK, f"{_run(['claude', '--version']).stdout.strip()}, claude.ai subscription")
+
+    def gh() -> Check:
+        status = _run(["gh", "auth", "status"])
+        if status.returncode:
+            return Check("gh", FAIL, "not logged in", "Run gh auth login")
+        return Check("gh", OK, "logged in; draft PRs use this login")
+
+    return [_guard("codex", "Install the Codex CLI", codex), _guard("claude", "Install Claude Code", claude),
+            _guard("gh", "Install the GitHub CLI", gh)]
+
+
+def readiness_checks(settings: Settings, engine: Engine) -> list[Check]:
+    """Fast checks for /health/ready."""
+    qwen = [check_langflow(settings), check_flows(settings), check_tunnel(settings), check_ollama(settings)] \
+        if settings.sdlc_qwen_enabled else []
+    return [check_postgres(engine), check_migrations(engine), *qwen, check_worker()]
+
+
+def doctor_checks(settings: Settings, engine: Engine) -> list[Check]:
+    config = check_config(settings)
+    if config.status == FAIL:
+        return [config]
+    gx10 = [check_langflow_to_ollama(settings), check_gx10_capacity(settings)] if settings.sdlc_qwen_enabled else []
+    return [config, check_docker(), *readiness_checks(settings, engine), *gx10, check_api(settings),
+            *check_executors(settings)]
+
+
+def overall(checks: list[Check]) -> str:
+    statuses = {check.status for check in checks}
+    return FAIL if FAIL in statuses else WARN if WARN in statuses else OK
