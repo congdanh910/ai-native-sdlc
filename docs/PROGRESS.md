@@ -1,6 +1,6 @@
 # Tiến độ và bàn giao
 
-_Cập nhật: 2026-10-16_
+_Cập nhật: 2026-10-19_
 
 ## Việc đang làm: Discovery (tài liệu thô → baseline → SRS và SDS)
 
@@ -68,11 +68,11 @@ sinh phiên bản theo vòng.
 - `.env` (17/10): **mọi vai suy nghĩ trên `codex-readonly`** (`SDLC_TEAM_MODE`, `SDLC_DEFAULT_ENGINE`, `SDLC_ENGINES`,
   `SDLC_DISCOVERY_ENGINE`) vì hết hạn mức Claude; vai viết code vẫn Codex (`default_executor: codex`). Bản `.env` trước đó
   lưu ở scratchpad của phiên. Quay lại Claude: đặt ba khoá về `claude-readonly`, `./sdlc down && ./sdlc up`. Codex CLI cho vai viết code (model trong `~/.codex/config.toml`).
-- Dữ liệu: dọn lần 2 ngày 17/10 theo yêu cầu: chỉ còn dự án `attendance`. Run Discovery thật đầu tiên "Điểm Danh"
-  (887374fa, VMS pptx, BA Codex) COMPLETED: PR #5 merge vào attendance (`requirements/`). Bước tiếp: Check again ở
-  Projects, rồi run SRS từ baseline. Dự án thử `discovery-trial`
-  và 4 run (Discovery 160d89d8 và 9735e5fd, SRS f7ca490c, SDS 9111958c) đã xoá khỏi database và `.data/`; kết quả chạy
-  thử chỉ còn ghi lại ở mục trên.
+- Dữ liệu: dọn lần 3 ngày 19/10 theo yêu cầu. Database chỉ còn dự án `attendance` (0 run, readiness ready); mọi bảng
+  run/eval đã truncate, worktree, log và source của run đã xoá. Repo attendance: `main` = commit bc5fe9e, chỉ còn file
+  onboarding (`.sdlc/project.yaml`, AGENTS.md, CLAUDE.md, README.md, REVIEW.md), nhánh `sdlc/run-*` đã xoá, không
+  force push. Kết quả trước khi dọn: Discovery 887374fa (PR #5), SRS 25d2a548 (PR #6), SDS be8fc101 (viết lại theo
+  outline GRM: 4 lượt, 16 sơ đồ Mermaid, qua depth check, đang chờ cổng SDS thì bị xoá).
 - Test lần cuối: 211 pass (bỏ test docker, test đó pass khi chạy riêng).
 
 ## Việc treo, chờ người dùng
@@ -92,6 +92,5 @@ sinh phiên bản theo vòng.
 
 ## Bước tiếp theo
 
-Người dùng kiểm tra một lần D1–D6 (tracker) và các run thử ở trên trong control room; sau đó: sửa theo góp ý, rồi
-(khi người dùng đồng ý) chạy lại bước Extract trên hai file VMS và OCR để kiểm tính chung. Dự án `discovery-trial`
-giữ lại cho tới khi người dùng xem xong.
+Người dùng chạy lại từ đầu trên `attendance`: Discovery → SRS từ baseline → SDS → story đầu tiên. Mọi vai đang chạy
+`codex-readonly`.
