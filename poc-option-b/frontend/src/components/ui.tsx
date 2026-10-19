@@ -166,13 +166,45 @@ function MermaidBlock({ code }: { code: string }) {
   return <div className="my-3 overflow-x-auto rounded-lg border border-line bg-panel p-3" dangerouslySetInnerHTML={{ __html: svg }} />;
 }
 
+/** The anchor id the controller writes for a heading (project_docs._slug), so a table of contents can link to it. */
+function slug(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function textOf(node: ReactNode): string {
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(textOf).join("");
+  if (node && typeof node === "object" && "props" in node) return textOf((node as { props: { children?: ReactNode } }).props.children);
+  return "";
+}
+
+function heading(Tag: "h1" | "h2" | "h3" | "h4" | "h5" | "h6") {
+  return function Heading({ children }: { children?: ReactNode }) {
+    return <Tag id={slug(textOf(children))}>{children}</Tag>;
+  };
+}
+
+const HEADINGS = { h1: heading("h1"), h2: heading("h2"), h3: heading("h3"), h4: heading("h4"), h5: heading("h5"), h6: heading("h6") };
+
 export function Markdown({ source }: { source: string }) {
   return (
     <div className="md">
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
+        ...HEADINGS,
         code({ className, children, ...rest }) {
           if (/language-mermaid/.test(className ?? "")) return <MermaidBlock code={String(children).replace(/\n$/, "")} />;
           return <code className={className} {...rest}>{children}</code>;
+        },
+        a({ href, children }) {
+          if (!href?.startsWith("#")) return <a href={href} target="_blank" rel="noreferrer">{children}</a>;
+          // The control room routes on the URL hash, so an in-document link scrolls inside this document instead.
+          return (
+            <a href={href} onClick={(e) => {
+              e.preventDefault();
+              const target = e.currentTarget.closest(".md")?.querySelector(`[id="${CSS.escape(decodeURIComponent(href.slice(1)))}"]`);
+              target?.scrollIntoView({ behavior: "smooth", block: "start" });
+            }}>{children}</a>
+          );
         },
       }}>{source}</ReactMarkdown>
     </div>
