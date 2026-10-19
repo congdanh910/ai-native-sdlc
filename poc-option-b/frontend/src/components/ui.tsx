@@ -171,6 +171,10 @@ function slug(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
+// Raw HTML is not rendered: the explicit anchors after SRS/SDS headings (for GitHub) would show as text. The heading
+// gets the same id from its own text instead.
+const ANCHOR = /[ \t]*<a id="[^"]*"><\/a>/g;
+
 function textOf(node: ReactNode): string {
   if (typeof node === "string" || typeof node === "number") return String(node);
   if (Array.isArray(node)) return node.map(textOf).join("");
@@ -206,7 +210,7 @@ export function Markdown({ source }: { source: string }) {
             }}>{children}</a>
           );
         },
-      }}>{source}</ReactMarkdown>
+      }}>{source.replace(ANCHOR, "")}</ReactMarkdown>
     </div>
   );
 }
