@@ -7,6 +7,7 @@ events from the Claude and Codex CLIs are summarised to one readable line each. 
 
 from contextvars import ContextVar
 from datetime import datetime
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -71,6 +72,30 @@ def save_prompt(label: str, text: str) -> None:
     name = f"{number:02d}-{re.sub(r'[^a-z0-9_-]+', '-', label.lower()).strip('-')[:60]}.md"
     (folder / name).write_text(_redact(text))
     note(f"prompt saved: {name} ({len(text):,} characters)")
+
+
+def resumable(key: str, inputs, compute, load):
+    """The result of one step of the running job (an SDS pass, the reading of one source part), kept next to its log
+    so that a retry of the job (a timeout, a sleeping Mac, a quota limit) reuses the steps already done instead of
+    asking the model again. A step is reused only when its inputs, the prompt files included, are the same.
+    Returns (value, reused)."""
+    path = _current.get()
+    fingerprint = hashlib.sha256(json.dumps(inputs, sort_keys=True, default=str).encode()).hexdigest()
+    target = path.with_suffix(".checkpoints") / f"{re.sub(r'[^a-z0-9_-]+', '-', key.lower()).strip('-')[:80]}.json" \
+        if path is not None else None
+    if target is not None and target.is_file():
+        try:
+            saved = json.loads(target.read_text())
+            if saved.get("fingerprint") == fingerprint:
+                note(f"{key}: reused the result of an earlier attempt")
+                return load(saved["value"]), True
+        except (ValueError, KeyError, TypeError):
+            pass  # unreadable or of an older shape: do the step again
+    value = compute()
+    if target is not None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps({"fingerprint": fingerprint, "value": value.model_dump()}, default=str))
+    return value, False
 
 
 def list_prompts(run_id, execution_id) -> list[dict]:

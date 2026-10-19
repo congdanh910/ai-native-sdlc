@@ -245,6 +245,8 @@ Developer báo test sai (`DISPUTE`), hoặc một bước lỗi, thì run dừng
 
 Ở cổng nào cũng có ba hướng: **tự sửa** (Edit, lưu thành phiên bản mới của người), **yêu cầu AI làm lại** (Reject kèm lý do), hoặc **huỷ**. Lý do anh ghi được gửi nguyên văn cho vai AI ở lần làm lại, cùng bản nháp trước của nó, để nó sửa đúng chỗ và giữ nguyên ID.
 
+Job lỗi (hết thời gian, máy ngủ, hết hạn mức) được **tự thử lại** tối đa 3 lần, cột Attempts trên bảng Jobs cho biết đang ở lần thứ mấy. Lần thử lại **chạy tiếp từ bước đã xong**: các lượt SDS và các phần tài liệu đã đọc xong được dùng lại nếu đầu vào và prompt không đổi; log ghi "reused the result of an earlier attempt". Khi job đang chạy, hãy cắm sạc và đừng gập nắp máy Mac: gập nắp thì máy vẫn ngủ dù worker đã giữ `caffeinate`.
+
 Với spec, SRS và SDS, bản viết lại có khung **Changes since vN** ngay trên tài liệu ở cổng duyệt: **What you asked** (các lý do từ chối, hoặc Request changes trên PR, kể từ bản trước), **How the AI role says it handled it** (với mỗi điểm góp ý: AI đã đổi gì hoặc vì sao không đổi, kèm các mục bị ảnh hưởng; SDS gộp câu trả lời của cả 4 lượt), **Sections that changed** (mục nào đổi, số dòng thêm/bớt, đổi nhiều nhất xếp trước) và nút **Show the diff with vN** để xem từng dòng. Câu trả lời của AI chỉ là lời tự khai: hãy đối chiếu với diff. Nếu AI không trả lời, khung báo vàng. Góp ý của người duyệt luôn thắng phương án đã chọn và bản nháp trước (ví dụ bỏ một công nghệ của PA1).
 
 | Cổng | Tự sửa | Yêu cầu AI làm lại | Ai nhận góp ý |

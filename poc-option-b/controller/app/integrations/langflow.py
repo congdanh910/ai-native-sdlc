@@ -47,6 +47,14 @@ class RolePrompt:
         return FLOW_PREFIX + self.role
 
 
+def prompt_text(role: str) -> str:
+    """The prompt files of a role as they are now; part of what makes a saved step reusable on a retry."""
+    try:
+        return role_prompt(role).text
+    except (ValueError, OSError):
+        return ""
+
+
 def role_prompt(role: str, prompts: Path = PROMPTS) -> RolePrompt:
     if role not in ROLES:
         raise ValueError(f"unknown role prompt {role!r}")

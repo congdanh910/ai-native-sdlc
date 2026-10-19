@@ -1215,13 +1215,18 @@ def _read_parts(team: Team, context: RunContext, parts: list, read, record, what
 
 def _extract(team: Team, loaded: Loaded) -> dict:
     """New sources part by part, new minutes, then one consolidation pass over the merged inventory."""
-    from controller.app.discovery.inventory import ChunkResult, Inventory, Update, apply_consolidation, merge_chunks
+    from controller.app.discovery.inventory import (ChunkResult, Inventory, MinutesResult, Update, apply_consolidation,
+                                                    merge_chunks)
+    from controller.app.integrations.langflow import prompt_text
     context, extra = loaded.context, loaded.extra
     calls: list[dict] = []
+    reused = [False]  # the step just done came from an earlier attempt: no new call to record
 
     def record() -> None:
         call = getattr(team, "last_call", None)
-        if call:
+        if reused[0]:
+            reused[0] = False
+        elif call:
             calls.append({"engine": call.engine, "prompt_version": call.prompt_version, "attempts": call.attempts,
                           "usage": call.usage})
 
@@ -1231,7 +1236,12 @@ def _extract(team: Team, loaded: Loaded) -> dict:
     chunks = [(sid, ChunkResult.model_validate(c)) for sid, stored in extra["reused"].items() for c in stored]
 
     def read_part(part_context, part):
-        chunk = team.extract_part(dataclasses.replace(part_context, repository={"known": known}), part)
+        snapshot = {kind: list(names) for kind, names in known.items()}
+        chunk, reused[0] = joblog.resumable(
+            f"extract {part.source_id} {part.label}",
+            {"source": part.source_id, "part": part.label, "known": snapshot, "prompt": prompt_text("extract")},
+            lambda: team.extract_part(dataclasses.replace(part_context, repository={"known": snapshot}), part),
+            ChunkResult.model_validate)
         joblog.note(f"  {len(chunk.items)} item(s), {len(chunk.gaps)} question(s)")
         for item in chunk.items:  # later parts reuse the names of earlier ones
             if item.type in ("actor", "feature", "term", "data") and item.name not in known.setdefault(item.type, []):
@@ -1249,8 +1259,16 @@ def _extract(team: Team, loaded: Loaded) -> dict:
     previous = Inventory.model_validate({**extra["previous"], "coverage": {}}) if extra["previous"] else None
     inventory = merge_chunks(chunks, previous)
     dumped = inventory.model_dump()
-    minutes = _read_parts(team, context, extra["minutes"],
-                          lambda c, part: team.read_minutes(c, part, extra["questions"], dumped["items"]), record, "minutes")
+
+    def read_minutes(part_context, part):
+        result, reused[0] = joblog.resumable(
+            f"minutes {part.source_id} {part.label}",
+            {"source": part.source_id, "part": part.label, "questions": extra["questions"], "items": dumped["items"],
+             "prompt": prompt_text("minutes")},
+            lambda: team.read_minutes(part_context, part, extra["questions"], dumped["items"]),
+            MinutesResult.model_validate)
+        return result
+    minutes = _read_parts(team, context, extra["minutes"], read_minutes, record, "minutes")
     joblog.note(f"{len(inventory.items)} item(s), {len(extra['decisions'])} accepted decision(s); "
                 "the Business Analyst consolidates")
     if inventory.items:

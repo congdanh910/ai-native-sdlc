@@ -16,7 +16,7 @@ from pydantic import BaseModel, ValidationError
 from controller.app import capacity, joblog
 from controller.app.config import Settings
 from controller.app.integrations.langflow import (InvalidModelOutput, LangflowClient, client_from_settings,
-                                                  extract_json, role_prompt)
+                                                  extract_json, prompt_text, role_prompt)
 from controller.app.discovery.extract import Part, compact_items, repair_chunk, repair_consolidation, repair_minutes
 from controller.app.discovery.inventory import ChunkResult, Consolidation, MinutesResult
 from controller.app.project_docs import SDS_PARTS, Options, Sds, Srs, sds_part_model, srs_features
@@ -168,10 +168,15 @@ class LangflowTeam(MockTeam):
         calls = []
         for index, part in enumerate(SDS_PARTS, start=1):
             joblog.note(f"Architect writes part {index} of {len(SDS_PARTS)} ({part})")
-            answer = self._ask(part, {**base, "part": f"{index} of {len(SDS_PARTS)}: {part}", "design_so_far": design},
-                               sds_part_model(part), lambda data, p=part: normalize.sds_part(data, p),
-                               f"{context.session_id}:{part}", retries=context.policy.max_format_retries)
-            calls.append(self.last_call)
+            payload = {**base, "part": f"{index} of {len(SDS_PARTS)}: {part}", "design_so_far": design}
+            model = sds_part_model(part)
+            answer, reused = joblog.resumable(
+                f"sds {part}", {"payload": payload, "prompt": prompt_text(part)},
+                lambda: self._ask(part, payload, model, lambda data, p=part: normalize.sds_part(data, p),
+                                  f"{context.session_id}:{part}", retries=context.policy.max_format_retries),
+                model.model_validate)
+            if not reused:
+                calls.append(self.last_call)
             written = answer.model_dump()
             replies += written.pop("feedback_replies", [])
             design.update(written)

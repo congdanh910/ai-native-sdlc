@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from controller.app.project_docs import (Message, ObjectStates, Sds, Table, check_sds_depth, mermaid_erd,
                                          mermaid_flow, mermaid_sequence, mermaid_states, render_sds, srs_features)
 from controller.tests.unit.test_langflow import context
@@ -73,7 +75,7 @@ def test_the_depth_check_wants_the_diagrams_dtos_and_apis():
         "§6.2 has no DTOs for the core objects", "§7.1 has no sign-in flow"]
 
 
-def test_the_architect_writes_the_sds_in_four_passes_each_reading_the_earlier_ones(settings):
+def test_the_architect_writes_the_sds_in_four_passes_each_reading_the_earlier_ones(settings, tmp_path, monkeypatch):
     from controller.app.team.langflow_team import LangflowTeam
     answers = {
         "sds-model": {"purpose": "p", "scope": "s", "traceability": [{"object": "Order"}],
@@ -92,6 +94,8 @@ def test_the_architect_writes_the_sds_in_four_passes_each_reading_the_earlier_on
         def run(self, endpoint, payload, session_id):
             part = endpoint.removeprefix("sdlc-v3-")
             seen.append((part, sorted(payload["design_so_far"])))
+            if answers[part] is None:
+                raise TimeoutError("codex timed out after 600s")
             return json.dumps(answers[part])
     team = LangflowTeam(settings, client=Client(), check_capacity=lambda: [], check_ollama=lambda: None)
     sds = team.write_sds(context())
@@ -100,3 +104,22 @@ def test_the_architect_writes_the_sds_in_four_passes_each_reading_the_earlier_on
     assert sds.process[0].messages[0].text == "place order" and sds.dtos[0].fields[0].type == "uuid"
     assert sds.backend.structure == "src/\nsrc/orders/" and sds.endpoints[0].response.startswith("{")
     assert sds.metrics[0].name == "Orders per day" and team.last_call.attempts == 4
+
+    # A retry of the job (the Mac slept during part 3, say) reuses the parts already written; a new log starts clean.
+    from controller.app import joblog
+    monkeypatch.setattr(joblog, "DATA_DIR", tmp_path)
+    seen.clear()
+    answers["sds-interfaces"], interfaces = None, answers["sds-interfaces"]
+    joblog.start(context().run_id or "run", "job-1", "specify")
+    try:
+        with pytest.raises(TimeoutError):
+            team.write_sds(context())
+        assert [p for p, _ in seen] == ["sds-model", "sds-architecture", "sds-interfaces"]
+        seen.clear()
+        answers["sds-interfaces"] = interfaces
+        again = team.write_sds(context())
+        assert [p for p, _ in seen] == ["sds-interfaces", "sds-operations"]  # parts 1 and 2 came from the first try
+        assert again.process[0].messages[0].text == "place order" and team.last_call.attempts == 2
+        assert "sds sds-model: reused the result of an earlier attempt" in joblog.current().read_text()
+    finally:
+        joblog.stop()

@@ -17,7 +17,7 @@ _Cập nhật: 2026-10-17. Mỗi mục ghi vì sao nó nằm đây và lúc nào
 | 2.1 | Chạy lại Extract trên file VMS và OCR sau các bản sửa ngày 16/10 (links, quyết định có tác động rõ, chia đôi lượt quá dài) | Kiểm thiết kế vẫn chung cho mọi dự án; hỏi người dùng trước vì tốn quota |
 | 2.2 | So sánh Claude và Codex làm BA trên cùng một bộ tài liệu | Codex tách mục mịn hơn nhiều (76 mục từ 2 trang, Claude 63 mục cả file 11 trang) và không thấy hình của trang (bảng, sơ đồ) |
 | 2.3 | PDF scan và ảnh khi BA chạy Codex | Hiện dừng và báo lỗi; cần OCR (ví dụ Tesseract) hoặc bắt buộc Claude cho loại nguồn này |
-| 2.4 | Lưu kết quả từng lượt đọc ngay khi xong, chạy lại thì đọc tiếp | Job hỏng giữa chừng (hết quota, máy ngủ) thì đọc lại từ đầu |
+| 2.4 | ~~Lưu kết quả từng lượt đọc ngay khi xong, chạy lại thì đọc tiếp~~ Đã làm 19/10 trong một job (`joblog.resumable`): lần thử lại dùng lại các phần đã đọc. Còn lại: job hỏng hẳn (hết 3 lần) rồi bấm Extract again thì vẫn đọc lại | Hết quota giữa chừng hay dừng hẳn thì vẫn mất phần đã đọc |
 | 2.6 | Đổi engine của một run đang mở ngay trên giao diện | 16/10 phải dùng script để ghim lại engine run 9735e5fd (có event `engines.repinned`) |
 | 2.7 | Vai Discovery chỉnh trên UI | Người dùng: mặc định PO, BA, SA, TA, QC, DPO, Sales là đủ; "linh hoạt trên UI để sau" |
 | 2.8 | Khách hàng tự trả lời câu hỏi trên nền tảng; đồng bộ câu hỏi với Jira/email; đọc ghi âm/video họp | Ngoài phạm vi theo thiết kế (mục 11), cần tài khoản và phân quyền |

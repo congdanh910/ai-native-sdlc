@@ -119,6 +119,16 @@ hay thay công nghệ ở mọi chỗ, không để lại làm phương án dự
   (10 chỗ còn lại đều là "thay Keycloak"), nhưng còn câu ghi chú nội bộ trong §1.3 và §9; chờ người dùng duyệt.
 - Test: 227 pass.
 
+## Thêm ngày 19/10: lần thử lại chạy tiếp từ bước đã xong
+
+- Job tự thử lại tối đa `JOB_MAX_ATTEMPTS` (3) lần. Trước đây mỗi lần thử lại SDS viết lại từ lượt 1, Extract đọc lại
+  từ đầu. Nay `joblog.resumable` lưu kết quả từng bước vào `<job>.checkpoints/` cạnh log; lần thử lại dùng lại bước có
+  cùng đầu vào và cùng nội dung prompt (log ghi "reused the result of an earlier attempt"). Áp cho 4 lượt SDS, từng
+  phần đọc nguồn của Extract và từng phần biên bản.
+- Nguyên nhân job SDS 659f3b45 hỏng lần 1: Mac ngủ khi gập nắp, chạy pin (16:32–18:18). `caffeinate -i` không chặn
+  được ngủ khi gập nắp; đồng hồ timeout 600s chỉ đếm lúc máy thức.
+- Test: 228 pass. Dịch vụ CHƯA khởi động lại vì job SDS 659f3b45 đang chạy (lần 2); khởi động lại khi job xong.
+
 ## Bước tiếp theo
 
 Người dùng chạy lại từ đầu trên `attendance`: Discovery → SRS từ baseline → SDS → story đầu tiên. Mọi vai đang chạy

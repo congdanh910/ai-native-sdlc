@@ -54,3 +54,26 @@ def test_a_job_keeps_the_exact_prompts_it_sent(tmp_path, monkeypatch, settings):
     assert "Business Analyst" in text and '"name": "Điểm danh"' in text  # instructions, then the run's JSON
     assert joblog.read_prompt(run, execution, "../x.log") is None
     assert "prompt saved: 01-consolidate-claude.md" in joblog.read(run, execution)[0]
+
+
+def test_a_step_of_a_job_is_reused_on_retry_only_with_the_same_inputs(tmp_path, monkeypatch):
+    from controller.app.discovery.inventory import ChunkResult
+    monkeypatch.setattr(joblog, "DATA_DIR", tmp_path)
+    asked = []
+
+    def compute():
+        asked.append(1)
+        return ChunkResult.model_validate({"items": [], "read": [f"page {len(asked)}"]})
+    # no job log (a test, a script): the step just runs
+    assert joblog.resumable("read part", {"part": "pages 1-10"}, compute, ChunkResult.model_validate)[1] is False
+    joblog.start(uuid.uuid4(), uuid.uuid4(), "extract")
+    try:
+        first, reused = joblog.resumable("read part", {"part": "pages 1-10"}, compute, ChunkResult.model_validate)
+        assert not reused and first.read == ["page 2"]
+        again, reused = joblog.resumable("read part", {"part": "pages 1-10"}, compute, ChunkResult.model_validate)
+        assert reused and again == first and len(asked) == 2
+        changed, reused = joblog.resumable("read part", {"part": "pages 1-10", "prompt": "v2"}, compute,
+                                           ChunkResult.model_validate)
+        assert not reused and changed.read == ["page 3"]
+    finally:
+        joblog.stop()
