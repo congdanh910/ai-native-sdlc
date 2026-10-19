@@ -90,6 +90,17 @@ sinh phiên bản theo vòng.
 - Một worker: các job chạy lần lượt, job extract dài chặn preflight của dự án khác.
 - Lượt đọc PDF dày tốn nhiều hạn mức subscription (10 trang ~12 phút); test trên file nhỏ trước.
 
+## Sửa ngày 19/10 (run Discovery 8a0b8f6e của attendance)
+
+- Feature ra ngoài phạm vi kéo theo mục con (function, rule, permission…, theo `parent`, lồng nhiều cấp), trích cùng
+  quyết định; mục mà một quyết định trong lượt đó nêu tên thì giữ theo quyết định đó (`_cascade_out_of_scope` trong
+  `discovery/inventory.py`). Áp ở mỗi lượt consolidate (Extract again / Check the inventory again).
+- Cổng baseline: function có feature cha đã ra ngoài phạm vi được báo rõ "belongs to REQ-064 …, which is out of scope
+  (D-013)" thay vì "belongs to no feature". Cảnh báo NFR không số có trạng thái `warning` (vàng), không còn `fail`.
+- Run 8a0b8f6e đang ở cổng baseline với inventory v3 cũ (REQ-065 còn trong phạm vi): Back to clarifying → Check the
+  inventory again → Prepare baseline.
+- Test: 226 pass (bỏ test docker).
+
 ## Bước tiếp theo
 
 Người dùng chạy lại từ đầu trên `attendance`: Discovery → SRS từ baseline → SDS → story đầu tiên. Mọi vai đang chạy

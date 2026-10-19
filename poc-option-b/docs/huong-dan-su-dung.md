@@ -192,8 +192,8 @@ Trên tab **Decisions**:
 
 1. Mở **Prepare the baseline (Product Owner)** trong panel, ghi **Scope of this phase** (phạm vi đã thoả thuận với khách hàng), bấm **Prepare baseline**.
 2. Ở cổng baseline có checklist:
-   - **Controller tự kiểm, trượt thì không duyệt được:** không còn câu hỏi chặn hay câu mâu thuẫn đang mở; không còn quyết định chờ duyệt; bảng đã áp mọi quyết định (nếu chưa thì Extract again); mọi mục có nguồn hoặc quyết định; mỗi feature trong phạm vi có ít nhất một function, và mỗi function thuộc một feature.
-   - **Cảnh báo của BA:** NFR chưa có con số. Mục này không chặn, vì NFR định tính như "mã hoá dữ liệu" vốn không có số.
+   - **Controller tự kiểm, trượt thì không duyệt được:** không còn câu hỏi chặn hay câu mâu thuẫn đang mở; không còn quyết định chờ duyệt; bảng đã áp mọi quyết định (nếu chưa thì Extract again); mọi mục có nguồn hoặc quyết định; mỗi feature trong phạm vi có ít nhất một function, và mỗi function thuộc một feature. Đưa một feature (hay actor) ra ngoài phạm vi thì các mục con của nó (function, rule, permission…) ra theo, trích cùng quyết định; inventory cũ chưa có điều này thì cổng ghi rõ "thuộc REQ-xxx đã ra ngoài phạm vi (D-xxx)", bấm Back to clarifying rồi Check the inventory again.
+   - **Cảnh báo của BA** (nhãn `warning` màu vàng): NFR chưa có con số. Mục này không chặn, vì NFR định tính như "mã hoá dữ liệu" vốn không có số.
    - **PO tick:** phạm vi đúng với thoả thuận; các mục ngoài phạm vi và câu hoãn chấp nhận được; danh sách actor và quyền đã đủ.
 3. **Approve baseline**: platform commit `requirements/` lên branch của run (`baseline.md`, `baseline.json`, `inventory.md`, `questions.md`, `decisions.md`, `sources.md`, `sources/`) rồi mở draft PR. **Back to clarifying** để quay lại sửa.
 4. Merge PR trên GitHub; worker ghi nhận trong vòng 1 phút và đóng run Discovery. Sau đó vào **Projects → Check again**.

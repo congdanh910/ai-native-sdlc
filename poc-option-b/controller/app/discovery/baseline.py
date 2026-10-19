@@ -31,6 +31,8 @@ def check(inventory: Inventory, problems: list[str], questions: list[dict], deci
     features = [i for i in in_scope if i.type == "feature"]
     accepted = [d["id"] for d in decisions if d["status"] == "accepted"]
     feature_names = {n.lower() for f in features for n in [f.name, *f.aliases]}
+    excluded = {n.lower(): f for f in inventory.items if f.type == "feature" and f.status == "out_of_scope"
+                for n in [f.name, *f.aliases]}
     functions = {i.parent.lower() for i in in_scope if i.type == "function"}
     return [
         result("blocking", "No blocking question is open", [f"{q['number']} {q['question'][:80]}" for q in open_ if q["blocking"]]),
@@ -45,9 +47,18 @@ def check(inventory: Inventory, problems: list[str], questions: list[dict], deci
         result("functions", "Every feature in scope has at least one function, and every function belongs to a feature",
                [f"{f.id} {f.name} has no function" for f in features
                 if not ({n.lower() for n in [f.name, *f.aliases]} & functions)]
-               + [f"{i.id} {i.name} belongs to no feature" for i in in_scope if i.type == "function"
+               + [_orphan(i, excluded.get(i.parent.lower())) for i in in_scope if i.type == "function"
                   and i.parent.lower() not in feature_names]),
     ]
+
+
+def _orphan(item, feature) -> str:
+    if feature is None:
+        return f"{item.id} {item.name} belongs to no feature"
+    decided = [c.source.removeprefix("decision:") for c in feature.sources if c.source.startswith("decision:")]
+    by = f" ({decided[-1]})" if decided else ""
+    return (f"{item.id} {item.name} belongs to {feature.id} {feature.name}, which is out of scope{by}; "
+            "check the inventory again to take it out too")
 
 
 def advisories(inventory: Inventory, questions: list[dict]) -> list[dict]:
@@ -60,7 +71,7 @@ def advisories(inventory: Inventory, questions: list[dict]) -> list[dict]:
             if not settled:
                 numberless.append(f"{item.id} {item.name}")
     return [{"id": "nfr-targets", "text": "Quality targets have a number, or a question about them is answered or deferred",
-             "status": "fail" if numberless else "pass",
+             "status": "warning" if numberless else "pass",
              "note": ("no number: " + "; ".join(numberless[:8]) + ". Fine for a qualitative target; ask otherwise.")
              if numberless else ""}]
 

@@ -233,10 +233,27 @@ def apply_consolidation(inventory: Inventory, consolidation: Consolidation, deci
         cite = Citation(source=f"decision:{update.decision}", location="")
         by_id[target] = item.model_copy(update={"status": update.status or item.status, "text": update.text or item.text,
                                                 "sources": item.sources + ([cite] if cite not in item.sources else [])})
+    _cascade_out_of_scope(by_id, {dropped.get(u.id, u.id) for u in consolidation.updates if u.decision in decisions})
     items = [by_id[item.id] for item in inventory.items if item.id not in dropped]
     gaps = [gap.model_copy(update={"items": [dropped.get(i, i) for i in gap.items]})
             for gap in [*inventory.gaps, *consolidation.gaps]]
     return Inventory(items=items, gaps=_unique_gaps(gaps), coverage=inventory.coverage)
+
+
+def _cascade_out_of_scope(by_id: dict[str, Item], decided: set[str]) -> None:
+    """An item out of scope takes the items that belong to it (functions of a feature, permissions of an actor ...)
+    out with it, citing the same decision; an item a decision of this pass names keeps what that decision says."""
+    changed = True
+    while changed:
+        changed = False
+        for parent in [i for i in by_id.values() if i.status == "out_of_scope"]:
+            names = {_norm(n) for n in [parent.name, *parent.aliases]}
+            cites = [c for c in parent.sources if c.source.startswith("decision:")][-1:]
+            for item_id, item in by_id.items():
+                if item.status != "out_of_scope" and item_id not in decided and _norm(item.parent) in names:
+                    by_id[item_id] = item.model_copy(update={
+                        "status": "out_of_scope", "sources": item.sources + [c for c in cites if c not in item.sources]})
+                    changed = True
 
 
 def _unique_gaps(gaps: list[Gap]) -> list[Gap]:

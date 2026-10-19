@@ -230,3 +230,25 @@ def test_check_again_keeps_only_conflict_questions():
     result = _extract(team, Loaded(None, "extract", None, 1, context=context(), extra=extra))
     assert [g["question"] for g in result["inventory"]["gaps"]] == ["Slide 3 and D-002 differ?"] and result["again"]
     assert team.round_info == {"round": 4, "new_input": []}
+
+
+def test_a_feature_out_of_scope_takes_its_functions_with_it():
+    first = chunk(({"type": "feature", "name": "Alternative attendance"}, "page 2"),
+                  ({"type": "function", "name": "Check in by card", "parent": "Alternative attendance"}, "page 3"),
+                  ({"type": "rule", "name": "One card per person", "parent": "Check in by card"}, "page 3"),
+                  ({"type": "function", "name": "Check in by PIN", "parent": "Alternative attendance"}, "page 3"))
+    inventory = merge_chunks([("s1", first)])
+    from controller.app.discovery.baseline import advisories, check
+    out = Consolidation.model_validate({"updates": [{"id": "REQ-001", "decision": "D-001", "status": "out_of_scope"}]})
+    kept = Consolidation.model_validate({"updates": [*out.model_dump()["updates"],
+                                                     {"id": "REQ-004", "decision": "D-002", "status": "confirmed"}]})
+    applied = apply_consolidation(inventory, kept, {"D-001", "D-002"})
+    assert [(i.id, i.status) for i in applied.items] == [("REQ-001", "out_of_scope"), ("REQ-002", "out_of_scope"),
+                                                          ("REQ-003", "out_of_scope"), ("REQ-004", "confirmed")]
+    assert applied.items[2].sources[-1].source == "decision:D-001"
+    # an inventory from before the cascade: the gate names the feature and the decision
+    stale = inventory.model_copy(update={"items": [applied.items[0], *inventory.items[1:]]})
+    detail = {c["id"]: c for c in check(stale, [], [], [], [])}["functions"]["detail"]
+    assert "REQ-002 Check in by card belongs to REQ-001 Alternative attendance, which is out of scope (D-001)" in detail
+    nfr = merge_chunks([("s1", chunk(({"type": "nfr", "name": "Privacy", "text": "Data is protected"}, "page 4")))])
+    assert advisories(nfr, [])[0]["status"] == "warning"

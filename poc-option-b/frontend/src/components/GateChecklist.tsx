@@ -2,7 +2,7 @@ import { Check, CircleAlert, X } from "lucide-react";
 import type { GateChecklist as Checklist } from "../lib/api";
 import { cn } from "../lib/utils";
 
-const AI_TONE: Record<string, string> = { pass: "text-good", "n/a": "text-muted", deferred: "text-warn", fail: "text-bad" };
+const AI_TONE: Record<string, string> = { pass: "text-good", "n/a": "text-muted", deferred: "text-warn", warning: "text-warn", fail: "text-bad" };
 
 /** Controller checks (block the approval when they fail), the AI role's self-check, and the items the reviewer ticks. */
 export function GateChecklist({ checklist, checked, onChange }: { checklist: Checklist; checked: string[]; onChange: (ids: string[]) => void }) {
