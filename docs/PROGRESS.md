@@ -101,6 +101,13 @@ sinh phiên bản theo vòng.
   inventory again → Prepare baseline.
 - Test: 226 pass (bỏ test docker).
 
+## Sửa ngày 19/10: lý do từ chối SDS thắng phương án đã chọn
+
+Run SDS 70de92e2: người dùng từ chối 2 lần vì không muốn Keycloak, SDS vẫn giữ. Lý do từ chối có tới cả 4 lượt, nhưng
+prompt bảo stack của `chosen_option` (PA1 có Keycloak) "là của thiết kế" và giữ nguyên `current_sds` (43 chỗ Keycloak),
+còn feedback không nói là được ưu tiên. Bốn prompt `sds-*.md` nay nói feedback ghi đè chosen_option và current_sds, bỏ
+hay thay công nghệ ở mọi chỗ, không để lại làm phương án dự phòng; decision "Architecture Option" ghi thay đổi đó.
+
 ## Bước tiếp theo
 
 Người dùng chạy lại từ đầu trên `attendance`: Discovery → SRS từ baseline → SDS → story đầu tiên. Mọi vai đang chạy
