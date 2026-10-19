@@ -48,10 +48,21 @@ def _document(document: Document) -> dict:
             "repo_path": document.repo_path, "commit_sha": document.commit_sha,
             "findings": (document.data or {}).get("sync_findings", []),
             "revision": (document.data or {}).get("revision"),
+            **({"choices": _option_choices(document.data)} if document.kind == "options" and document.data else {}),
             # the per-source chunks are kept for the next round only; the page needs the merged inventory
             **({"inventory": {k: v for k, v in (document.data or {}).items() if k != "chunks"}}
                if document.kind == "inventory" else {}),
             "created_at": document.created_at.isoformat()}
+
+
+def _option_choices(data: dict) -> dict:
+    """What the Solution Architect picks from: the options and the hosting variants of each, with the recommendations."""
+    from controller.app.project_docs import Options, number_options, platform_name
+    options = number_options(Options.model_validate(data))
+    return {"recommendation": options.recommendation,
+            "options": [{"id": o.id, "name": o.name, "recommended_hosting": o.recommended_hosting,
+                         "hosting": [{"id": v.id, "name": v.name, "platform": platform_name(v.platform)} for v in o.hosting]}
+                        for o in options.options]}
 
 
 def _plan(plan: Plan) -> dict:

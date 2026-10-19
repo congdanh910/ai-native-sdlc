@@ -129,6 +129,17 @@ hay thay công nghệ ở mọi chỗ, không để lại làm phương án dự
   được ngủ khi gập nắp; đồng hồ timeout 600s chỉ đếm lúc máy thức.
 - Test: 228 pass. Dịch vụ CHƯA khởi động lại vì job SDS 659f3b45 đang chạy (lần 2); khởi động lại khi job xong.
 
+## Thêm ngày 19/10: deployment view và phương án hosting
+
+- Options: mỗi phương án có `hosting` (biến thể PA1-H1…: platform, services thành phần → dịch vụ, nfr_fit, cost,
+  personal_data, operations, risks, pros/cons) và `recommended_hosting`; `architecture.hosting_platforms`,
+  `max_hosting_variants` trong project.yaml (ghim vào effective_policy). Cổng Options kiểm có biến thể, đúng nền tảng,
+  có khuyến nghị. SA chọn phương án + hosting (`hosting` trong POST options/choose); `chosen_option.hosting`.
+- SDS: `zones`, `links`, `environments`, `resilience`; node có `zone`, `service`, `scaling`. §4.5 vẽ
+  `mermaid_deployment` (subgraph lồng theo zone), bảng node/zone/kết nối/môi trường/backup. Depth check đòi sơ đồ §4.5;
+  §9 phải ghi biến thể hosting đã chọn. Prompt options.md, sds-architecture.md, sds-operations.md cập nhật.
+- Test: 229 pass. Chưa chạy thật với Codex.
+
 ## Bước tiếp theo
 
 Người dùng chạy lại từ đầu trên `attendance`: Discovery → SRS từ baseline → SDS → story đầu tiên. Mọi vai đang chạy

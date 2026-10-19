@@ -219,18 +219,28 @@ def test_the_sds_records_the_chosen_option_in_section_9(db, sample_repo):
     detail = client.get(f"/api/runs/{run['id']}").json()
     assert [d["version"] for d in detail["documents"] if d["kind"] == "options"] == [1, 2]
     options = [d for d in detail["documents"] if d["kind"] == "options"][-1]
-    post(f"/api/runs/{run['id']}/options/choose", {"document_id": options["id"], "option": "PA2", "reason": "own cloud",
-                                                    "checked": [h["id"] for h in detail["checklist"]["human"]]})
+    # every option has hosting variants on the project's platforms (default aws, azure, ...), one recommended
+    choices = {o["id"]: o for o in options["choices"]["options"]}
+    assert [v["id"] for v in choices["PA2"]["hosting"]] == ["PA2-H1", "PA2-H2"] and choices["PA2"]["recommended_hosting"] == "PA2-H1"
+    assert "### PA2 Managed cloud: hosting" in options["content"]
+    assert {c["id"]: c["ok"] for c in detail["checklist"]["controller"]}["compared"] is True
+    refused = client.post(f"/api/runs/{run['id']}/options/choose", json={
+        "document_id": options["id"], "option": "PA2", "hosting": "PA1-H1", "reason": "own cloud",
+        "checked": [h["id"] for h in detail["checklist"]["human"]]})
+    assert refused.status_code == 409 and "hosting variants of PA2" in refused.text
+    post(f"/api/runs/{run['id']}/options/choose", {"document_id": options["id"], "option": "PA2", "hosting": "PA2-H2",
+                                                    "reason": "own cloud", "checked": [h["id"] for h in detail["checklist"]["human"]]})
     drain()
     detail = client.get(f"/api/runs/{run['id']}").json()
     sds = [d for d in detail["documents"] if d["kind"] == "sds"][-1]["content"]
-    assert "### 9.1 Architecture Option" in sds and "PA2 Managed cloud: own cloud" in sds
+    assert "### 9.1 Architecture Option" in sds and "PA2 Managed cloud, hosted as PA2-H2 Mock hosting on azure: own cloud" in sds
     assert {c["id"]: c["ok"] for c in detail["checklist"]["controller"]}["option"] is True
     from controller.app.project_docs import check_chosen_option
-    chosen = {"id": "PA2", "name": "Managed cloud"}
+    chosen = {"id": "PA2", "name": "Managed cloud", "hosting": {"id": "PA2-H2", "name": "Mock hosting on azure"}}
     assert check_chosen_option(sds, chosen) == []
-    assert check_chosen_option(sds.replace("PA2 Managed cloud", "a cloud"), chosen) == [
-        "section 9 does not record the chosen option PA2 Managed cloud"]
+    assert check_chosen_option(sds.replace("PA2 Managed cloud", "a cloud").replace("PA2-H2 Mock hosting on azure", "x"),
+                               chosen) == ["section 9 does not record the chosen option PA2 Managed cloud",
+                                           "section 9 does not record the chosen hosting PA2-H2 Mock hosting on azure"]
 
 
 def test_changes_asked_on_an_srs_pull_request_rewrite_the_document_from_its_last_draft(db, sample_repo):

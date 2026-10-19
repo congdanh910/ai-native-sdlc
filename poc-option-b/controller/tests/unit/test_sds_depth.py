@@ -58,6 +58,12 @@ def full_sds(**overrides) -> Sds:
         "endpoints": [{"method": "POST", "path": "/api/v1/orders", "feature": "OR", "stories": ["OR-US-01"],
                        "request": '{"items": []}', "response": '{"id": "o-1"}'}],
         "auth": {"method": "session", "flow": [{"source": "Buyer", "target": "API", "text": "sign in"}]},
+        "zones": [{"name": "AWS account", "kind": "cloud"}, {"name": "Private subnet", "kind": "subnet", "parent": "AWS account"}],
+        "deployment": [{"name": "API service", "runs": "API", "zone": "Private subnet", "service": "Amazon ECS on Fargate",
+                        "scaling": "2-6 tasks"}],
+        "links": [{"source": "Buyer", "target": "API service", "protocol": "HTTPS 443", "security": "TLS"}],
+        "environments": [{"term": "production", "meaning": "two availability zones"}],
+        "resilience": [{"term": "Backup", "meaning": "daily snapshots, RPO 24 h"}],
         "decisions": [{"title": "t", "context": "c", "decision": "d"}]}
     data.update(overrides)
     return Sds.model_validate(data)
@@ -68,8 +74,14 @@ def test_the_depth_check_wants_the_diagrams_dtos_and_apis():
     content = render_sds(full_sds(), features, product="Shop", author="t")
     assert check_sds_depth(content, SRS) == []
     assert "#### 2.4.1 Order State" in content and "### 4.4 Process View" in content and "erDiagram" in content
-    thin = render_sds(full_sds(process=[], dtos=[], states=[], auth={}), features, product="Shop", author="t")
+    physical = content.split("### 4.5 Physical View")[1].split("### 4.6")[0]
+    assert 'subgraph z0["AWS account"]' in physical and 'subgraph z1["Private subnet"]' in physical
+    assert '"HTTPS 443 · TLS"' in physical and "| API service | Private subnet | Amazon ECS on Fargate |" in physical
+    assert "| production | two availability zones |" in physical and "| Backup | daily snapshots, RPO 24 h |" in physical
+    thin = render_sds(full_sds(process=[], dtos=[], states=[], auth={}, zones=[], links=[]), features, product="Shop",
+                      author="t")
     assert check_sds_depth(thin, SRS) == [
+        "§4.5 has no deployment diagram (zones, nodes and their connections)",
         "§4.4 has 0 sequence diagram(s) for 2 SRS business flow(s)",
         "§2.4 has 0 state diagram(s) for 1 SRS entities with a lifecycle",
         "§6.2 has no DTOs for the core objects", "§7.1 has no sign-in flow"]
@@ -123,3 +135,23 @@ def test_the_architect_writes_the_sds_in_four_passes_each_reading_the_earlier_on
         assert "sds sds-model: reused the result of an earlier attempt" in joblog.current().read_text()
     finally:
         joblog.stop()
+
+
+def test_options_compare_hosting_variants_on_the_projects_platforms():
+    from controller.app.project_docs import Options, check_options, number_options, render_options
+    from controller.app.team.normalize import options as normalize_options
+    data = normalize_options({"context": "c", "recommendation": "Central", "reason": "r", "options": [
+        {"name": "Central", "summary": "s", "recommended_hosting": "On-Premise",
+         "hosting": [{"platform": "Amazon Web Services", "name": "AWS managed", "services": {"API": "Amazon ECS"}},
+                     {"platform": "On-Premise", "name": "Own data centre", "services": ["API: VM with Docker"],
+                      "pros": "- data stays in the country"}]},
+        {"name": "Edge", "summary": "s"}]})
+    options = number_options(Options.model_validate(data))
+    central = options.options[0]
+    assert [(v.id, v.platform) for v in central.hosting] == [("PA1-H1", "aws"), ("PA1-H2", "on_premise")]
+    assert central.recommended_hosting == "PA1-H2" and central.hosting[1].services[0].service == "VM with Docker"
+    assert check_options(options, None, ["aws", "on_premise"]) == ["PA2 has no hosting variant"]
+    assert check_options(options, None, ["on_premise"])[0] == "PA1 hosting outside architecture.hosting_platforms: PA1-H1 (aws)"
+    text = render_options(options, title="Shop")
+    assert "| Platform | AWS | On-premise |" in text and "**Recommended hosting for PA1:** PA1-H2 Own data centre." in text
+    assert "| API | VM with Docker | — |" in text

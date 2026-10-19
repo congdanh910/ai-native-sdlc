@@ -263,9 +263,12 @@ def evaluate_gate(session: Session, run: Run, gate: str | None = None) -> dict |
         controller, ai = baseline_checks(session, run)
     elif gate == "options":
         document = latest_document(session, run.id, "options")
-        problems = check_options(Options.model_validate(document.data), json.loads(artifact(session, run.id, "baseline") or "null"))
-        controller = [checklists._result("compared", "Every option in the baseline is compared and the recommendation is one "
-                                         "of the options", problems)]
+        platforms = EffectivePolicy.model_validate_json(raw_policy).hosting_platforms if raw_policy else None
+        problems = check_options(Options.model_validate(document.data), json.loads(artifact(session, run.id, "baseline") or "null"),
+                                 platforms)
+        controller = [checklists._result("compared", "Every option in the baseline is compared, the recommendation is one "
+                                         "of the options, and each option has hosting variants on the project's "
+                                         "platforms with one recommended", problems)]
     elif gate == "srs":
         content = latest_document(session, run.id, "srs").content
         problems = check_srs_markdown(content)
@@ -281,12 +284,13 @@ def evaluate_gate(session: Session, run: Run, gate: str | None = None) -> dict |
         problems = check_sds_markdown(content, srs_text)
         controller = [checklists._result("outline", "SDS sections are present and every SRS story has a section 5 entry",
                                          problems),
-                      checklists._result("depth", "The design has its diagrams (context, data, every SRS flow and "
-                                         "lifecycle, sign-in), DTOs and API specifications", check_sds_depth(content, srs_text))]
+                      checklists._result("depth", "The design has its diagrams (context, deployment, data, every SRS "
+                                         "flow and lifecycle, sign-in), DTOs and API specifications", check_sds_depth(content, srs_text))]
         chosen = json.loads(artifact(session, run.id, "chosen_option") or "null")
         if chosen:
+            hosting = f", hosted as {chosen['hosting']['id']} {chosen['hosting']['name']}" if chosen.get("hosting") else ""
             controller.append(checklists._result("option", f"Section 9 records the chosen option ({chosen['id']} "
-                                                 f"{chosen['name']}) and why", check_chosen_option(content, chosen)))
+                                                 f"{chosen['name']}{hosting}) and why", check_chosen_option(content, chosen)))
     elif gate == "spec":
         controller = checklists.check_spec(spec.content)
         model = _spec_model(session, run)

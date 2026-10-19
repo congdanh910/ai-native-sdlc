@@ -254,11 +254,39 @@ def options(data: dict) -> dict:
             option["stack"] = [x if isinstance(x, dict) else {"layer": str(x).split(":", 1)[0].strip(),
                                                               "technology": str(x).split(":", 1)[-1].strip()}
                                for x in (stack if isinstance(stack, list) else [stack])]
+            option["hosting"] = [_hosting(v) for v in (option.get("hosting") or []) if isinstance(v, dict)]
+            option["recommended_hosting"] = str(option.get("recommended_hosting") or "")
             out.append(option)
     data["options"] = out
     data["questions"] = [{"question": q, "blocking": False} if isinstance(q, str) else q for q in data.get("questions") or []]
     _refs(data)
     return data
+
+
+PLATFORM_WORDS = {"on-premise": "on_premise", "on premise": "on_premise", "on-premises": "on_premise",
+                  "on premises": "on_premise", "onprem": "on_premise", "on-prem": "on_premise", "amazon": "aws",
+                  "amazon web services": "aws", "microsoft azure": "azure", "google cloud": "gcp",
+                  "google cloud platform": "gcp"}
+
+
+def _hosting(variant: dict) -> dict:
+    """One hosting variant: a platform word the project config uses, services as a list, text fields as text."""
+    variant = dict(variant)
+    platform = str(variant.get("platform") or "").strip().lower()
+    variant["platform"] = PLATFORM_WORDS.get(platform, platform.replace(" ", "_").replace("-", "_"))
+    services = variant.get("services") or []
+    if isinstance(services, dict):  # {"API": "Amazon ECS", ...}
+        services = [{"node": k, "service": v} for k, v in services.items()]
+    variant["services"] = [s if isinstance(s, dict) else {"node": str(s).split(":", 1)[0].strip(),
+                                                          "service": str(s).split(":", 1)[-1].strip()}
+                           for s in (services if isinstance(services, list) else [services])]
+    for key in ("pros", "cons"):
+        value = variant.get(key)
+        variant[key] = [line.strip("-* ").strip() for line in value.splitlines() if line.strip()] if isinstance(value, str) else value or []
+    for key in ("nfr_fit", "cost", "risks", "personal_data", "operations"):
+        if isinstance(variant.get(key), list):
+            variant[key] = "; ".join(str(x) for x in variant[key])
+    return variant
 
 
 def _refs(value) -> None:
@@ -290,7 +318,7 @@ def sds(data: dict) -> dict:
     for key in ("assumptions", "traceability", "objects", "ui_principles", "screens", "components", "stack", "modules",
                 "tables", "process", "deployment", "principles", "api_standards", "endpoints", "errors",
                 "authorization", "threats", "data_protection", "secrets", "nfr", "decisions", "metrics", "future",
-                "conventions", "integrations", "concerns"):
+                "conventions", "integrations", "concerns", "zones", "links"):
         data[key] = as_list(data.get(key))
     data["questions"] = [{"question": q, "blocking": False} if isinstance(q, str) else q
                          for q in as_list(data.get("questions"))]
@@ -316,6 +344,11 @@ def sds(data: dict) -> dict:
     for key in ("definitions", "relationships", "external_systems", "key_scenarios", "observability"):
         if key in data:
             data[key] = _flatten_rows(as_list(data.get(key)))
+    for key in ("environments", "resilience"):  # {"production": "..."} or [{"term": ..., "meaning": ...}]
+        if key in data:
+            value = data[key]
+            value = [{"term": k, "meaning": v} for k, v in value.items()] if isinstance(value, dict) else as_list(value)
+            data[key] = _flatten_rows([x if isinstance(x, dict) else {"term": str(x), "meaning": ""} for x in value])
     if isinstance(data.get("actors"), str):
         data["actors"] = as_list(data["actors"])
     for item in data.get("states") or []:
@@ -412,7 +445,7 @@ def self_check(value) -> list:
 # Fields that hold text in the SRS and SDS contracts; a model often answers them with a list.
 SRS_ROWS = ("definitions", "roles", "entities", "relationships", "business_rules", "qualities", "experience",
             "dependencies")
-SDS_ROWS = ("traceability", "objects", "screens", "components", "stack", "modules", "tables", "deployment",
+SDS_ROWS = ("traceability", "objects", "screens", "components", "stack", "modules", "tables", "deployment", "zones", "links",
             "errors", "threats", "authorization", "nfr", "metrics", "conventions", "integrations")
 KEEP_LISTS = {"actors", "steps", "alternatives", "negatives", "stories", "requirements", "states", "changes",
               "options", "refs", "layout", "calls", "fields", "errors", "transitions", "participants", "messages",

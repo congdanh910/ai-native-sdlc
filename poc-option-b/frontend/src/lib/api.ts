@@ -120,10 +120,15 @@ export interface Doc {
   commit_sha: string | null;
   created_at: string;
   findings?: string[];
-  revision?: Revision | null;  // a rewrite after the reviewer's feedback: what they asked and how it was handled
+  revision?: Revision | null;
+  choices?: OptionChoices;  // kind "options": what the Solution Architect picks from  // a rewrite after the reviewer's feedback: what they asked and how it was handled
   inventory?: Inventory;  // the requirement inventory of a discovery, for kind "inventory"
 }
 
+export interface OptionChoices {
+  recommendation: string;
+  options: { id: string; name: string; recommended_hosting: string; hosting: { id: string; name: string; platform: string }[] }[];
+}
 export interface FeedbackReply { feedback: string; change: string; where: string[] }
 export interface Revision {
   from_version: number;

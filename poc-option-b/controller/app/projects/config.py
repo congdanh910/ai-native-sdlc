@@ -140,6 +140,16 @@ class Artifacts(Strict):
     commit_to_repo: bool = True
 
 
+HOSTING_PLATFORMS = ("aws", "azure", "gcp", "on_premise", "hybrid")
+
+
+class Architecture(Strict):
+    """SDS runs: where the Architect may host each architecture option. A customer that accepts only its own data
+    centre lists on_premise alone."""
+    hosting_platforms: list[str] = Field(default=list(HOSTING_PLATFORMS), min_length=1)
+    max_hosting_variants: int = Field(default=3, ge=1, le=5)  # hosting variants compared for each option
+
+
 class ProjectConfig(Strict):
     schema_version: Literal[1]
     project: str
@@ -156,6 +166,7 @@ class ProjectConfig(Strict):
     stages: Stages = Stages()
     artifacts: Artifacts = Artifacts()
     discovery: Discovery = Discovery()
+    architecture: Architecture = Architecture()
 
     @model_validator(mode="after")
     def _consistent(self) -> "ProjectConfig":
@@ -217,6 +228,8 @@ class EffectivePolicy(Strict):
     container_memory_mb: int = 2048
     container_pids: int = 512
     container_tmp_mb: int = 256
+    hosting_platforms: list[str] = list(HOSTING_PLATFORMS)
+    max_hosting_variants: int = 3
 
 
 def effective_policy(config: ProjectConfig, defaults: PlatformDefaults = PlatformDefaults()) -> EffectivePolicy:
@@ -247,6 +260,8 @@ def effective_policy(config: ProjectConfig, defaults: PlatformDefaults = Platfor
         container_memory_mb=config.limits.container.memory_mb,
         container_pids=config.limits.container.pids,
         container_tmp_mb=config.limits.container.tmp_mb,
+        hosting_platforms=list(config.architecture.hosting_platforms),
+        max_hosting_variants=config.architecture.max_hosting_variants,
     )
 
 

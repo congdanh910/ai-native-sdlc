@@ -117,9 +117,14 @@ class MockTeam:
                     "refs": [i["id"]]} for i in named]
         while len(options) < 2:
             options.append({"name": ["Single server", "Managed cloud"][len(options)], "summary": "Mock Architect option"})
+        platforms = (context.policy.hosting_platforms if context.policy else ["aws", "on_premise"])
+        platforms = platforms[:max(1, min(2, context.policy.max_hosting_variants if context.policy else 2))]
         for option in options:  # a proposed stack, as when the brief leaves it to the Architect
             option["stack"] = [{"layer": "backend", "technology": "Node.js 20", "why": "the repository's stack"},
                                {"layer": "database", "technology": "PostgreSQL 16", "why": "relational data"}]
+            option["hosting"] = [{"platform": p, "name": f"Mock hosting on {p}",
+                                  "services": [{"node": "Application", "service": f"{p} container"}]} for p in platforms]
+            option["recommended_hosting"] = option["hosting"][0]["name"]
         return Options.model_validate({"context": f"Where {context.title} runs.", "options": options,
                                        "recommendation": options[0]["name"], "reason": "Mock Architect: the first option."})
 
@@ -145,8 +150,11 @@ class MockTeam:
             "endpoints": [{"method": "GET", "path": f"/api/v1/{f.prefix.lower()}", "feature": f.prefix,
                            "stories": [s.id for s in f.stories], "response": '{"items": []}'} for f in features],
             "decisions": ([{"title": "Architecture Option", "context": "The Solution Architect chose between the options.",
-                            "decision": f"{context.chosen_option['id']} {context.chosen_option['name']}: "
-                                        f"{context.chosen_option['reason']}"
+                            "decision": f"{context.chosen_option['id']} {context.chosen_option['name']}"
+                                        + (f", hosted as {context.chosen_option['hosting']['id']} "
+                                           f"{context.chosen_option['hosting']['name']}"
+                                           if context.chosen_option.get("hosting") else "")
+                                        + f": {context.chosen_option['reason']}"
                                         + (f" Adjustments: {context.chosen_option['adjustments']}"
                                            if context.chosen_option.get("adjustments") else "")}]
                           if context.chosen_option else [])
@@ -164,6 +172,10 @@ class MockTeam:
                         for flow in srs_flows(context.srs_md or "")],
             "dtos": [{"name": f"{f.prefix}Response", "object": f.name, "fields": [{"name": "id", "type": "string"}]}
                      for f in features] or [{"name": "ItemResponse", "fields": [{"name": "id", "type": "string"}]}],
+            "zones": [{"name": "Production network", "kind": "network"}],
+            "deployment": [{"name": "Application server", "runs": "the application", "zone": "Production network",
+                            "environment": "production"}],
+            "links": [{"source": "User", "target": "Application server", "protocol": "HTTPS 443", "security": "TLS"}],
             "auth": {"method": "Session cookie", "flow": [{"source": "User", "target": "Application", "text": "sign in"}]},
             "questions": questions, "concerns": ["Mock Architect: no model was called."]})
 

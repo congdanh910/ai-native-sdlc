@@ -499,9 +499,10 @@ SA = HumanRole.SOLUTION_ARCHITECT.value
 
 
 def choose_option(session: Session, run: Run, document_id: uuid.UUID, option: str, *, actor: str, reason: str,
-                  checked: list[str] | None, adjustments: str = "") -> None:
-    """The Solution Architect picks the option the SDS designs, with adjustments to it if any (another database, an
-    added queue); the reason and the adjustments go to SDS section 9."""
+                  checked: list[str] | None, adjustments: str = "", hosting: str = "") -> None:
+    """The Solution Architect picks the option the SDS designs and how it is hosted (one of its hosting variants),
+    with adjustments to it if any (another database, an added queue); the reason and the adjustments go to SDS
+    section 9."""
     from controller.app.project_docs import Options
     _require(run, RunStatus.WAITING_OPTIONS_APPROVAL)
     document = latest_document(session, run.id, "options")
@@ -513,12 +514,20 @@ def choose_option(session: Session, run: Run, document_id: uuid.UUID, option: st
     chosen = next((o for o in options.options if o.id == option), None)
     if chosen is None:
         raise DecisionError(f"{option} is not one of the options")
+    variant = None
+    if chosen.hosting:
+        variant = next((v for v in chosen.hosting if v.id == (hosting or chosen.recommended_hosting)), None)
+        if variant is None:
+            raise DecisionError(f"pick one of the hosting variants of {chosen.id}")
     checklist = _checklist(session, run, checked)
-    _approval(session, run, "options", "approve", actor, SA, reason=f"{chosen.id} {chosen.name}: {reason}"
+    _approval(session, run, "options", "approve", actor, SA, reason=f"{chosen.id} {chosen.name}"
+              + (f", hosted as {variant.id} {variant.name}" if variant else "") + f": {reason}"
               + (f" | adjustments: {adjustments.strip()}" if adjustments.strip() else ""),
               document_id=document.id, checklist=checklist)
     coordinator.store_artifact(session, run, "chosen_option", TeamRole.COORDINATOR, json.dumps({
-        **chosen.model_dump(), "reason": reason.strip(), "chosen_by": actor, "adjustments": adjustments.strip(),
+        **chosen.model_dump(exclude={"hosting"}), "reason": reason.strip(), "chosen_by": actor,
+        "adjustments": adjustments.strip(), "hosting": variant.model_dump() if variant else None,
+        "other_hosting": [{"id": v.id, "name": v.name} for v in chosen.hosting if variant and v.id != variant.id],
         "others": [{"id": o.id, "name": o.name} for o in options.options if o.id != chosen.id]}))
     coordinator.enter_stage(session, run, "spec", actor=actor, acting_role=SA)
 

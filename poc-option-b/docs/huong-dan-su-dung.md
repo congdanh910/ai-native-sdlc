@@ -131,6 +131,9 @@ discovery:                       # bỏ trống thì dùng mặc định
   commit_sources: true           # file thô vào requirements/sources/
   limits:
     max_rounds: 10
+architecture:                    # bước Options của SDS; bỏ trống thì dùng mặc định
+  hosting_platforms: [aws, azure, gcp, on_premise, hybrid]   # khách chỉ nhận on-premise thì để [on_premise]
+  max_hosting_variants: 3
 ```
 
 Vào **Projects → Add a project**: nhập **Key** (bằng `project:`) và URL repo GitHub. Nền tảng clone một bản mirror, kiểm tra file onboarding, chạy từng lệnh validation trong container, và kiểm quyền push. Dự án phải ở trạng thái **ready**. Có dòng báo lỗi thì sửa trong repo, push rồi bấm **Check again**.
@@ -221,12 +224,12 @@ Nếu baseline chưa merge, run dừng ở `NEEDS_HUMAN` với lý do "merge the
 ## 7. SDS và bước Options
 
 1. **New request → Project SDS** (cần `SRS.md` đã merge). Ô **Let the Architect propose the stack** được tick sẵn: chỉ cần tên sản phẩm. Ô Stack, Deployment, Integrations thành tuỳ chọn; điều gì anh điền vào đó là **ràng buộc** mà mọi phương án phải theo (ví dụ "bắt buộc PostgreSQL", "chạy trong mạng nội bộ"). Bỏ tick thì phải tự điền stack như cách cũ.
-2. **Options** (bật mặc định): Architect so sánh 2–4 phương án kiến trúc, gồm mọi phương án có trong baseline cộng phương án tự đề xuất. Mỗi phương án có **stack theo từng lớp** (frontend, backend, database, AI, hạ tầng, giám sát…) kèm lý do, **deployment** và **tích hợp**. Tất cả suy ra từ SRS, baseline và stack hiện có của repo (`AGENTS.md`). Mỗi phương án được đánh giá theo NFR, chi phí, rủi ro, nơi lưu dữ liệu nhạy cảm, vận hành, kèm phương án Architect khuyến nghị.
-3. Cổng Options (vai SA): đọc bảng so sánh và bảng stack của từng phương án, rồi chọn phương án.
+2. **Options** (bật mặc định): Architect so sánh 2–4 phương án kiến trúc, gồm mọi phương án có trong baseline cộng phương án tự đề xuất. Mỗi phương án có **stack theo từng lớp** (frontend, backend, database, AI, hạ tầng, giám sát…) kèm lý do, **deployment** và **tích hợp**. Tất cả suy ra từ SRS, baseline và stack hiện có của repo (`AGENTS.md`). Mỗi phương án được đánh giá theo NFR, chi phí, rủi ro, nơi lưu dữ liệu nhạy cảm, vận hành, kèm phương án Architect khuyến nghị. Mỗi phương án còn có **2–3 biến thể hosting** trên các nền tảng của `architecture.hosting_platforms` (AWS, Azure, GCP, on-premise, hybrid): cùng các thành phần, khác nơi chạy. Mỗi biến thể có bảng **thành phần → dịch vụ** (ví dụ API → Amazon ECS on Fargate, hoặc VM với Docker), chi phí, nơi lưu dữ liệu cá nhân/sinh trắc học, vận hành, rủi ro, và biến thể Architect khuyến nghị. Nền tảng mà yêu cầu loại trừ (dữ liệu phải ở trong nước, không dùng cloud…) không có biến thể.
+3. Cổng Options (vai SA): đọc bảng so sánh, bảng stack và bảng hosting của từng phương án, rồi chọn phương án và **Hosting of PAx** (biến thể khuyến nghị được chọn sẵn). Controller kiểm: mỗi phương án có biến thể hosting, nằm trong các nền tảng của dự án, có một biến thể được khuyến nghị.
    - Ghi **Adjustments to the chosen option** nếu muốn bổ sung hoặc sửa, ví dụ "dùng PostgreSQL thay MySQL; thêm Redis cho hàng đợi". Architect phải áp đúng các điều chỉnh này.
    - Ghi **Why this option** (bắt buộc), tick checklist rồi bấm **Choose PAx**.
    - Muốn Architect so sánh lại với góp ý thì ghi lý do rồi bấm **Ask for other options**.
-4. Architect viết `SDS.md` (§1–§13, đủ outline của template công ty như SDS của GRM) **qua 4 lượt**: mô hình miền và UI (§1–3); kiến trúc (§4); API, bảo mật, NFR (§6–8); quyết định, metric, phụ lục, tích hợp (§5, §9–13). Lượt sau đọc những gì lượt trước đã viết. Controller tự vẽ sơ đồ Mermaid từ dữ liệu (context, logical view, quan hệ, state, ERD, sequence cho từng luồng, luồng đăng nhập); control room và GitHub đều hiển thị được. Architect viết theo stack của phương án đã chọn cộng các điều chỉnh; mục §9.1 "Architecture Option" ghi phương án đã chọn, lý do của SA, các điều chỉnh và các phương án đã cân nhắc. Ở cổng SDS (Tech Lead), controller kiểm thêm: dòng Decision của §9 có ghi phương án đã chọn, và **độ sâu**: có sơ đồ context, sơ đồ dữ liệu, sequence cho mọi luồng SRS §6, state diagram cho mọi thực thể SRS §2.4, DTO, API specification và luồng đăng nhập. Thiếu thì không duyệt được; dùng **Reject: rewrite** kèm góp ý. Duyệt, merge PR, **Check again**.
+4. Architect viết `SDS.md` (§1–§13, đủ outline của template công ty như SDS của GRM) **qua 4 lượt**: mô hình miền và UI (§1–3); kiến trúc (§4); API, bảo mật, NFR (§6–8); quyết định, metric, phụ lục, tích hợp (§5, §9–13). Lượt sau đọc những gì lượt trước đã viết. Controller tự vẽ sơ đồ Mermaid từ dữ liệu (context, logical view, **deployment**, quan hệ, state, ERD, sequence cho từng luồng, luồng đăng nhập). **§4.5 Physical View** là deployment view theo biến thể hosting đã chọn: sơ đồ các vùng (tài khoản cloud, VPC/subnet, data centre, LAN của site, Internet) với node bên trong và kết nối có giao thức/port và cách bảo mật; bảng node (vùng, dịch vụ host, chạy gì, scale); bảng kết nối; bảng môi trường (dev/test/staging/prod); backup, phục hồi (RPO/RTO), giám sát; control room và GitHub đều hiển thị được. Architect viết theo stack của phương án đã chọn cộng các điều chỉnh; mục §9.1 "Architecture Option" ghi phương án đã chọn, lý do của SA, các điều chỉnh và các phương án đã cân nhắc. Ở cổng SDS (Tech Lead), controller kiểm thêm: dòng Decision của §9 có ghi phương án và biến thể hosting đã chọn, và **độ sâu**: có sơ đồ context, sơ đồ deployment ở §4.5, sơ đồ dữ liệu, sequence cho mọi luồng SRS §6, state diagram cho mọi thực thể SRS §2.4, DTO, API specification và luồng đăng nhập. Thiếu thì không duyệt được; dùng **Reject: rewrite** kèm góp ý. Duyệt, merge PR, **Check again**.
 
 Muốn bỏ bước Options thì đặt `stages.options: skip` trong `.sdlc/project.yaml`.
 
@@ -316,6 +319,8 @@ Không có giới hạn nào cố định trong code. Giới hạn theo dự án
 | `discovery.limits.max_source_mb`, `max_pages_per_source` | 50, 300 | Kích thước một nguồn |
 | `discovery.limits.pages_per_read` | 10 | Số trang PDF một lượt đọc (tối đa 20); lượt nào câu trả lời quá dài thì tự chia đôi |
 | `discovery.limits.chars_per_read` | 30.000 | Số ký tự văn bản một lượt đọc |
+| `architecture.hosting_platforms` | aws, azure, gcp, on_premise, hybrid | Nền tảng hosting Architect được đề xuất ở bước Options |
+| `architecture.max_hosting_variants` | 3 | Số biến thể hosting tối đa cho mỗi phương án |
 | `discovery.question_owners` | xem thiết kế | Loại câu hỏi → vai trả lời |
 | `discovery.commit_sources` | `true` | File thô vào `requirements/sources/` |
 

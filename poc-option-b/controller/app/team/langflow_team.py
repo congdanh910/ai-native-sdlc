@@ -193,7 +193,9 @@ class LangflowTeam(MockTeam):
                     if i["type"] in ("option", "nfr", "constraint", "integration")]
         payload = {"brief": context.intent_md, "srs": context.srs_md or "",
                    "baseline": {"scope": baseline.get("scope", ""), "items": relevant} if baseline else None,
-                   "agents_md": context.agents_md, "constitution": self._constitution(context), "feedback": context.feedback}
+                   "agents_md": context.agents_md, "constitution": self._constitution(context), "feedback": context.feedback,
+                   "hosting_platforms": context.policy.hosting_platforms,
+                   "max_hosting_variants": context.policy.max_hosting_variants}
         return self._ask("options", payload, Options, normalize.options, context.session_id,
                          retries=context.policy.max_format_retries)
 

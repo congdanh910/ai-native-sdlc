@@ -668,10 +668,29 @@ class Table(Contract):
     notes: str = ""
 
 
+class Zone(Contract):
+    """Where nodes live: a cloud account, a VPC or subnet, a data centre, a site LAN, the Internet."""
+    name: str
+    kind: str = ""  # cloud, network, subnet, data centre, site, internet ...
+    parent: str = ""  # the zone it sits in, for a subnet in a VPC
+    note: str = ""
+
+
 class Node(Contract):
     name: str
     runs: str
     environment: str = ""
+    zone: str = ""  # a zone name
+    service: str = ""  # what hosts it: Amazon ECS on Fargate, a VM with Docker, a managed database ...
+    scaling: str = ""  # how it grows and stays available
+
+
+class NetworkLink(Contract):
+    """A connection between two nodes (or a node and an actor or external system)."""
+    source: str
+    target: str
+    protocol: str = ""  # HTTPS 443, RTSP 554, PostgreSQL 5432 ...
+    security: str = ""  # TLS, mTLS, VPN, private link ...
 
 
 class Message(Contract):
@@ -781,6 +800,10 @@ class Sds(Contract):
     migration: list[str] = []
     process: list[Scenario] = []
     deployment: list[Node] = []
+    zones: list[Zone] = []
+    links: list[NetworkLink] = []
+    environments: list[Term] = []  # development, test, staging, production -> how each differs
+    resilience: list[Term] = []  # backup, recovery (RPO / RTO), failover, monitoring -> the design
     key_scenarios: list[Term] = []
     principles: list[str] = []
     purposes: dict[str, str] = {}  # SRS story id -> its Purpose for §5
@@ -813,7 +836,8 @@ SDS_PARTS: dict[str, tuple[str, ...]] = {
     "sds-model": ("purpose", "scope", "assumptions", "constraints", "definitions", "traceability", "objects",
                   "relationships", "states", "ui_principles", "screens", "questions"),
     "sds-architecture": ("context", "actors", "external_systems", "components", "stack", "frontend", "backend",
-                         "modules", "storage", "tables", "migration", "process", "deployment", "key_scenarios",
+                         "modules", "storage", "tables", "migration", "process", "deployment", "zones", "links",
+                         "environments", "resilience", "key_scenarios",
                          "principles"),
     "sds-interfaces": ("api_standards", "dtos", "endpoints", "errors", "authentication", "auth", "authorization",
                        "threats", "data_protection", "secrets", "nfr"),
@@ -888,6 +912,36 @@ def mermaid_states(states: ObjectStates) -> list[str]:
         lines.append(f"    [*] --> {ids[states.states[0].term]}")
     lines += [f"    {ids[t.source]} --> {ids[t.target]}" + (f" : {_label(t.trigger)}" if t.trigger else "")
               for t in states.transitions]
+    return _mermaid(lines)
+
+
+def mermaid_deployment(zones: list[Zone], nodes: list[Node], links: list[NetworkLink]) -> list[str]:
+    """Nodes inside their zones (zones nested by parent), and the connections with their protocol."""
+    names = list(dict.fromkeys([n.name for n in nodes] + [x for link in links for x in (link.source, link.target)]))
+    ids = {name: f"n{index}" for index, name in enumerate(names)}
+    known = {z.name for z in zones}
+    zone_ids = {z.name: f"z{index}" for index, z in enumerate(zones)}
+    placed = {n.name: n.zone for n in nodes if n.zone in known}
+    lines = ["flowchart LR"]
+
+    def node_line(name: str, indent: str) -> str:
+        node = next((n for n in nodes if n.name == name), None)
+        detail = f"<br/>{_label(node.service)}" if node and node.service else ""
+        return f'{indent}{ids[name]}["{_label(name)}{detail}"]'
+
+    def draw(zone: Zone, depth: int) -> None:
+        indent = "    " * depth
+        lines.append(f'{indent}subgraph {zone_ids[zone.name]}["{_label(zone.name)}"]')
+        for child in [z for z in zones if z.parent == zone.name and z.name != zone.name]:
+            draw(child, depth + 1)
+        lines.extend(node_line(name, indent + "    ") for name, where in placed.items() if where == zone.name)
+        lines.append(f"{indent}end")
+    for zone in [z for z in zones if z.parent not in known or z.parent == z.name]:
+        draw(zone, 1)
+    lines.extend(node_line(name, "    ") for name in names if name not in placed)
+    for link in links:
+        text = " · ".join(x for x in (link.protocol, link.security) if x)
+        lines.append(f"    {ids[link.source]}" + (f' -- "{_label(text)}" --> ' if text else " --> ") + ids[link.target])
     return _mermaid(lines)
 
 
@@ -1048,7 +1102,20 @@ def render_sds(sds: Sds, features: list[SrsFeature], *, product: str, author: st
         if scenario.alternatives:
             out += ["Alternative and error paths:", "", *_bullets(scenario.alternatives), ""]
     heading(3, "4.5 Physical View")
-    out += [*_table(["Node", "Runs", "Environment"], [[n.name, n.runs, n.environment] for n in sds.deployment]), ""]
+    if sds.zones or sds.links:
+        out += mermaid_deployment(sds.zones, sds.deployment, sds.links)
+    out += [*_table(["Node", "Zone", "Hosted on", "Runs", "Scaling", "Environment"],
+                    [[n.name, n.zone, n.service, n.runs, n.scaling, n.environment] for n in sds.deployment]), ""]
+    if sds.zones:
+        out += ["Zones:", "", *_table(["Zone", "Kind", "Inside", "Note"], [[z.name, z.kind, z.parent, z.note] for z in sds.zones]), ""]
+    if sds.links:
+        out += ["Connections:", "", *_table(["From", "To", "Protocol", "Security"],
+                                            [[c.source, c.target, c.protocol, c.security] for c in sds.links]), ""]
+    if sds.environments:
+        out += ["Environments:", "", *_table(["Environment", "How it differs"], [[e.term, e.meaning] for e in sds.environments]), ""]
+    if sds.resilience:
+        out += ["Backup, recovery and monitoring:", "",
+                *_table(["Concern", "Design"], [[r.term, r.meaning] for r in sds.resilience]), ""]
     heading(3, "4.6 Key Scenarios")
     out += [*_table(["Scenario", "How the architecture handles it"], [[k.term, k.meaning] for k in sds.key_scenarios]), ""]
     heading(3, "4.7 Architecture Principles")
@@ -1197,6 +1264,8 @@ def check_sds_depth(content: str, srs: str | None) -> list[str]:
     problems = []
     if "```mermaid" not in sub("4.", "4.1"):
         problems.append("§4.1 has no system context diagram (actors and external systems)")
+    if "```mermaid" not in sub("4.", "4.5"):
+        problems.append("§4.5 has no deployment diagram (zones, nodes and their connections)")
     if "erDiagram" not in sections["4."]:
         problems.append("§4.3.4 has no data schema diagram (tables with their columns)")
     if srs:
@@ -1252,6 +1321,27 @@ class StackChoice(Contract):
     why: str = ""
 
 
+class HostingService(Contract):
+    node: str  # a component or layer of the option
+    service: str  # what it runs on with this hosting, such as Amazon RDS for PostgreSQL or a VM with Docker
+    why: str = ""
+
+
+class HostingVariant(Contract):
+    """One way to host an architecture option: the same components on a platform (AWS, on-premise, hybrid ...)."""
+    id: str = ""  # PA1-H1, PA1-H2 ... assigned by the controller
+    platform: str  # one of the project's architecture.hosting_platforms
+    name: str = Field(min_length=2)
+    services: list[HostingService] = []
+    nfr_fit: str = ""
+    cost: str = ""
+    personal_data: str = ""  # where personal and sensitive data lives with this hosting
+    operations: str = ""
+    risks: str = ""
+    pros: list[str] = []
+    cons: list[str] = []
+
+
 class ArchOption(Contract):
     id: str = ""  # PA1, PA2 ... assigned by the controller
     name: str = Field(min_length=2)
@@ -1267,6 +1357,8 @@ class ArchOption(Contract):
     operations: str = ""
     pros: list[str] = []
     cons: list[str] = []
+    hosting: list[HostingVariant] = []
+    recommended_hosting: str = ""  # the id, name or platform of the variant the Architect recommends
 
 
 class Options(Contract):
@@ -1281,6 +1373,13 @@ def number_options(options: Options) -> Options:
     data = options.model_dump()
     for index, option in enumerate(data["options"], start=1):
         option["id"] = f"PA{index}"
+        for number, variant in enumerate(option["hosting"], start=1):
+            variant["id"] = f"PA{index}-H{number}"
+        key = lambda text: re.sub(r"[\W_]+", "", text.lower())  # "On-Premise" names the platform on_premise
+        wanted = key(option["recommended_hosting"])
+        option["recommended_hosting"] = next((v["id"] for v in option["hosting"]
+                                              if wanted in (key(v["id"]), key(v["name"]), key(v["platform"]))),
+                                             option["recommended_hosting"].strip())
     names = {o["name"].lower(): o["id"] for o in data["options"]}
     data["recommendation"] = names.get(data["recommendation"].strip().lower(), data["recommendation"].strip())
     return Options.model_validate(data)
@@ -1302,13 +1401,49 @@ def render_options(options: Options, *, title: str) -> str:
         if option.stack:
             out += [f"### {option.id} {option.name}: stack", "",
                     *_table(["Layer", "Technology", "Why"], [[c.layer, c.technology, c.why] for c in option.stack]), ""]
+        if option.hosting:
+            variants = option.hosting
+            out += [f"### {option.id} {option.name}: hosting", "",
+                    *_table(["", *[f"{v.id} {v.name}" for v in variants]],
+                            [["Platform", *[platform_name(v.platform) for v in variants]],
+                             ["Services", *["; ".join(f"{s.node}: {s.service}" for s in v.services) or "—" for v in variants]],
+                             *[[label, *[getattr(v, key) or "—" for v in variants]] for label, key in HOSTING_ROWS],
+                             ["Pros", *["; ".join(v.pros) or "—" for v in variants]],
+                             ["Cons", *["; ".join(v.cons) or "—" for v in variants]]]), ""]
+            recommended = next((v for v in variants if v.id == option.recommended_hosting), None)
+            if recommended:
+                out += [f"**Recommended hosting for {option.id}:** {recommended.id} {recommended.name}.", ""]
+            for variant in variants:
+                if variant.services:
+                    out += [f"#### {variant.id} {variant.name}: services", "",
+                            *_table(["Component", "Service", "Why"], [[s.node, s.service, s.why] for s in variant.services]), ""]
     return "\n".join(out)
 
 
-def check_options(options: Options, baseline: dict | None) -> list[str]:
-    """Every option item of the baseline is compared; the recommendation is one of the options."""
+HOSTING_ROWS = (("Quality targets", "nfr_fit"), ("Cost", "cost"), ("Personal data", "personal_data"),
+                ("Operations", "operations"), ("Risks", "risks"))
+PLATFORM_NAMES = {"aws": "AWS", "azure": "Microsoft Azure", "gcp": "Google Cloud", "on_premise": "On-premise",
+                  "hybrid": "Hybrid"}
+
+
+def platform_name(platform: str) -> str:
+    return PLATFORM_NAMES.get(platform, platform.replace("_", " ").title())
+
+
+def check_options(options: Options, baseline: dict | None, platforms: list[str] | None = None) -> list[str]:
+    """Every option item of the baseline is compared; the recommendation is one of the options; every option has
+    hosting variants on the project's platforms, one of them recommended."""
     options = number_options(options)
     problems = []
+    for option in options.options:
+        if not option.hosting:
+            problems.append(f"{option.id} has no hosting variant")
+            continue
+        foreign = [f"{v.id} ({v.platform})" for v in option.hosting if platforms and v.platform not in platforms]
+        if foreign:
+            problems.append(f"{option.id} hosting outside architecture.hosting_platforms: {', '.join(foreign)}")
+        if option.recommended_hosting not in {v.id for v in option.hosting}:
+            problems.append(f"{option.id} recommends no hosting variant of its own")
     wanted = [i["id"] for i in (baseline or {}).get("items", []) if i["type"] == "option"]
     used = {r for o in options.options for r in o.refs}
     missing = [w for w in wanted if w not in used]
@@ -1323,6 +1458,10 @@ def check_chosen_option(content: str, chosen: dict) -> list[str]:
     """A decision of SDS section 9 names the option the Solution Architect chose (not only its list of options)."""
     match = re.search(r"^## 9\. Design Decisions.*?(?=^## |\Z)", content, re.MULTILINE | re.DOTALL)
     decided = " ".join(line for line in (match[0] if match else "").splitlines() if line.startswith("**Decision:**"))
+    problems = []
     if chosen["name"].lower() not in decided.lower() and chosen["id"] not in decided:
-        return [f"section 9 does not record the chosen option {chosen['id']} {chosen['name']}"]
-    return []
+        problems.append(f"section 9 does not record the chosen option {chosen['id']} {chosen['name']}")
+    hosting = chosen.get("hosting")
+    if hosting and hosting["id"] not in decided and hosting["name"].lower() not in decided.lower():
+        problems.append(f"section 9 does not record the chosen hosting {hosting['id']} {hosting['name']}")
+    return problems
