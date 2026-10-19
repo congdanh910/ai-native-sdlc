@@ -614,6 +614,19 @@ def reports() -> dict:
         return team_reports.team_report(session)
 
 
+@router.get("/runs/{run_id}/documents/{kind}/diff")
+def document_diff(run_id: uuid.UUID, kind: str, base: int, head: int) -> dict:
+    """What changed in a run document between two of its versions, as a unified diff."""
+    from controller.app.documents import document_diff as diff
+    from controller.app.models import Document
+    with session_scope() as session:
+        docs = {d.version: d for d in session.scalars(select(Document).where(
+            Document.run_id == run_id, Document.kind == kind, Document.version.in_((base, head))))}
+        if base not in docs or head not in docs:
+            raise HTTPException(404, "document version not found")
+        return {"diff": diff(docs[base].content, docs[head].content, f"{kind} v{base}", f"{kind} v{head}")}
+
+
 @router.get("/runs/{run_id}/diff")
 def run_diff(run_id: uuid.UUID) -> dict:
     """The run's code change from its base commit (sources first, then tests, without the .sdlc thread)."""

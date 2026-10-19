@@ -47,6 +47,7 @@ def _document(document: Document) -> dict:
             "author_kind": document.author_kind, "author": document.author, "content": document.content,
             "repo_path": document.repo_path, "commit_sha": document.commit_sha,
             "findings": (document.data or {}).get("sync_findings", []),
+            "revision": (document.data or {}).get("revision"),
             # the per-source chunks are kept for the next round only; the page needs the merged inventory
             **({"inventory": {k: v for k, v in (document.data or {}).items() if k != "chunks"}}
                if document.kind == "inventory" else {}),

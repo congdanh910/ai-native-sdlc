@@ -61,8 +61,22 @@ def _criteria(items, prefix: str) -> list:
     return criteria
 
 
+def feedback_replies(value) -> list[dict]:
+    """[{feedback, change, where}]; a string where becomes a list, a reply without a change is dropped."""
+    out = []
+    for item in value if isinstance(value, list) else []:
+        if not isinstance(item, dict) or not str(item.get("change") or "").strip():
+            continue
+        where = item.get("where") or []
+        where = [w.strip() for w in where.split(",")] if isinstance(where, str) else [str(w) for w in where]
+        out.append({"feedback": str(item.get("feedback") or "").strip(), "change": str(item["change"]).strip(),
+                    "where": [w for w in where if w]})
+    return out
+
+
 def spec(data: dict) -> dict:
     data = dict(data)
+    data["feedback_replies"] = feedback_replies(data.get("feedback_replies"))
     data["acceptance_criteria"] = _criteria(data.get("acceptance_criteria"), "AC")
     data["edge_cases"] = _criteria(data.get("edge_cases"), "EC")
     data["self_check"] = self_check(data.get("self_check"))
@@ -179,6 +193,7 @@ def _sentence(value):
 def srs(data: dict) -> dict:
     """Lists the model wrote as one string become lists; a bare question string becomes non-blocking."""
     data = dict(data)
+    data["feedback_replies"] = feedback_replies(data.get("feedback_replies"))
 
     def as_list(value):
         if value is None:
@@ -263,6 +278,7 @@ def _refs(value) -> None:
 
 def sds(data: dict) -> dict:
     data = dict(data)
+    data["feedback_replies"] = feedback_replies(data.get("feedback_replies"))
 
     def as_list(value):
         if value is None:
@@ -370,7 +386,7 @@ def _message(value) -> dict | None:
 def sds_part(data: dict, part: str) -> dict:
     """One pass of the SDS: normalised like a whole SDS, then only the part's keys."""
     from controller.app.project_docs import SDS_PARTS
-    keys = SDS_PARTS[part]
+    keys = (*SDS_PARTS[part], "feedback_replies")
     full = sds({**{k: v for k, v in data.items() if k in keys}})
     return {k: v for k, v in full.items() if k in keys}
 

@@ -120,7 +120,16 @@ export interface Doc {
   commit_sha: string | null;
   created_at: string;
   findings?: string[];
+  revision?: Revision | null;  // a rewrite after the reviewer's feedback: what they asked and how it was handled
   inventory?: Inventory;  // the requirement inventory of a discovery, for kind "inventory"
+}
+
+export interface FeedbackReply { feedback: string; change: string; where: string[] }
+export interface Revision {
+  from_version: number;
+  feedback: string[];
+  replies: FeedbackReply[];
+  sections: { heading: string; added: number; removed: number; state: "new" | "removed" | "changed" }[];
 }
 
 export interface Citation { source: string; location: string }

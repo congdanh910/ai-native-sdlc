@@ -31,6 +31,7 @@ Output keys (and, with a baseline, one more key inside many objects: every objec
 - questions: array of objects with keys question and blocking (true or false), for the Product Owner only.
 - trace_notes: array of objects with keys req, section and note, for baseline items you cover in prose only (purpose, scope, assumptions, out of scope), such as a goal in "1.1 Purpose". Empty without a baseline.
 - concerns: array of strings: risks, conflicts and scope that looks too large.
+- feedback_replies: array of objects with keys feedback, change and where, one per point of feedback: the point in a few words, what you changed for it (or why you changed nothing), and where (array of the sections or elements it touched, such as 4.2 Business Rules or AT-US-03). Empty when feedback is empty. Say only what this draft really does; the reviewer checks it against the document. The document itself never talks about the feedback, the reviewer, the passes or earlier drafts: it reads as the final design, and what you did about the feedback goes only in feedback_replies.
 
 Rules:
 - With a baseline, every item in scope except options appears in at least one refs or trace note, and you cite only ids that the baseline lists.

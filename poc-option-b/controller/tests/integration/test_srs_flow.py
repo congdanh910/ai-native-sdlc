@@ -10,6 +10,7 @@ from controller.app.db import session_scope
 from controller.app.main import app
 from controller.app.models import Run
 from controller.app.project_docs import ProjectBrief, render_brief, render_srs
+from controller.app.schemas import FeedbackReply
 from controller.app.team.base import RunContext
 from controller.app.team.mock import MockTeam
 from controller.tests.integration.test_team_loop import TICKS, drain
@@ -91,13 +92,26 @@ def test_srs_rejection_sends_the_reason_back_to_the_business_analyst(db, sample_
 
         def write_srs(self, context):
             seen.append(context.feedback)
-            return self.team.write_srs(context)
+            srs = self.team.write_srs(context)
+            return srs.model_copy(update={"purpose": srs.purpose + " Reports are split by month.",
+                                          "feedback_replies": [FeedbackReply(feedback="split by month",
+                                                                             change="Reports are split by month",
+                                                                             where=["1.1 Purpose"])]})
 
     recording = Recording()
     recording.team = MockTeam()
     drain(recording)
     assert seen == [["Reviewer asked for changes: split the report by month"]]
-    assert srs_document(run["id"])["version"] == 2
+    document = srs_document(run["id"])
+    assert document["version"] == 2
+    # the next gate shows what was asked, the reply, the sections that changed and the diff with v1
+    revision = document["revision"]
+    assert revision["from_version"] == 1 and revision["feedback"] == ["split the report by month"]
+    assert revision["replies"] == [{"feedback": "split by month", "change": "Reports are split by month",
+                                    "where": ["1.1 Purpose"]}]
+    assert [s["heading"] for s in revision["sections"]] == ["1.1 Purpose"]
+    diff = client.get(f"/api/runs/{run['id']}/documents/srs/diff", params={"base": 1, "head": 2}).json()["diff"]
+    assert "+" in diff and "Reports are split by month." in diff
 
 
 def test_blocking_question_in_the_brief_waits_for_the_product_owner(db, sample_repo):

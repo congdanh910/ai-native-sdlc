@@ -6,6 +6,7 @@ import { ACTION_LABEL, role, short } from "../lib/utils";
 import { CoverageMatrix, GroundingSummary } from "./Coverage";
 import { GateChecklist } from "./GateChecklist";
 import { PlanSummary } from "./PlanSummary";
+import { RevisionSummary } from "./Revision";
 import { ActionButton, Badge, Button, Card, Field, Markdown, Mono, Select, StatusBadge, Textarea } from "./ui";
 
 function Panel({ run, title, children }: { run: RunDetail; title: string; children: ReactNode }) {
@@ -162,6 +163,7 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
             <ul className="mb-0 mt-1 pl-5">{spec.findings.map((f) => <li key={f}>{f}</li>)}</ul>
           </div>
         ) : null}
+        <RevisionSummary runId={run.id} doc={spec} />
         <div className="max-h-[520px] overflow-y-auto rounded-lg border border-line bg-side p-4"><Markdown source={spec.content} /></div>
         {editing ? (
           <Field label={`Edit ${specName}`} hint={doc?.kind === "srs" ? "keep sections 1-8 and story headings like #### 7.1.1 AT-US-01: Title (ROLE)" : doc ? "keep sections 1-13 and a section 5 entry for every SRS story" : "keep criteria as - **AC-01 — Name:** followed by Given / When / Then lines"} htmlFor="spec-edit">

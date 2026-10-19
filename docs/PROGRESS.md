@@ -108,6 +108,17 @@ prompt bảo stack của `chosen_option` (PA1 có Keycloak) "là của thiết k
 còn feedback không nói là được ưu tiên. Bốn prompt `sds-*.md` nay nói feedback ghi đè chosen_option và current_sds, bỏ
 hay thay công nghệ ở mọi chỗ, không để lại làm phương án dự phòng; decision "Architecture Option" ghi thay đổi đó.
 
+## Thêm ngày 19/10: xem góp ý đã được xử lý thế nào
+
+- Spec, SRS, SDS có khoá `feedback_replies` [{feedback, change, where}] (`schemas.FeedbackReply`; SDS: mỗi lượt trả lời
+  phần của mình, `write_sds` gộp lại). Prompt cấm nhắc góp ý/lượt/bản nháp trong chính tài liệu.
+- Mỗi bản viết lại lưu `data.revision` = {from_version, feedback (lý do reject ở cổng spec hoặc request_changes trên PR
+  kể từ bản trước), replies, sections (`documents.section_changes`)}; `GET /api/runs/{id}/documents/{kind}/diff?base=&head=`.
+- Cổng spec/SRS/SDS: khung "Changes since vN" (`frontend/src/components/Revision.tsx`).
+- Run SDS 70de92e2: đã điền `revision` cho v2, v3 bằng script (không có replies vì viết bằng code cũ). v3 đã bỏ Keycloak
+  (10 chỗ còn lại đều là "thay Keycloak"), nhưng còn câu ghi chú nội bộ trong §1.3 và §9; chờ người dùng duyệt.
+- Test: 227 pass.
+
 ## Bước tiếp theo
 
 Người dùng chạy lại từ đầu trên `attendance`: Discovery → SRS từ baseline → SDS → story đầu tiên. Mọi vai đang chạy

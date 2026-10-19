@@ -48,6 +48,13 @@ class Question(Contract):
     blocking: bool
 
 
+class FeedbackReply(Contract):
+    """How a rewrite handled one point of the reviewer's feedback, so the reviewer can check it at the next gate."""
+    feedback: str  # the point, in short
+    change: str  # what changed for it, or why nothing did
+    where: list[str] = []  # sections or elements it touched
+
+
 class Criterion(Contract):
     id: str
     text: str  # the short name, 2-4 words in the company format
@@ -73,6 +80,7 @@ class Spec(Contract):
     assumptions: list[str] = []
     concerns: list[str] = []
     questions: list[Question] = []
+    feedback_replies: list[FeedbackReply] = []
 
 
 NOTES_HEADING = "### Business Analyst notes"

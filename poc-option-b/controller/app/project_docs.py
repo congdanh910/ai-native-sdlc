@@ -11,7 +11,7 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from controller.app.schemas import Question
+from controller.app.schemas import FeedbackReply, Question
 
 SRS_PATH = "SRS.md"
 PREFIX = re.compile(r"[A-Z]{2,4}")
@@ -216,6 +216,7 @@ class Srs(Contract):
     questions: list[Question] = []
     concerns: list[str] = []
     trace_notes: list[TraceNote] = []
+    feedback_replies: list[FeedbackReply] = []
 
     @model_validator(mode="after")
     def _consistent(self) -> "Srs":
@@ -803,6 +804,7 @@ class Sds(Contract):
     integrations: list[Integration] = []
     questions: list[Question] = []
     concerns: list[str] = []
+    feedback_replies: list[FeedbackReply] = []  # every pass answers the feedback for its own part
 
 
 # The SDS is written in four passes, each one a part of the outline, so that every part gets the room it needs:
@@ -824,7 +826,8 @@ def sds_part_model(part: str) -> type[BaseModel]:
     """The contract of one pass: the Sds fields of that part, required where Sds requires them."""
     from pydantic import create_model
     return create_model(f"Sds_{part.replace('-', '_')}", __base__=Contract,
-                        **{name: (Sds.model_fields[name].annotation, Sds.model_fields[name]) for name in SDS_PARTS[part]})
+                        **{name: (Sds.model_fields[name].annotation, Sds.model_fields[name])
+                           for name in (*SDS_PARTS[part], "feedback_replies")})
 
 
 def number_sds(sds: Sds, features: list[SrsFeature]) -> Sds:

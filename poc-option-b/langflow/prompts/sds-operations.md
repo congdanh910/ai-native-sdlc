@@ -17,6 +17,7 @@ Output keys:
 - done: array of strings: the definition of done for coding agents (tests, validation, documentation, security checks) every story must meet.
 - integrations: array of objects with keys name, purpose, direction (in, out or both), interface and protocol.
 - concerns: array of strings: risks and open design issues.
+- feedback_replies: array of objects with keys feedback, change and where, one per point of feedback that concerns this part (leave out points of other parts): the point in a few words, what you changed for it (or why you changed nothing), and where (array of the sections or elements it touched, such as 9 Design Decisions). Empty when feedback is empty. Say only what this draft really does; the reviewer checks it against the document. The document itself never talks about the feedback, the reviewer, the passes or earlier drafts: it reads as the final design, and what you did about the feedback goes only in feedback_replies.
 
 Rules:
 - Design only what the SRS, the brief, chosen_option and the constitution support; when the sources leave a choice open, make a sensible one and say so in assumptions or a decision instead of leaving the field empty.

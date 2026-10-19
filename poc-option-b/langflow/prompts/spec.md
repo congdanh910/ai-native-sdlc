@@ -19,6 +19,7 @@ Output keys:
 - assumptions: array of strings; include every answer from the input that you relied on.
 - concerns: array of strings: risks, conflicts with agents_md, scope that looks too large, and technical questions for the Tech Lead.
 - questions: array of objects with keys question and blocking (true or false), for the Product Owner only.
+- feedback_replies: array of objects with keys feedback, change and where, one per point of feedback: the point in a few words, what you changed for it (or why you changed nothing), and where (array of the sections or elements it touched, such as AC-03). Empty when feedback is empty. Say only what this draft really does; the reviewer checks it against the document. The document itself never talks about the feedback, the reviewer, the passes or earlier drafts: it reads as the final design, and what you did about the feedback goes only in feedback_replies.
 - self_check: array of objects with keys id, status and note: your own review of what you wrote, one per item below. status is pass, deferred, fail or n/a; note says why for anything but pass. Check honestly; a human reviews the same items.
   - testable: Every AC describes a testable, observable outcome, not an implementation detail
   - what-not-how: No technology names, endpoint paths, table or function names in ACs

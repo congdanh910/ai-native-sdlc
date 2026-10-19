@@ -25,7 +25,7 @@ from controller.app.context.grounding import check_with_bundle
 from controller.app.doing import changes, github
 from controller.app.doing.github import repo_slug
 from controller.app.documents import (THREAD_DIR, add_document, add_plan, latest_document, latest_plan,
-                                      sha256_text, thread_path)
+                                      section_changes, sha256_text, thread_path)
 from controller.app.events import record_event
 from controller.app.jobs import COORDINATOR, enqueue, finish
 from controller.app.models import Approval, Artifact, Document, Clarification, Execution, Project, PullRequest, Run, Task
@@ -163,7 +163,7 @@ def _spec_model(session: Session, run: Run) -> Spec:
                                 .order_by(Document.version.desc())).all()
     data = next((d.data for d in documents if d.data.get("goal")), None)
     if data:
-        return Spec.model_validate(data)
+        return Spec.model_validate({k: v for k, v in data.items() if k != "revision"})
     return Spec(goal=run.title, user_stories=[], acceptance_criteria=parse_criteria(documents[0].content))
 
 
@@ -769,10 +769,25 @@ def _apply_project_doc(session: Session, run: Run, result: dict) -> None:
                        reason=f"{len(blocking)} blocking question(s) for the Product Owner")
         return
     document = add_document(session, run.id, kind, content, author_kind="ai", author=role.value,
-                            data={**result[kind], "sync_findings": findings})
+                            data={**result[kind], "sync_findings": findings,
+                                  "revision": _revision(session, run, kind, content, model.feedback_replies)})
     # A project document gate cannot be skipped: the customer signs the SRS, the architect owns the SDS.
     transition_run(session, run, RunStatus.WAITING_SPEC_APPROVAL, actor=role.value,
                    reason=f"{path} v{document.version} ready" + (f"; {len(findings)} sync finding(s)" if findings else ""))
+
+
+def _revision(session: Session, run: Run, kind: str, content: str, replies: list) -> dict | None:
+    """A rewrite after the reviewer rejected the last version (or asked for changes on the PR): what they asked,
+    how the role says it handled each point, and which sections changed, so the next gate can check it."""
+    previous = latest_document(session, run.id, kind)
+    if previous is None:
+        return None
+    asked = session.scalars(select(Approval.reason).where(
+        Approval.run_id == run.id, Approval.created_at >= previous.created_at, Approval.reason.is_not(None),
+        ((Approval.stage == "spec") & (Approval.decision == "reject"))
+        | ((Approval.stage == "pr") & (Approval.decision == "request_changes"))).order_by(Approval.created_at)).all()
+    return {"from_version": previous.version, "feedback": [a for a in asked if a.strip()],
+            "replies": [r.model_dump() for r in replies], "sections": section_changes(previous.content, content)}
 
 
 def _apply_specify(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
@@ -788,8 +803,9 @@ def _apply_specify(session: Session, run: Run, execution: Execution, result: dic
                        reason=f"{len(blocking)} blocking question(s) for the Product Owner")
         return
     ref = feature_ref(session, run)
-    document = add_document(session, run.id, "spec", render_spec(run.title, spec, story=ref.story() if ref else None),
-                            author_kind="ai", author=TeamRole.BUSINESS_ANALYST.value, data=result["spec"])
+    content = render_spec(run.title, spec, story=ref.story() if ref else None)
+    document = add_document(session, run.id, "spec", content, author_kind="ai", author=TeamRole.BUSINESS_ANALYST.value,
+                            data={**result["spec"], "revision": _revision(session, run, "spec", content, spec.feedback_replies)})
     if stage_mode(run, "spec") == "auto":
         accept_spec(session, run, document, actor=COORDINATOR)
     else:

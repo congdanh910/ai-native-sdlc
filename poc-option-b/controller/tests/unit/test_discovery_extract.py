@@ -252,3 +252,21 @@ def test_a_feature_out_of_scope_takes_its_functions_with_it():
     assert "REQ-002 Check in by card belongs to REQ-001 Alternative attendance, which is out of scope (D-001)" in detail
     nfr = merge_chunks([("s1", chunk(({"type": "nfr", "name": "Privacy", "text": "Data is protected"}, "page 4")))])
     assert advisories(nfr, [])[0]["status"] == "warning"
+
+
+def test_a_rewrite_lists_the_sections_that_changed_and_the_replies_to_feedback():
+    from controller.app.documents import document_diff, section_changes
+    from controller.app.project_docs import sds_part_model
+    from controller.app.team.normalize import feedback_replies, sds_part
+    old = "# SDS\n## 4.2 Technology Stack\n| identity | Keycloak |\n## 5 APIs\nsame\n## 6 Old\nx\n"
+    new = "# SDS\n## 4.2 Technology Stack\n| identity | built-in accounts |\n## 5 APIs\nsame\n## 7 New\ny\n"
+    assert section_changes(old, new) == [
+        {"heading": "4.2 Technology Stack", "added": 1, "removed": 1, "state": "changed"},
+        {"heading": "7 New", "added": 1, "removed": 0, "state": "new"},
+        {"heading": "6 Old", "added": 0, "removed": 1, "state": "removed"}]
+    assert "-| identity | Keycloak |" in document_diff(old, new, "v1", "v2")
+    replies = feedback_replies([{"feedback": "no Keycloak", "change": "Accounts in the backend", "where": "4.2, 7.1"},
+                                {"feedback": "x", "change": ""}, "junk"])
+    assert replies == [{"feedback": "no Keycloak", "change": "Accounts in the backend", "where": ["4.2", "7.1"]}]
+    part = sds_part({"api_standards": ["REST"], "feedback_replies": replies}, "sds-interfaces")
+    assert sds_part_model("sds-interfaces").model_validate(part).feedback_replies[0].where == ["4.2", "7.1"]

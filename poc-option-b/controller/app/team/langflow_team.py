@@ -164,6 +164,7 @@ class LangflowTeam(MockTeam):
                 "repository": {"files": context.repository.get("files", []), "symbols": context.repository.get("symbols", {})},
                 "feedback": context.feedback}
         design: dict = {}
+        replies: list[dict] = []
         calls = []
         for index, part in enumerate(SDS_PARTS, start=1):
             joblog.note(f"Architect writes part {index} of {len(SDS_PARTS)} ({part})")
@@ -171,7 +172,10 @@ class LangflowTeam(MockTeam):
                                sds_part_model(part), lambda data, p=part: normalize.sds_part(data, p),
                                f"{context.session_id}:{part}", retries=context.policy.max_format_retries)
             calls.append(self.last_call)
-            design.update(answer.model_dump())
+            written = answer.model_dump()
+            replies += written.pop("feedback_replies", [])
+            design.update(written)
+        design["feedback_replies"] = replies
         if calls:  # one record for the job: the passes' attempts and time together
             self.last_call = CallRecord(calls[-1].engine, ",".join(c.prompt_version or "" for c in calls),
                                         sum(c.attempts for c in calls),
