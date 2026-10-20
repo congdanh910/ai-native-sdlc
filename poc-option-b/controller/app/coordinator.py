@@ -267,10 +267,11 @@ def evaluate_gate(session: Session, run: Run, gate: str | None = None) -> dict |
         platforms = options_platforms(EffectivePolicy.model_validate_json(raw_policy), _deployment_context(session, run)) \
             if raw_policy else None
         problems = check_options(stored_options(document.data), json.loads(artifact(session, run.id, "baseline") or "null"),
-                                 platforms)
+                                 platforms, open_hosting=document.data.get("hosting_basis") == "assumed")
         controller = [checklists._result("compared", "Every option in the baseline is compared, the recommendation is one "
                                          "of the options, and each option has hosting variants on the project's "
-                                         "platforms with one recommended", problems)]
+                                         "platforms (on-premise among them when the brief leaves hosting open) with "
+                                         "one recommended", problems)]
     elif gate == "srs":
         content = latest_document(session, run.id, "srs").content
         problems = check_srs_markdown(content)

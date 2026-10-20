@@ -152,6 +152,13 @@ def test_options_compare_hosting_variants_on_the_projects_platforms():
     assert central.recommended_hosting == "PA1-H2" and central.hosting[1].services[0].service == "VM with Docker"
     assert check_options(options, None, ["aws", "on_premise"]) == ["PA2 has no hosting variant"]
     assert check_options(options, None, ["on_premise"])[0] == "PA1 hosting outside architecture.hosting_platforms: PA1-H1 (aws)"
+    aws_only = {**options.options[0].model_dump(), "hosting": [options.options[0].hosting[0].model_dump()],
+                "recommended_hosting": "PA1-H1"}
+    on_premise = {**options.options[0].model_dump(), "hosting": [options.options[0].hosting[1].model_dump()],
+                  "recommended_hosting": "Own data centre"}
+    clouds = Options.model_validate({**options.model_dump(), "options": [aws_only, on_premise]})
+    assert check_options(clouds, None, ["aws", "on_premise"], open_hosting=True) == ["PA1 compares no on-premise hosting"]
+    assert check_options(clouds, None, ["aws", "on_premise"]) == []  # a stated cloud platform needs no on-premise
     text = render_options(options, title="Shop")
     assert "| Platform | AWS | On-premise |" in text and "**Recommended hosting for PA1:** PA1-H2 Own data centre." in text
     assert "| API | VM with Docker | — |" in text

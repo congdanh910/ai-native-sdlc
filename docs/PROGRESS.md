@@ -149,6 +149,8 @@ hay thay công nghệ ở mọi chỗ, không để lại làm phương án dự
 - Options lưu `hosting_basis` (stated/assumed) cạnh dữ liệu (`stored_options` bỏ khoá này khi đọc). Assumed: cổng
   không chọn sẵn, cảnh báo, bắt buộc `hosting_reason` (vào `chosen_option` và §9). Options hiện "Questions for the
   Solution Architect". Prompt options.md, sds-architecture.md, sds-operations.md cập nhật.
+- Run facec4d9: PA1 chỉ có AWS/Azure/GCP. Nay khi hosting chưa chốt, mỗi phương án phải có biến thể on-premise
+  (`check_options(open_hosting=True)`), prompt yêu cầu phủ mô hình deploy (on-premise, một cloud, hybrid) trước hãng.
 - Test: 230 pass. Chưa chạy thật với Codex.
 
 ## Bước tiếp theo

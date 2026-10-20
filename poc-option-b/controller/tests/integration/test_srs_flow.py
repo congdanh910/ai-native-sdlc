@@ -234,14 +234,14 @@ def test_the_sds_records_the_chosen_option_in_section_9(db, sample_repo):
     drain()
     detail = client.get(f"/api/runs/{run['id']}").json()
     sds = [d for d in detail["documents"] if d["kind"] == "sds"][-1]["content"]
-    assert "### 9.1 Architecture Option" in sds and "PA2 Managed cloud, hosted as PA2-H2 Mock hosting on azure: own cloud" in sds
+    assert "### 9.1 Architecture Option" in sds and "PA2 Managed cloud, hosted as PA2-H2 Mock hosting on on_premise: own cloud" in sds
     assert {c["id"]: c["ok"] for c in detail["checklist"]["controller"]}["option"] is True
     from controller.app.project_docs import check_chosen_option
-    chosen = {"id": "PA2", "name": "Managed cloud", "hosting": {"id": "PA2-H2", "name": "Mock hosting on azure"}}
+    chosen = {"id": "PA2", "name": "Managed cloud", "hosting": {"id": "PA2-H2", "name": "Mock hosting on on_premise"}}
     assert check_chosen_option(sds, chosen) == []
-    assert check_chosen_option(sds.replace("PA2 Managed cloud", "a cloud").replace("PA2-H2 Mock hosting on azure", "x"),
+    assert check_chosen_option(sds.replace("PA2 Managed cloud", "a cloud").replace("PA2-H2 Mock hosting on on_premise", "x"),
                                chosen) == ["section 9 does not record the chosen option PA2 Managed cloud",
-                                           "section 9 does not record the chosen hosting PA2-H2 Mock hosting on azure"]
+                                           "section 9 does not record the chosen hosting PA2-H2 Mock hosting on on_premise"]
 
 
 def test_changes_asked_on_an_srs_pull_request_rewrite_the_document_from_its_last_draft(db, sample_repo):
@@ -332,6 +332,7 @@ def test_a_stated_platform_shapes_the_hosting_and_an_open_one_asks_the_sa_why(db
     assert "Hosting platform: not decided" in brief
     options = [d for d in detail["documents"] if d["kind"] == "options"][-1]
     assert options["choices"]["hosting_basis"] == "assumed"
+    assert {c["id"]: c["ok"] for c in detail["checklist"]["controller"]}["compared"] is True  # cloud and on-premise
     ticks = [h["id"] for h in detail["checklist"]["human"]]
     choice = {"document_id": options["id"], "option": "PA1", "reason": "central", "checked": ticks}
     refused = client.post(f"/api/runs/{run['id']}/options/choose", json=choice)

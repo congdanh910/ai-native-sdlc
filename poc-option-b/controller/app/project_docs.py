@@ -1479,9 +1479,14 @@ def platform_name(platform: str) -> str:
     return PLATFORM_NAMES.get(platform, platform.replace("_", " ").title())
 
 
-def check_options(options: Options, baseline: dict | None, platforms: list[str] | None = None) -> list[str]:
+CLOUD_PLATFORMS = ("aws", "azure", "gcp")
+
+
+def check_options(options: Options, baseline: dict | None, platforms: list[str] | None = None,
+                  open_hosting: bool = False) -> list[str]:
     """Every option item of the baseline is compared; the recommendation is one of the options; every option has
-    hosting variants on the project's platforms, one of them recommended."""
+    hosting variants on the project's platforms, one of them recommended. When the brief leaves the platform open,
+    each option compares on-premise too, not only cloud vendors (attendance, 2026-10-20: AWS, Azure and GCP only)."""
     options = number_options(options)
     problems = []
     for option in options.options:
@@ -1493,6 +1498,9 @@ def check_options(options: Options, baseline: dict | None, platforms: list[str] 
             problems.append(f"{option.id} hosting outside architecture.hosting_platforms: {', '.join(foreign)}")
         if option.recommended_hosting not in {v.id for v in option.hosting}:
             problems.append(f"{option.id} recommends no hosting variant of its own")
+        kinds = {v.platform for v in option.hosting}
+        if open_hosting and "on_premise" in (platforms or []) and "on_premise" not in kinds:
+            problems.append(f"{option.id} compares no on-premise hosting")
     wanted = [i["id"] for i in (baseline or {}).get("items", []) if i["type"] == "option"]
     used = {r for o in options.options for r in o.refs}
     missing = [w for w in wanted if w not in used]
