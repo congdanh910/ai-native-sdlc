@@ -3,6 +3,7 @@ import { forwardRef, useEffect, useState, type ButtonHTMLAttributes, type ReactN
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Loader2 } from "lucide-react";
+import { DiagramTools, DiagramViewer } from "./DiagramViewer";
 import { toast } from "sonner";
 import { cn, statusTone, humanStatus, type Tone } from "../lib/utils";
 
@@ -162,8 +163,17 @@ function MermaidBlock({ code }: { code: string }) {
     }).catch(() => live && setFailed(true));
     return () => { live = false; };
   }, [code]);
+  const [expanded, setExpanded] = useState(false);
   if (failed || !svg) return <pre><code>{code}</code></pre>;
-  return <div className="my-3 overflow-x-auto rounded-lg border border-line bg-panel p-3" dangerouslySetInnerHTML={{ __html: svg }} />;
+  const name = `diagram-${(code.trim().split(/\s/)[0] || "mermaid").replace(/\W+/g, "")}`;
+  return (
+    <div className="relative my-3 rounded-lg border border-line bg-panel">
+      <div className="cursor-zoom-in overflow-x-auto p-3" title="Click to open full screen" onClick={() => setExpanded(true)}
+        dangerouslySetInnerHTML={{ __html: svg }} />
+      <DiagramTools svg={svg} name={name} onExpand={() => setExpanded(true)} />
+      {expanded ? <DiagramViewer svg={svg} name={name} onClose={() => setExpanded(false)} /> : null}
+    </div>
+  );
 }
 
 /** The anchor id the controller writes for a heading (project_docs._slug), so a table of contents can link to it. */
