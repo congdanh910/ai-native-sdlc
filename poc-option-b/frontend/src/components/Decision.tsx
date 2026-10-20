@@ -116,6 +116,24 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
     );
   }
 
+  if (need.action === "waiting_onboarding_approval") {
+    const onboarding = [...run.documents].reverse().find((d) => d.kind === "onboarding");
+    if (!onboarding) return null;
+    return (
+      <Panel run={run} title={`Onboarding v${onboarding.version}`}>
+        <p className="m-0 text-sm text-muted">The Architect rewrote the onboarding files from SDS.md: AGENTS.md, REVIEW.md, the technical part of .sdlc/project.yaml (paths, validation, setup, environment) and the validation environment. Each file is shown against the default branch. Approving commits them to the run's branch; the platform then builds the validation image and starts its services, and on success the run builds the walking skeleton with these files. A failing environment goes back to the Architect with the log.</p>
+        <RevisionSummary runId={run.id} doc={onboarding} />
+        <div className="max-h-[560px] overflow-y-auto rounded-lg border border-line bg-side p-4"><Markdown source={onboarding.content} /></div>
+        {checklist}
+        <Reason value={reason} onChange={setReason} placeholder="Required to ask for changes" />
+        <div className="flex flex-wrap gap-2">
+          <ActionButton variant="primary" success="Onboarding approved; building the environment" action={() => post("onboarding/approve", { document_id: onboarding.id, checked })}>Approve onboarding v{onboarding.version}</ActionButton>
+          <ActionButton variant="danger" disabled={!reason.trim()} action={() => post("onboarding/redo", { reason })}>Ask for changes</ActionButton>
+        </div>
+      </Panel>
+    );
+  }
+
   if (need.action === "waiting_options_approval") {
     const doc = [...run.documents].reverse().find((d) => d.kind === "options");
     if (!doc) return null;

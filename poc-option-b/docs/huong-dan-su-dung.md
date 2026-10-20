@@ -249,6 +249,34 @@ Lưu ý: ô **Hosting platform** trong form SDS hiện chỉ liệt kê AWS, Azu
 
 Muốn bỏ bước Options thì đặt `stages.options: skip` trong `.sdlc/project.yaml`.
 
+## 7a. Foundation: file onboarding theo SDS và khung dự án
+
+Sau khi `SDS.md` merge và **trước story đầu tiên**. Mọi thứ đi qua nền tảng, không sửa tay repo.
+
+1. **New request → Foundation** (cần `SDS.md` trên nhánh mặc định): nhập tên sản phẩm và ghi chú (ví dụ "chưa cần CI").
+2. **Onboarding** (Architect viết, cổng **Tech Lead**): từ SDS (stack, cấu trúc §4.3.5, physical view, nguyên tắc, API, bảo mật, quy ước), Architect viết lại `AGENTS.md`, `REVIEW.md`, `.gitignore`, workflow CI, phần kỹ thuật của `.sdlc/project.yaml` (paths, validation, setup, `environment`, `limits.max_tasks/max_changed_files`) và `.sdlc/validation.Dockerfile` khi không toolchain nào của nền tảng đủ cho cả stack. Các phần khác của project.yaml (project, executors, stages, discovery, architecture, các limit khác) giữ nguyên. Cổng hiện **diff từng file** với nhánh mặc định; controller kiểm project.yaml mới đọc được (không thì tự gửi lại Architect kèm lỗi). **Approve onboarding** hoặc **Ask for changes** (khung "Changes since vN" như ở SRS/SDS).
+3. **Environment**: controller commit các file lên nhánh của run (vai AI viết code vẫn không được sửa chúng), build image, bật service. Lỗi thì quay lại Architect kèm log, tối đa `limits.max_remediations` lần, rồi dừng chờ người.
+4. Môi trường chạy được: run **ghim lại** policy, `AGENTS.md`, `REVIEW.md` từ nhánh của run, rồi như một story: **spec** (khung dự án: cấu trúc, cấu hình, migration nền, health check, đăng nhập và phân quyền nền của SDS §7, không làm chức năng của story nào) → plan → test cases → code → review → PR.
+5. Merge PR, **Projects → Check again**: validation mới chạy trên nhánh mặc định; từ đây các run story dùng stack và môi trường mới.
+
+### Môi trường validation của dự án (`environment`)
+
+Dự án mà một toolchain của nền tảng (`node-20/22`, `python-3.12/3.13`) không đủ thì khai báo trong `.sdlc/project.yaml` (bước Onboarding tự viết phần này):
+
+```yaml
+environment:
+  dockerfile: .sdlc/validation.Dockerfile   # nền tảng build (có mạng), một lần cho mỗi nội dung file
+  setup_inputs: [backend/requirements*.txt, web/package-lock.json]   # đổi thì chạy lại setup
+  env: {DATABASE_URL: "postgresql://app:app@postgres:5432/app"}
+  services:
+    - name: postgres                       # tên máy trong mạng của lần validation
+      image: postgres:17-alpine
+      env: {POSTGRES_USER: app, POSTGRES_PASSWORD: app, POSTGRES_DB: app}
+      ready: [pg_isready, -U, app, -h, 127.0.0.1]
+```
+
+Mỗi lần validation: mạng Docker riêng **không ra Internet**, bật service, chờ lệnh `ready`, chạy lệnh validation với `env`, xong thì xoá service và mạng. Setup (cài dependency, có mạng) chạy lại khi file trong `setup_inputs` đổi. Chỉ dùng mật khẩu test.
+
 ## 8. Feature run (một user story)
 
 1. **New request → Feature request**: chọn dự án và **User story** trong SRS §7, điền Desired outcome, bấm **Submit intent.md**.

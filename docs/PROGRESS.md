@@ -164,7 +164,25 @@ hay thay công nghệ ở mọi chỗ, không để lại làm phương án dự
   tay): tổng quan 886×1062 thay vì 3548×990.
 - Test: 231 pass.
 
+## Thêm ngày 20/10: môi trường dự án và run Foundation
+
+Thiết kế: `poc-option-b/docs/foundation-design.md`.
+- Giai đoạn 1 (711aca3): `environment` trong project.yaml (`Environment`, `Service` trong `projects/config.py`);
+  `ValidationGate.image()` build Dockerfile (tag `sdlc-validate-env-<project>:<sha12>`), `services()` mạng
+  `--internal`, `ensure_setup` theo hash của `setup_inputs`; orphan cleanup xoá mạng. Test Docker thật với
+  postgres:17-alpine pass.
+- Giai đoạn 2: `RunKind.FOUNDATION`, trạng thái DESIGNING_ONBOARDING / WAITING_ONBOARDING_APPROVAL /
+  PREPARING_ENVIRONMENT; `controller/app/foundation.py` (Onboarding, onboarding_files giữ phần khác của project.yaml,
+  render diff, foundation_intent trích SDS); job `onboarding` (prompt `langflow/prompts/onboarding.md`, Architect trên
+  engine của Tech Lead) và `environment`; cổng `onboarding` (Tech Lead), API `onboarding/approve|redo`; sau khi môi
+  trường chạy được thì ghim lại artifacts rồi vào spec. Migration 0010 (approvals.stage 32). UI: tab Foundation, panel
+  Onboarding, pipeline có Onboarding/Environment.
+- Test: 237 pass. Chưa chạy thật với Codex trên attendance.
+
 ## Bước tiếp theo
+
+Attendance: SRS và SDS (PR #9) đã merge. Chạy **Foundation** trên attendance (Codex), duyệt Onboarding, rồi các story
+theo thứ tự UPM → EMP/MSM → SHF/CAM → FEN → FRA/CIO → CAL → COR/DAS/RPT → NTF/HRI/AUD.
 
 Người dùng chạy lại từ đầu trên `attendance`: Discovery → SRS từ baseline → SDS → story đầu tiên. Mọi vai đang chạy
 `codex-readonly`.

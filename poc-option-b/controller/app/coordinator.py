@@ -16,7 +16,7 @@ import re
 from pathlib import Path
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from controller.app.config import DATA_DIR, get_settings
@@ -63,6 +63,8 @@ KINDS: dict[str, tuple[TeamRole, bool, RunStatus]] = {
     "release": (TeamRole.RELEASE_ENGINEER, True, RunStatus.PR_OPEN),
     "extract": (TeamRole.BUSINESS_ANALYST, False, RunStatus.EXTRACTING),
     "options": (TeamRole.ARCHITECT, False, RunStatus.DESIGNING_OPTIONS),
+    "onboarding": (TeamRole.ARCHITECT, False, RunStatus.DESIGNING_ONBOARDING),
+    "environment": (TeamRole.VALIDATION_GATE, False, RunStatus.PREPARING_ENVIRONMENT),
 }
 
 
@@ -240,7 +242,8 @@ def tick_tasks(session: Session, run: Run) -> None:
 
 # ---------------------------------------------------------------- gate checklists
 
-GATE_OF_STATUS = {RunStatus.WAITING_BASELINE_APPROVAL: "baseline", RunStatus.WAITING_OPTIONS_APPROVAL: "options", RunStatus.WAITING_PLAN_APPROVAL: "plan", RunStatus.WAITING_TEST_APPROVAL: "tests",
+GATE_OF_STATUS = {RunStatus.WAITING_BASELINE_APPROVAL: "baseline", RunStatus.WAITING_OPTIONS_APPROVAL: "options",
+                  RunStatus.WAITING_ONBOARDING_APPROVAL: "onboarding", RunStatus.WAITING_PLAN_APPROVAL: "plan", RunStatus.WAITING_TEST_APPROVAL: "tests",
                   RunStatus.WAITING_PR_APPROVAL: "pr"}
 
 
@@ -262,6 +265,11 @@ def evaluate_gate(session: Session, run: Run, gate: str | None = None) -> dict |
     spec = latest_document(session, run.id, "spec")
     if gate == "baseline":
         controller, ai = baseline_checks(session, run)
+    elif gate == "onboarding":
+        from controller.app.foundation import CONFIG_PATH
+        files = (latest_document(session, run.id, "onboarding").data or {}).get("files", {})
+        controller = [checklists._result("files", "AGENTS.md and a .sdlc/project.yaml that loads are present",
+                                         [f"{p} is missing" for p in ("AGENTS.md", CONFIG_PATH) if p not in files])]
     elif gate == "options":
         document = latest_document(session, run.id, "options")
         platforms = options_platforms(EffectivePolicy.model_validate_json(raw_policy), _deployment_context(session, run)) \
@@ -428,6 +436,8 @@ def build_context(session: Session, run: Run, *, kind: str = "", feedback: list[
     bundle = code_bundle(session, run, [intent, spec.content if spec else "", agents],
                          get_settings().context_char_budget)
     srs = sds = None
+    if run.kind == RunKind.FOUNDATION and run.base_commit:
+        sds = mirror_for(session.get(Project, run.project_id)).read_file(run.base_commit, SDS_PATH)
     if run.kind in PROJECT_DOCS and run.base_commit:
         mirror = mirror_for(session.get(Project, run.project_id))
         srs, sds = mirror.read_file(run.base_commit, SRS_PATH), mirror.read_file(run.base_commit, SDS_PATH)
@@ -446,7 +456,8 @@ def build_context(session: Session, run: Run, *, kind: str = "", feedback: list[
                       baseline=json.loads(artifact(session, run.id, "baseline") or "null"),
                       chosen_option=json.loads(artifact(session, run.id, "chosen_option") or "null"),
                       hosting_platforms=options_platforms(policy, _deployment_context(session, run))
-                      if run.kind == RunKind.SDS else [])
+                      if run.kind == RunKind.SDS else [],
+                      project_config=artifact(session, run.id, "project_config") or "")
 
 
 def _story_context(session: Session, run: Run) -> dict | None:
@@ -470,6 +481,11 @@ def load(session: Session, execution: Execution) -> Loaded:
     run = session.get(Run, execution.run_id)
     loaded = Loaded(execution.id, execution.kind, run.id, run.version)
     if execution.kind in ("preflight", "ground", "release"):
+        return loaded
+    if execution.kind == "environment":
+        document = latest_document(session, run.id, "onboarding")
+        loaded.extra.update(files=(document.data or {}).get("files", {}), worktree=run.worktree_path or "",
+                            run_id=str(run.id))
         return loaded
     if execution.kind == "extract":
         return _load_extract(session, run, loaded)
@@ -497,6 +513,12 @@ def load(session: Session, execution: Execution) -> Loaded:
         feedback = [f"Solution Architect asked for other options: {reason}" for reason in session.scalars(
             select(Approval.reason).where(Approval.run_id == run.id, Approval.stage == "options",
                                           Approval.decision == "reject").order_by(Approval.created_at)) if reason]
+    if execution.kind == "onboarding":  # the Tech Lead's reasons, and what the environment check found
+        feedback = [f"{'Environment check' if actor == COORDINATOR else 'Tech Lead'} asked for changes: {reason}"
+                    for actor, reason in session.execute(
+                        select(Approval.actor, Approval.reason).where(
+                            Approval.run_id == run.id, Approval.stage == "onboarding",
+                            Approval.decision == "reject").order_by(Approval.created_at)) if reason]
     if execution.kind == "design_tests":
         feedback = [f"QC asked for changes: {reason}" for reason in session.scalars(
             select(Approval.reason).where(Approval.run_id == run.id, Approval.stage == "tests",
@@ -544,7 +566,13 @@ def compute(team: Team, loaded: Loaded) -> dict:
         joblog.note(doing[loaded.kind])
     if loaded.kind == "extract":
         return _extract(team, loaded)
-    if loaded.kind == "options":
+    if loaded.kind == "environment":
+        return _try_environment(loaded)
+    if loaded.kind == "onboarding":
+        joblog.note("Architect writes the onboarding files from the SDS")
+        result = {"onboarding": team.write_onboarding(context).model_dump()}
+        record()
+    elif loaded.kind == "options":
         joblog.note("Architect compares the architecture options")
         result = {"options": team.design_options(context).model_dump()}
         record()
@@ -655,7 +683,8 @@ def apply(session: Session, loaded: Loaded, result: dict, team: Team) -> None:
         execution.prompt_version = ",".join(sorted({c["prompt_version"] for c in calls if c["prompt_version"]}))
     handler = {"preflight": _apply_preflight, "specify": _apply_specify, "plan": _apply_plan,
                "ground": _apply_ground, "design_tests": _apply_design_tests, "code_task": _apply_code_task, "review": _apply_review,
-               "release": _apply_release, "extract": _apply_extract, "options": _apply_options}[loaded.kind]
+               "release": _apply_release, "extract": _apply_extract, "options": _apply_options,
+               "onboarding": _apply_onboarding, "environment": _apply_environment}[loaded.kind]
     handler(session, run, execution, result, team)
     if execution.status == "running":
         finish(session, execution, "succeeded", result=result)
@@ -726,6 +755,15 @@ def _apply_preflight(session: Session, run: Run, execution: Execution, result: d
         transition_run(session, run, RunStatus.INGESTING, actor=COORDINATOR,
                        reason="add the raw requirement sources, then start the extraction")
         return
+    if run.kind == RunKind.FOUNDATION:
+        if mirror.read_file(base, SDS_PATH) is None:
+            to_needs_human(session, run, f"SDS.md is not on {project.default_branch} at {base[:12]}; "
+                                         "merge the SDS pull request first, then resume")
+            return
+        transition_run(session, run, RunStatus.DESIGNING_ONBOARDING, actor=COORDINATOR,
+                       reason="the Architect writes the onboarding files from the SDS")
+        queue(session, run, "onboarding")
+        return
     if run.kind == RunKind.SDS and modes.get("options", "gated") != "skip":
         transition_run(session, run, RunStatus.DESIGNING_OPTIONS, actor=COORDINATOR,
                        reason="the Architect compares the architecture options before the SDS")
@@ -755,6 +793,93 @@ def _apply_options(session: Session, run: Run, execution: Execution, result: dic
     document.commit_sha = commit_thread(session, run, "options", content, f"sdlc: architecture options v{document.version}")
     transition_run(session, run, RunStatus.WAITING_OPTIONS_APPROVAL, actor=TeamRole.ARCHITECT.value,
                    reason=f"{len(options.options)} options compared; the Architect recommends {options.recommendation}")
+
+
+def _apply_onboarding(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    """The Architect's onboarding files, checked as a configuration, then the Tech Lead's gate. A configuration that
+    does not load goes back to the Architect with the reason, at most limits.max_format_retries times."""
+    from controller.app.foundation import Onboarding, onboarding_files, render_onboarding
+    onboarding = Onboarding.model_validate(result["onboarding"])
+    try:
+        files = onboarding_files(onboarding, artifact(session, run.id, "project_config") or "")
+    except ValueError as exc:
+        policy = EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy"))
+        refused = session.scalar(select(func.count()).select_from(Approval).where(
+            Approval.run_id == run.id, Approval.stage == "onboarding", Approval.actor == COORDINATOR))
+        reason = f".sdlc/project.yaml would not load: {str(exc).splitlines()[0][:400]}"
+        if refused >= policy.max_format_retries:
+            to_needs_human(session, run, f"the Architect's onboarding still breaks the configuration: {reason}")
+            return
+        session.add(Approval(run_id=run.id, stage="onboarding", decision="reject", actor=COORDINATOR,
+                             acting_role=TeamRole.VALIDATION_GATE.value, reason=reason, checklist={}))
+        transition_run(session, run, RunStatus.DESIGNING_ONBOARDING, actor=COORDINATOR, reason=reason)
+        queue(session, run, "onboarding", key=f"redo:v{run.version}")
+        return
+    mirror = mirror_for(session.get(Project, run.project_id))
+    current = {path: mirror.read_file(run.base_commit, path) for path in files}
+    content = render_onboarding(run.title.removeprefix("Foundation: "), onboarding, files, current)
+    document = add_document(session, run.id, "onboarding", content, author_kind="ai", author=TeamRole.ARCHITECT.value,
+                            data={**onboarding.model_dump(), "files": files,
+                                  "revision": _revision(session, run, "onboarding", content, onboarding.feedback_replies)})
+    transition_run(session, run, RunStatus.WAITING_ONBOARDING_APPROVAL, actor=TeamRole.ARCHITECT.value,
+                   reason=f"onboarding v{document.version}: {', '.join(files)}")
+
+
+def _try_environment(loaded: Loaded) -> dict:
+    """Build the new validation image and start its services on the run's worktree, which holds the approved files."""
+    from controller.app.doing.validation import ValidationGate
+    from controller.app.projects.config import parse_project_config
+    if get_settings().coding_is_mocked:
+        return {"ok": True, "detail": "not checked: SDLC_DOING_MODE is mock"}
+    policy = effective_policy(parse_project_config(loaded.extra["files"][".sdlc/project.yaml"]))
+    gate = ValidationGate(policy, Path(loaded.extra["worktree"]), DATA_DIR / "logs" / loaded.extra["run_id"] / "environment")
+    joblog.note(f"building the validation image ({policy.env_dockerfile or policy.validation_image})")
+    image, failed = gate.image()
+    if failed is None and not image:
+        return {"ok": False, "detail": f"{policy.validation_image!r} is not a toolchain this platform provides"}
+    if failed is None:
+        joblog.note(f"image {image}; starting {len(policy.services)} service(s)")
+        with gate.services() as (_, failed):
+            pass
+    if failed:
+        return {"ok": False, "detail": f"{failed.name} failed (exit {failed.exit_code}): {failed.tail[-1500:]}"}
+    return {"ok": True, "detail": f"image {image} built; {len(policy.services)} service(s) ready"}
+
+
+def _apply_environment(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    """A working environment: the run now follows the new onboarding files (policy, AGENTS.md, REVIEW.md) and builds
+    the skeleton. A broken one goes back to the Architect with the log, at most limits.max_remediations times."""
+    if not result["ok"]:
+        policy = EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy"))
+        tried = session.scalar(select(func.count()).select_from(Approval).where(
+            Approval.run_id == run.id, Approval.stage == "onboarding", Approval.actor == COORDINATOR))
+        if tried >= policy.max_remediations:
+            to_needs_human(session, run, f"the validation environment does not work: {result['detail'][:500]}")
+            return
+        session.add(Approval(run_id=run.id, stage="onboarding", decision="reject", actor=COORDINATOR,
+                             acting_role=TeamRole.VALIDATION_GATE.value, reason=result["detail"], checklist={}))
+        transition_run(session, run, RunStatus.DESIGNING_ONBOARDING, actor=COORDINATOR,
+                       reason=f"environment check failed: {result['detail'][:200]}")
+        queue(session, run, "onboarding", key=f"env:v{run.version}")
+        return
+    project = session.get(Project, run.project_id)
+    mirror = mirror_for(project)
+    head = artifact(session, run.id, "onboarding_commit")
+    snapshot, items = read_snapshot(mirror, head)
+    if snapshot is None:
+        to_needs_human(session, run, "the approved onboarding files do not load: "
+                       + "; ".join(f"{i.name}: {i.detail}" for i in items if i.status == "fail"))
+        return
+    store_artifact(session, run, "project_config", TeamRole.COORDINATOR, mirror.read_file(head, ".sdlc/project.yaml"))
+    store_artifact(session, run, "effective_policy", TeamRole.COORDINATOR,
+                   effective_policy(snapshot.config).model_dump_json())
+    store_artifact(session, run, "context_rules", TeamRole.COORDINATOR, json.dumps(snapshot.config.context.model_dump()))
+    store_artifact(session, run, "agents_md", TeamRole.COORDINATOR, snapshot.agents_md)
+    if snapshot.review_md:
+        store_artifact(session, run, "review_md", TeamRole.COORDINATOR, snapshot.review_md)
+    record_event(session, "environment.ready", actor=COORDINATOR, run_id=run.id,
+                 payload={"detail": result["detail"], "commit": head})
+    enter_stage(session, run, "spec")
 
 
 # Project documents written before feature runs: document kind, file at the repository root, the AI role.
@@ -804,9 +929,10 @@ def _revision(session: Session, run: Run, kind: str, content: str, replies: list
     previous = latest_document(session, run.id, kind)
     if previous is None:
         return None
+    gate = "onboarding" if kind == "onboarding" else "spec"
     asked = session.scalars(select(Approval.reason).where(
         Approval.run_id == run.id, Approval.created_at >= previous.created_at, Approval.reason.is_not(None),
-        ((Approval.stage == "spec") & (Approval.decision == "reject"))
+        ((Approval.stage == gate) & (Approval.decision == "reject"))
         | ((Approval.stage == "pr") & (Approval.decision == "request_changes"))).order_by(Approval.created_at)).all()
     return {"from_version": previous.version, "feedback": [a for a in asked if a.strip()],
             "replies": [r.model_dump() for r in replies], "sections": section_changes(previous.content, content)}

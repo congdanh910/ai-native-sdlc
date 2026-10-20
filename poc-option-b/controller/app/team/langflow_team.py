@@ -187,6 +187,19 @@ class LangflowTeam(MockTeam):
                                         usage={"seconds": round(sum((c.usage or {}).get("seconds", 0) for c in calls), 1)})
         return Sds.model_validate(design)
 
+    def write_onboarding(self, context: RunContext):
+        """The onboarding files for the stack of the SDS, from the parts of the SDS they rest on."""
+        from controller.app.foundation import ONBOARDING_SECTIONS, Onboarding, sds_excerpt
+        from controller.app.projects.config import PlatformDefaults
+        payload = {"sds": sds_excerpt(context.sds_md or "", ONBOARDING_SECTIONS), "agents_md": context.agents_md,
+                   "review_md": context.review_md or "", "project_yaml": context.project_config,
+                   "platform_toolchains": [name for name, _ in PlatformDefaults().validation_images],
+                   "platform_protected_paths": list(PlatformDefaults().protected_paths),
+                   "limits": {"max_tasks": PlatformDefaults().max_tasks, "max_changed_files": PlatformDefaults().max_changed_files},
+                   "constitution": self._constitution(context), "feedback": context.feedback}
+        return self._ask("onboarding", payload, Onboarding, normalize.onboarding, context.session_id,
+                         retries=context.policy.max_format_retries)
+
     def design_options(self, context: RunContext) -> Options:
         baseline = context.baseline or {}
         relevant = [{k: i.get(k, "") for k in ("id", "type", "name", "text")} for i in baseline.get("items", [])

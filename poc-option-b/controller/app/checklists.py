@@ -58,6 +58,11 @@ HUMAN_ITEMS = {
         Item("deferrals", "The items out of scope and the deferred questions are acceptable"),
         Item("actors", "The actors and their permissions are complete"),
     ],
+    "onboarding": [
+        Item("stack", "AGENTS.md states the stack, commands, structure and rules of the SDS"),
+        Item("paths", "The paths the coding roles may change and the test paths fit the structure"),
+        Item("environment", "The validation environment (image, services, setup) is acceptable and holds no real secret"),
+    ],
     "options": [
         Item("meets-nfr", "The chosen option meets the quality targets and constraints of the SRS"),
         Item("budget", "Its cost and operations fit the budget and the team that will run it"),

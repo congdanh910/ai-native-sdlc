@@ -289,6 +289,22 @@ def _hosting(variant: dict) -> dict:
     return variant
 
 
+def onboarding(data: dict) -> dict:
+    """Text files the model wrote as lists become text; a bare command string becomes argv; questions as objects."""
+    data = dict(data)
+    for key in ("agents_md", "review_md", "gitignore", "ci_workflow", "dockerfile", "notes"):
+        if isinstance(data.get(key), list):
+            data[key] = "\n".join(str(x) for x in data[key])
+    if isinstance(data.get("setup"), str):
+        data["setup"] = ["sh", "-c", data["setup"]] if data["setup"].strip() else []
+    for command in data.get("validation") or []:
+        if isinstance(command, dict) and isinstance(command.get("run"), str):
+            command["run"] = ["sh", "-c", command["run"]]
+    data["questions"] = [{"question": q, "blocking": False} if isinstance(q, str) else q for q in data.get("questions") or []]
+    data["feedback_replies"] = feedback_replies(data.get("feedback_replies"))
+    return data
+
+
 def _refs(value) -> None:
     """refs written as "REQ-001, REQ-004" become a list of ids, at any depth."""
     if isinstance(value, dict):

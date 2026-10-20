@@ -45,6 +45,9 @@ class CompositeTeam:
     def design_options(self, *args, **kwargs):
         return self.thinking.design_options(*args, **kwargs)
 
+    def write_onboarding(self, *args, **kwargs):
+        return self.thinking.write_onboarding(*args, **kwargs)
+
     def read_minutes(self, *args, **kwargs):
         return self.thinking.read_minutes(*args, **kwargs)
 

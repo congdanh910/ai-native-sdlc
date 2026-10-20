@@ -10,14 +10,18 @@ export function stages(run: RunDetail): Stage[] {
   const has = (kind: string) => run.documents.some((d) => d.kind === kind);
   const approved = (stage: string) => run.approvals.some((a) => a.stage === stage && a.decision === "approve");
   if (run.kind === "discovery") return discoveryStages(run, has, approved);
-  if (run.kind !== "feature") return documentStages(run, has, approved);
+  if (run.kind !== "feature" && run.kind !== "foundation") return documentStages(run, has, approved);
   const plan = run.plans[run.plans.length - 1];
   const passed = run.tasks.filter((t) => t.status === "PASSED").length;
   const review = [...run.documents].reverse().find((d) => d.kind === "review");
   const verdict = review?.content.match(/Verdict: \*\*(\w+)\*\*/)?.[1];
   const pr = run.pull_request;
+  const foundation = run.kind === "foundation";
+  const onboarded = approved("onboarding");
+  const ready = has("spec") || (onboarded && !["DESIGNING_ONBOARDING", "WAITING_ONBOARDING_APPROVAL", "PREPARING_ENVIRONMENT", "NEEDS_HUMAN"].includes(run.status));
   const done = [
     has("intent"),
+    ...(foundation ? [onboarded, ready] : []),
     has("spec"),
     approved("spec") || run.plans.length > 0,
     run.plans.length > 0 && !!plan?.grounding,
@@ -28,7 +32,11 @@ export function stages(run: RunDetail): Stage[] {
     !!pr && (pr.merged_sha !== null || run.status === "COMPLETED"),
   ];
   const list: Omit<Stage, "state">[] = [
-    { key: "intent", label: "Intent", detail: "Product Owner" },
+    { key: "intent", label: "Intent", detail: foundation ? "from SDS.md" : "Product Owner" },
+    ...(foundation ? [
+      { key: "onboarding", label: "Onboarding", detail: onboarded ? "files approved" : "Architect writes, Tech Lead approves", gate: true },
+      { key: "environment", label: "Environment", detail: ready ? "image and services work" : "build and try" },
+    ] : []),
     { key: "spec", label: "Spec", detail: has("spec") ? "Business Analyst" : "not yet" },
     { key: "gate1", label: "Gate 1", detail: approved("spec") ? "spec approved" : "approve spec", gate: true },
     { key: "plan", label: "Plan", detail: plan ? `${plan.plan.tasks.length} tasks · grounding ${plan.grounding?.status ?? "…"}` : "not yet" },

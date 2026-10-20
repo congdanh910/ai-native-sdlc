@@ -13,7 +13,8 @@ from controller.app.documents import add_document, add_plan, latest_document, la
 from controller.app.events import record_event
 from controller.app.models import Approval, Clarification, Plan, Project, PullRequest, Run, Task
 from controller.app.discovery.service import DiscoveryRequest, render_request
-from controller.app.project_docs import (SRS_PATH, ArchitectureBrief, ProjectBrief, check_sds_markdown,
+from controller.app.foundation import FoundationRequest, foundation_intent
+from controller.app.project_docs import (SDS_PATH, SRS_PATH, ArchitectureBrief, ProjectBrief, check_sds_markdown,
                                          check_srs_markdown, render_architecture_brief, render_brief, srs_features)
 from controller.app.projects.registry import mirror_for
 from controller.app.schemas import Intent, PlanPayload, TestPlan, parse_criteria, render_intent
@@ -63,7 +64,8 @@ def get_run(session: Session, run_id: uuid.UUID) -> Run:
 
 # ---------------------------------------------------------------- Product Owner
 
-def create_run(session: Session, project: Project, intent: Intent | ProjectBrief | ArchitectureBrief | DiscoveryRequest,
+def create_run(session: Session, project: Project,
+               intent: Intent | ProjectBrief | ArchitectureBrief | DiscoveryRequest | FoundationRequest,
                *, actor: str,
                idempotency_key: str,
                experiment: bool = False, base_commit: str | None = None, stage_overrides: dict | None = None,
@@ -74,7 +76,14 @@ def create_run(session: Session, project: Project, intent: Intent | ProjectBrief
     if project.readiness == "not_ready":
         raise DecisionError(f"project {project.key} is not ready; open Projects and run the check")
     kind = (RunKind.SRS if isinstance(intent, ProjectBrief) else RunKind.SDS if isinstance(intent, ArchitectureBrief)
-            else RunKind.DISCOVERY if isinstance(intent, DiscoveryRequest) else RunKind.FEATURE)
+            else RunKind.DISCOVERY if isinstance(intent, DiscoveryRequest)
+            else RunKind.FOUNDATION if isinstance(intent, FoundationRequest) else RunKind.FEATURE)
+    sds_text = None
+    if kind == RunKind.FOUNDATION:
+        sds_text = mirror_for(project).read_file(project.checked_commit, SDS_PATH) if project.checked_commit else None
+        if not sds_text:
+            raise DecisionError(f"{project.key} has no SDS.md on {project.default_branch}; write and merge the SDS "
+                                "first, then run the project check")
     if kind == RunKind.DISCOVERY:
         open_discovery = session.scalar(select(Run).where(Run.project_id == project.id, Run.kind == RunKind.DISCOVERY,
                                                           Run.status.not_in([s.value for s in TERMINAL])))
@@ -107,7 +116,7 @@ def create_run(session: Session, project: Project, intent: Intent | ProjectBrief
                 raise DecisionError(f"hosting platform {platform} is not one of {project.key}'s "
                                     f"architecture.hosting_platforms ({', '.join(allowed)})")
     title = {RunKind.SRS: f"SRS: {intent.title}", RunKind.SDS: f"SDS: {intent.title}",
-             RunKind.DISCOVERY: f"Discovery: {intent.title}"}.get(kind, intent.title)
+             RunKind.DISCOVERY: f"Discovery: {intent.title}", RunKind.FOUNDATION: f"Foundation: {intent.title}"}.get(kind, intent.title)
     run = Run(project_id=project.id, title=title, kind=kind.value, idempotency_key=idempotency_key,
               status=RunStatus.RECEIVED.value, experiment=experiment, base_commit=base_commit,
               stage_overrides=stage_overrides or {}, eval_run_id=eval_run_id, eval_case=eval_case)
@@ -121,8 +130,8 @@ def create_run(session: Session, project: Project, intent: Intent | ProjectBrief
                 {"business_analyst": get_settings().sdlc_discovery_engine})["business_analyst"]
         engines = json.dumps(pinned)
         coordinator.store_artifact(session, run, "engines", TeamRole.COORDINATOR, engines)
-    render = {RunKind.SRS: render_brief, RunKind.SDS: render_architecture_brief,
-              RunKind.DISCOVERY: render_request}.get(kind, render_intent)
+    render = {RunKind.SRS: render_brief, RunKind.SDS: render_architecture_brief, RunKind.DISCOVERY: render_request,
+              RunKind.FOUNDATION: lambda request: foundation_intent(request, sds_text)}.get(kind, render_intent)
     add_document(session, run.id, "intent", render(intent),
                  author_kind="human", author=actor, data=intent.model_dump())
     record_event(session, "intent.accepted", actor=actor, acting_role=PO, run_id=run.id, project_id=project.id,
@@ -395,7 +404,8 @@ def resume(session: Session, run: Run, *, actor: str, decision: str, reason: str
         return
     target = RunStatus(run.resume_status or RunStatus.PREFLIGHT)
     kinds = {RunStatus.PREFLIGHT: "preflight", RunStatus.SPECIFYING: "specify", RunStatus.PLANNING: "plan",
-             RunStatus.DESIGNING_OPTIONS: "options",
+             RunStatus.DESIGNING_OPTIONS: "options", RunStatus.DESIGNING_ONBOARDING: "onboarding",
+             RunStatus.PREPARING_ENVIRONMENT: "environment",
              RunStatus.DESIGNING_TESTS: "design_tests",
              RunStatus.REVIEWING: "review", RunStatus.PR_OPEN: "release", RunStatus.EXTRACTING: "extract"}
     if target == RunStatus.INGESTING:  # a discovery waiting for sources has no job to queue
@@ -544,6 +554,34 @@ def choose_option(session: Session, run: Run, document_id: uuid.UUID, option: st
         "other_hosting": [{"id": v.id, "name": v.name} for v in chosen.hosting if variant and v.id != variant.id],
         "others": [{"id": o.id, "name": o.name} for o in options.options if o.id != chosen.id]}))
     coordinator.enter_stage(session, run, "spec", actor=actor, acting_role=SA)
+
+
+def approve_onboarding(session: Session, run: Run, document_id: uuid.UUID, *, actor: str,
+                       checked: list[str] | None) -> None:
+    """The Tech Lead accepts the onboarding files: the controller commits them to the run's branch (the coding roles
+    may never touch them), then the new validation environment is built and tried."""
+    _require(run, RunStatus.WAITING_ONBOARDING_APPROVAL)
+    document = latest_document(session, run.id, "onboarding")
+    if document is None or document.id != document_id:
+        raise DecisionError("the onboarding changed; reload the page")
+    _approval(session, run, "onboarding", "approve", actor, TL, document_id=document.id,
+              checklist=_checklist(session, run, checked))
+    project = session.get(Project, run.project_id)
+    commit = coordinator.worktree_for(project, run).commit_files(
+        document.data["files"], f"sdlc: onboarding v{document.version} for the stack of SDS.md")
+    coordinator.store_artifact(session, run, "onboarding_commit", TeamRole.COORDINATOR, commit)
+    transition_run(session, run, RunStatus.PREPARING_ENVIRONMENT, actor=actor, acting_role=TL,
+                   reason=f"onboarding v{document.version} committed as {commit[:12]}")
+    coordinator.queue(session, run, "environment")
+
+
+def redo_onboarding(session: Session, run: Run, *, actor: str, reason: str) -> None:
+    _require(run, RunStatus.WAITING_ONBOARDING_APPROVAL)
+    if not reason.strip():
+        raise DecisionError("say what the onboarding files must change")
+    _approval(session, run, "onboarding", "reject", actor, TL, reason=reason)
+    transition_run(session, run, RunStatus.DESIGNING_ONBOARDING, actor=actor, acting_role=TL, reason=reason)
+    coordinator.queue(session, run, "onboarding", key=f"redo:v{run.version}")
 
 
 def redo_options(session: Session, run: Run, *, actor: str, reason: str) -> None:

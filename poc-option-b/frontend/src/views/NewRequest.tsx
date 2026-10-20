@@ -48,6 +48,10 @@ const ARCHITECTURE: DocField[] = [
   ["notes", "Notes", "security, data protection, performance targets; start a line with [blocking] if the SDS must wait for an answer", false],
 ];
 type DocField = readonly [string, string, string, boolean];
+const FOUNDATION: DocField[] = [
+  ["title", "Name", "the product, as in SDS.md", true],
+  ["notes", "Notes", "what the skeleton must include or leave out, such as \"no CI yet\" or \"sign-in with the company SSO later\"", false],
+];
 // The customer's environment: a stated platform makes the Architect design on it; left open, it compares platforms.
 const PLATFORMS: [string, string][] = [["", "Not decided yet: compare the platforms"], ["aws", "AWS"], ["azure", "Microsoft Azure"],
   ["gcp", "Google Cloud"], ["on_premise", "On-premise"], ["hybrid", "Hybrid"]];
@@ -59,7 +63,7 @@ const DEPLOYMENT_CONTEXT: [string, string, string][] = [
   ["scale", "Scale", "sites, users, cameras or devices, expected growth"],
   ["availability", "Availability", "uptime, maintenance windows, how fast it must recover"],
 ];
-type Kind = "discovery" | "feature" | "srs" | "sds";
+type Kind = "discovery" | "feature" | "srs" | "sds" | "foundation";
 
 function validateDoc(fields: readonly DocField[], values: Record<string, string>, onlyTitle = false): Record<string, string> {
   const errors: Record<string, string> = {};
@@ -73,7 +77,7 @@ function validateDoc(fields: readonly DocField[], values: Record<string, string>
 
 /** A project document request: a brief the Business Analyst turns into SRS.md, or an architecture brief the
  * Architect turns into SDS.md. Both come before any feature run. */
-function DocumentForm({ project, fields, bodyKey, submit, allowBaseline, allowProposal, askDeployment }: { project: string; fields: readonly DocField[]; bodyKey: "brief" | "architecture" | "discovery"; submit: string; allowBaseline?: boolean; allowProposal?: boolean; askDeployment?: boolean }) {
+function DocumentForm({ project, fields, bodyKey, submit, allowBaseline, allowProposal, askDeployment }: { project: string; fields: readonly DocField[]; bodyKey: "brief" | "architecture" | "discovery" | "foundation"; submit: string; allowBaseline?: boolean; allowProposal?: boolean; askDeployment?: boolean }) {
   const [deployment, setDeployment] = useState<Record<string, string>>({ platform: "" });
   const [fromBaseline, setFromBaseline] = useState(false);
   const [propose, setPropose] = useState(!!allowProposal);  // the Architect proposes the stack in the Options step
@@ -217,11 +221,12 @@ export function NewRequestView() {
     <>
       <PageHeader title="New request" subtitle={{
         discovery: "Step 0 of a new project, as Product Owner: collect the raw requirements (decks, documents, sheets, minutes); the Business Analyst extracts a requirement inventory and the questions to clarify.",
+        foundation: "Step 3 of a new project, as Tech Lead: after SDS.md is merged, the onboarding files follow the design and the team builds the walking skeleton before the first user story.",
         srs: "Step 1 of a new project, as Product Owner: the Business Analyst writes SRS.md from this brief.",
         sds: "Step 2 of a new project, as Tech Lead: the Architect writes SDS.md from the merged SRS.md and this brief.",
         feature: "You act as Product Owner. This form is intent.md; the Business Analyst turns it into spec.md.",
       }[kind]} />
-      <Tabs<Kind> value={kind} onChange={setKind} tabs={[{ id: "feature", label: "Feature request" }, { id: "discovery", label: "Discovery" }, { id: "srs", label: "Project SRS" }, { id: "sds", label: "Project SDS" }]} />
+      <Tabs<Kind> value={kind} onChange={setKind} tabs={[{ id: "feature", label: "Feature request" }, { id: "discovery", label: "Discovery" }, { id: "srs", label: "Project SRS" }, { id: "sds", label: "Project SDS" }, { id: "foundation", label: "Foundation" }]} />
       <div className="flex flex-wrap items-start gap-5">
         <div className="flex min-w-0 flex-[999_1_560px] flex-col gap-5">
           <Card className="flex flex-col gap-4 p-5">
@@ -247,7 +252,13 @@ export function NewRequestView() {
             ) : null}
             {kind === "discovery" ? <DocumentForm key="discovery" project={chosen} fields={DISCOVERY} bodyKey="discovery" submit="Start discovery, then add sources" />
               : kind === "srs" ? <DocumentForm key="srs" project={chosen} fields={BRIEF} bodyKey="brief" submit="Write SRS.md" allowBaseline />
-        : kind === "sds" ? <DocumentForm key="sds" project={chosen} fields={ARCHITECTURE} bodyKey="architecture" submit="Submit, write SDS.md" allowProposal askDeployment /> : FIELDS.map(([key, label, hint, required]) => {
+        : kind === "sds" ? <DocumentForm key="sds" project={chosen} fields={ARCHITECTURE} bodyKey="architecture" submit="Submit, write SDS.md" allowProposal askDeployment />
+        : kind === "foundation" ? (
+          <>
+            <p className="m-0 text-sm text-muted">After SDS.md is merged and before any user story: the Architect rewrites the onboarding files (AGENTS.md, REVIEW.md, .sdlc/project.yaml, the validation environment) from the SDS for the Tech Lead to approve, the platform builds and tries that environment, then the team builds the walking skeleton every story stands on (structure, tooling, migrations, health check, sign-in and roles) through spec, plan, test cases, code, review and a pull request.</p>
+            <DocumentForm key="foundation" project={chosen} fields={FOUNDATION} bodyKey="foundation" submit="Start the foundation run" />
+          </>
+        ) : FIELDS.map(([key, label, hint, required]) => {
               const props = {
                 id: key,
                 value: intent[key],

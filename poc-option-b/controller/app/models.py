@@ -159,7 +159,7 @@ class Approval(Base):
     __tablename__ = "approvals"
     id: Mapped[uuid.UUID] = _id()
     run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("runs.id"), nullable=False)
-    stage: Mapped[str] = mapped_column(String(8), nullable=False)  # spec | plan | pr
+    stage: Mapped[str] = mapped_column(String(32), nullable=False)  # spec | plan | pr | onboarding ...
     document_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("documents.id"))
     plan_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("plans.id"))
     actor: Mapped[str] = mapped_column(String(64), nullable=False)

@@ -130,6 +130,18 @@ class MockTeam:
         return Options.model_validate({"context": f"Where {context.title} runs.", "options": options,
                                        "recommendation": options[0]["name"], "reason": "Mock Architect: the first option."})
 
+    def write_onboarding(self, context: RunContext):
+        """The repository's toolchain kept, the structure of the SDS repository layout as paths."""
+        from controller.app.foundation import Onboarding
+        return Onboarding.model_validate({
+            "agents_md": f"# {context.title}\n\nMock Architect: the stack of SDS.md.\n\n## Commands\n- Test: npm test\n",
+            "review_md": "- Business rules outside src/domain/.\n", "gitignore": "node_modules/\n",
+            "validation_image": "node-20",
+            "validation": [{"name": "unit-tests", "run": ["npm", "test"]}],
+            "paths": {"allowed": ["src/**", "package.json"], "tests": ["test/**"],
+                      "protected": ["AGENTS.md", "CLAUDE.md", "REVIEW.md"]},
+            "notes": "Mock Architect: no model was called."})
+
     def write_sds(self, context: RunContext) -> Sds:
         """One object and table per SRS feature, one decision for the stack named in the brief."""
         features = srs_features(context.srs_md or "")

@@ -13,6 +13,9 @@ class RunStatus(StrEnum):
     EXTRACTING = "EXTRACTING"
     CLARIFYING = "CLARIFYING"  # discovery: questions are open for their roles
     WAITING_BASELINE_APPROVAL = "WAITING_BASELINE_APPROVAL"
+    DESIGNING_ONBOARDING = "DESIGNING_ONBOARDING"  # foundation: the Architect writes the onboarding files
+    WAITING_ONBOARDING_APPROVAL = "WAITING_ONBOARDING_APPROVAL"  # foundation: the Tech Lead approves them
+    PREPARING_ENVIRONMENT = "PREPARING_ENVIRONMENT"  # foundation: the new validation environment is built and tried
     DESIGNING_OPTIONS = "DESIGNING_OPTIONS"  # SDS: the Architect compares architecture options
     WAITING_OPTIONS_APPROVAL = "WAITING_OPTIONS_APPROVAL"  # SDS: the Solution Architect picks one
     PLANNING = "PLANNING"
@@ -52,6 +55,7 @@ class RunKind(StrEnum):
     SRS = "srs"  # the project's SRS.md: Business Analyst, SRS gate, PR
     SDS = "sds"  # the project's SDS.md from the merged SRS: Architect, SDS gate, PR
     DISCOVERY = "discovery"  # raw requirements to a baseline: sources, extraction, questions, decisions, PR
+    FOUNDATION = "foundation"  # after the SDS: onboarding files from it, then the skeleton like a story run
 
 
 class HumanRole(StrEnum):
@@ -82,7 +86,10 @@ ACTIVE = frozenset(R) - TERMINAL
 
 _RUN_FLOW: dict[RunStatus, set[RunStatus]] = {
     R.RECEIVED: {R.PREFLIGHT},
-    R.PREFLIGHT: {R.SPECIFYING, R.INGESTING, R.DESIGNING_OPTIONS},
+    R.PREFLIGHT: {R.SPECIFYING, R.INGESTING, R.DESIGNING_OPTIONS, R.DESIGNING_ONBOARDING},
+    R.DESIGNING_ONBOARDING: {R.WAITING_ONBOARDING_APPROVAL, R.DESIGNING_ONBOARDING},
+    R.WAITING_ONBOARDING_APPROVAL: {R.PREPARING_ENVIRONMENT, R.DESIGNING_ONBOARDING},
+    R.PREPARING_ENVIRONMENT: {R.SPECIFYING, R.DESIGNING_ONBOARDING},
     R.DESIGNING_OPTIONS: {R.WAITING_OPTIONS_APPROVAL},
     R.WAITING_OPTIONS_APPROVAL: {R.SPECIFYING, R.DESIGNING_OPTIONS},
     R.INGESTING: {R.EXTRACTING},
@@ -104,7 +111,8 @@ _RUN_FLOW: dict[RunStatus, set[RunStatus]] = {
     # REVIEWING: review again. SPECIFYING / CLARIFYING: changes asked on the PR of an SRS, SDS or discovery baseline.
     R.WAITING_PR_APPROVAL: {R.COMPLETED, R.CODING, R.CLOSED_UNMERGED, R.REVIEWING, R.SPECIFYING, R.CLARIFYING},
     # NEEDS_HUMAN exits only through a recorded human decision.
-    R.NEEDS_HUMAN: {R.PREFLIGHT, R.INGESTING, R.EXTRACTING, R.DESIGNING_OPTIONS, R.SPECIFYING, R.PLANNING, R.DESIGNING_TESTS, R.CODING, R.REVIEWING, R.PR_OPEN},
+    R.NEEDS_HUMAN: {R.PREFLIGHT, R.INGESTING, R.EXTRACTING, R.DESIGNING_OPTIONS, R.DESIGNING_ONBOARDING,
+                    R.PREPARING_ENVIRONMENT, R.SPECIFYING, R.PLANNING, R.DESIGNING_TESTS, R.CODING, R.REVIEWING, R.PR_OPEN},
 }
 
 def _run_targets(state: RunStatus) -> frozenset[RunStatus]:
@@ -139,6 +147,7 @@ WAITING_FOR: dict[RunStatus, HumanRole] = {
     R.CLARIFYING: HumanRole.PRODUCT_OWNER,
     R.WAITING_BASELINE_APPROVAL: HumanRole.PRODUCT_OWNER,
     R.WAITING_OPTIONS_APPROVAL: HumanRole.SOLUTION_ARCHITECT,
+    R.WAITING_ONBOARDING_APPROVAL: HumanRole.TECH_LEAD,
     R.WAITING_SPEC_APPROVAL: HumanRole.PRODUCT_OWNER,
     R.WAITING_PLAN_APPROVAL: HumanRole.TECH_LEAD,
     R.WAITING_TEST_APPROVAL: HumanRole.QC,

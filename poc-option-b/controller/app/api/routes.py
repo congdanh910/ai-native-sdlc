@@ -17,6 +17,7 @@ from controller.app.db import session_scope
 from controller.app.discovery import service as discovery
 from controller.app.discovery import questions
 from controller.app.discovery.service import DiscoveryRequest
+from controller.app.foundation import FoundationRequest
 from controller.app.models import EvalRun, Execution, Project, Run, Source
 from controller.app.projects import registry
 from controller.app.project_docs import ArchitectureBrief, ProjectBrief
@@ -49,14 +50,20 @@ class NewRun(Body):
     brief: ProjectBrief | None = None  # a project brief: the run writes SRS.md
     architecture: ArchitectureBrief | None = None  # an architecture brief: the run writes SDS.md from SRS.md
     discovery: DiscoveryRequest | None = None  # a discovery: raw requirement sources to a baseline
+    foundation: FoundationRequest | None = None  # after the SDS: onboarding files and the walking skeleton
     idempotency_key: str = Field(min_length=8, max_length=128)
 
     @model_validator(mode="after")
     def _one_input(self) -> "NewRun":
-        if sum(x is not None for x in (self.intent, self.brief, self.architecture, self.discovery)) != 1:
-            raise ValueError("send exactly one of intent (a feature), brief (the SRS), architecture (the SDS) "
-                             "or discovery")
+        if sum(x is not None for x in (self.intent, self.brief, self.architecture, self.discovery, self.foundation)) != 1:
+            raise ValueError("send exactly one of intent (a feature), brief (the SRS), architecture (the SDS), "
+                             "discovery or foundation")
         return self
+
+
+class DocumentApproval(Body):
+    document_id: uuid.UUID
+    checked: list[str] = []
 
 
 class Answers(Body):
@@ -210,7 +217,8 @@ def create_run(body: NewRun) -> dict:
             project = session.scalar(select(Project).where(Project.key == body.project))
             if project is None:
                 raise HTTPException(404, "project not found")
-            run = services.create_run(session, project, body.intent or body.brief or body.architecture or body.discovery, actor=operator(),
+            run = services.create_run(session, project, body.intent or body.brief or body.architecture or body.discovery
+                                      or body.foundation, actor=operator(),
                                       idempotency_key=body.idempotency_key)
             return views.run_summary(run, project.key)
     except services.DecisionError as exc:
@@ -397,6 +405,17 @@ def choose_option(run_id: uuid.UUID, body: OptionChoice) -> dict:
                                                                reason=body.reason, checked=body.checked,
                                                                adjustments=body.adjustments, hosting=body.hosting,
                                                                hosting_reason=body.hosting_reason))
+
+
+@router.post("/runs/{run_id}/onboarding/approve")
+def approve_onboarding(run_id: uuid.UUID, body: DocumentApproval) -> dict:
+    return _decide(run_id, lambda s, r: services.approve_onboarding(s, r, body.document_id, actor=operator(),
+                                                                    checked=body.checked))
+
+
+@router.post("/runs/{run_id}/onboarding/redo")
+def redo_onboarding(run_id: uuid.UUID, body: Reason) -> dict:
+    return _decide(run_id, lambda s, r: services.redo_onboarding(s, r, actor=operator(), reason=body.reason))
 
 
 @router.post("/runs/{run_id}/options/redo")
