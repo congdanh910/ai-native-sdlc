@@ -107,7 +107,8 @@ a:hover { color: var(--accent-ink); }
 .md h1 { font-size: 20px; margin: 0 0 12px; letter-spacing: -0.01em; }
 .md h2 { font-size: 16px; margin: 20px 0 8px; }
 .md h3 { font-size: 14px; margin: 16px 0 6px; }
-.md p, .md li { line-height: 1.6; color: var(--ink-2); }
+/* not inside a diagram: Mermaid measures its labels at the page line-height, a taller one clips their last line */
+.md :is(p, li):not(svg *) { line-height: 1.6; color: var(--ink-2); }
 .md ul, .md ol { padding-left: 20px; }
 .md code { font-family: var(--font-mono); font-size: 12.5px; background: var(--sunken); padding: 1px 5px; border-radius: 5px; }
 .md table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 13px; }
