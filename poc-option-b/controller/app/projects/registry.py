@@ -151,7 +151,7 @@ def doing_checks(project: Project, mirror: Mirror, commit: str | None, snapshot:
         return []
     items: list[Item] = []
     policy = effective_policy(snapshot.config)
-    if not policy.validation_image:
+    if not policy.validation_image and not policy.env_dockerfile:
         items.append(Item("validation image", "fail",
                           f"{snapshot.config.validation_image!r} is not a toolchain this platform provides"))
     else:
@@ -163,7 +163,8 @@ def doing_checks(project: Project, mirror: Mirror, commit: str | None, snapshot:
             gate = ValidationGate(policy, checkout, DATA_DIR / "logs" / "checks" / project.key / commit[:12])
             for report in gate.run([c.name for c in policy.validation], "check"):
                 items.append(Item(f"validation: {report.name}", "ok" if report.ok else "fail",
-                                  f"passed in {report.seconds}s ({policy.validation_image})" if report.ok else
+                                  f"passed in {report.seconds}s ({policy.validation_image or policy.env_dockerfile})"
+                                  if report.ok else
                                   f"exit {report.exit_code}{' (timed out)' if report.timed_out else ''}; "
                                   f"log {report.log_path}"))
         finally:

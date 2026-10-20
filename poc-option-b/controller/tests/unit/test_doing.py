@@ -11,7 +11,7 @@ from controller.app.doing.guard import decide
 from controller.app.doing.process import ProcessResult, redact, run_bounded
 from controller.app.doing.team import CliDoing
 from controller.app.doing.validation import ValidationGate, red_check
-from controller.app.projects.config import effective_policy, parse_project_config
+from controller.app.projects.config import ValidationCommand, effective_policy, parse_project_config
 from controller.app.config import PROJECT_ROOT
 from controller.app.schemas import PlanTask, TestPlan
 from controller.app.team.base import RunContext
@@ -247,6 +247,35 @@ def test_validation_runs_in_a_container_without_network(tmp_path):
                                              "import test from 'node:test';\n"
                                              "test('read-only', () => writeFileSync('x.txt', 'x'));\n")
     assert not gate.run(["unit-tests"], "readonly")[0].ok
+
+
+@pytest.mark.skipif(shutil.which("docker") is None or subprocess.run(["docker", "info"], capture_output=True).returncode
+                    or subprocess.run(["docker", "image", "inspect", "postgres:17-alpine"], capture_output=True).returncode,
+                    reason="docker or the postgres:17-alpine image is not available")
+def test_a_project_environment_builds_its_image_and_reaches_its_services(tmp_path):
+    from controller.app.projects.config import Service
+    repo = tmp_path / "repo"
+    (repo / ".sdlc").mkdir(parents=True)
+    (repo / ".sdlc" / "validation.Dockerfile").write_text("FROM postgres:17-alpine\n")  # psql as the toolchain
+    (repo / "requirements.txt").write_text("v1\n")
+    probe = ValidationCommand(name="db", run=["sh", "-c", "psql -h postgres -U app -d app -tAc 'select 40 + 2' && "
+                                              "! wget -q -T 3 -O /dev/null https://example.com"], timeout_seconds=120)
+    gate = ValidationGate(policy(validation_image="", env_dockerfile=".sdlc/validation.Dockerfile", project="t",
+                                 validation=[probe], setup=["sh", "-c", "cat requirements.txt > setup.out"],
+                                 setup_inputs=["requirements.txt"], env={"PGPASSWORD": "app"},
+                                 services=[Service(name="postgres", image="postgres:17-alpine",
+                                                   env={"POSTGRES_USER": "app", "POSTGRES_PASSWORD": "app", "POSTGRES_DB": "app"},
+                                                   ready=["pg_isready", "-U", "app", "-h", "127.0.0.1"])]),
+                          repo, tmp_path / "logs")
+    reports = gate.run(["db"], "env")
+    assert reports[0].ok, reports[0].tail
+    assert "42" in Path(reports[0].log_path).read_text()  # the service answered; the Internet did not
+    assert (repo / "setup.out").read_text() == "v1\n"
+    (repo / "requirements.txt").write_text("v2\n")  # a changed dependency manifest runs setup again
+    assert gate.run(["db"], "env2")[0].ok and (repo / "setup.out").read_text() == "v2\n"
+    left = subprocess.run(["docker", "network", "ls", "-q", "--filter", "name=sdlc-validate-net-"], capture_output=True,
+                          text=True).stdout.split()
+    assert left == []  # services and their network are removed
 
 
 # ------------------------------------------------------------------ GitHub

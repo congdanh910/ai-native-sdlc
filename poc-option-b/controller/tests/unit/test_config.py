@@ -1,3 +1,7 @@
+import re
+
+import pytest
+
 from controller.app.config import PROJECT_ROOT, Settings
 
 
@@ -66,3 +70,21 @@ def test_a_policy_stored_before_the_new_limits_keeps_the_old_values():
                                       "container_pids", "container_tmp_mb"})
     restored = EffectivePolicy.model_validate(old)
     assert (restored.session_timeout_seconds, restored.max_remediations, restored.container_tmp_mb) == (1200, 2, 256)
+
+
+def test_a_project_can_bring_its_own_environment():
+    from controller.app.projects.config import effective_policy, parse_project_config
+    base = (PROJECT_ROOT / "examples/task-board/.sdlc/project.yaml").read_text()
+    own = re.sub(r"validation_image: node-20.*", "", base) + (
+        "environment:\n  dockerfile: .sdlc/validation.Dockerfile\n  setup_inputs: [backend/requirements.txt]\n"
+        "  env: {DATABASE_URL: 'postgresql://app:app@postgres:5432/app'}\n"
+        "  services:\n    - name: postgres\n      image: postgres:17-alpine\n      ready: [pg_isready]\n")
+    policy = effective_policy(parse_project_config(own))
+    assert policy.validation_image == "" and policy.env_dockerfile == ".sdlc/validation.Dockerfile"
+    assert policy.services[0].name == "postgres" and policy.env["DATABASE_URL"].endswith("/app")
+    with pytest.raises(ValueError, match="validation_image, or an environment.dockerfile"):
+        parse_project_config(re.sub(r"validation_image: node-20.*", "", base))
+    with pytest.raises(ValueError, match="relative inside the repository"):
+        parse_project_config(own.replace(".sdlc/validation.Dockerfile", "/etc/Dockerfile"))
+    with pytest.raises(ValueError, match="upper case"):
+        parse_project_config(own.replace("DATABASE_URL", "database_url"))

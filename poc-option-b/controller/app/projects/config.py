@@ -52,6 +52,58 @@ class Paths(Strict):
         return [_check_pattern(pattern) for pattern in value]
 
 
+ENV_NAME = re.compile(r"[A-Z_][A-Z0-9_]{0,63}")
+
+
+class Service(Strict):
+    """A container the validation commands reach by name, such as a database. It runs in the validation's own
+    network, which has no Internet access, and is removed afterwards."""
+    name: str = Field(pattern=r"^[a-z][a-z0-9-]{0,30}$")  # its host name for the validation commands
+    image: str = Field(min_length=1, max_length=200)
+    env: dict[str, str] = {}
+    ready: list[str] = []  # run inside the service until it succeeds, such as ["pg_isready", "-U", "app"]
+    ready_timeout_seconds: int = Field(default=60, ge=5, le=600)
+
+    @field_validator("env")
+    @classmethod
+    def _env(cls, value: dict[str, str]) -> dict[str, str]:
+        if any(not ENV_NAME.fullmatch(k) for k in value):
+            raise ValueError("environment variable names must be upper case letters, digits and '_'")
+        return value
+
+
+class Environment(Strict):
+    """The project's own validation environment, for a stack the platform's toolchains do not cover."""
+    dockerfile: str = ""  # repository path; the platform builds it into the validation image
+    setup_inputs: list[str] = []  # files whose change runs setup again, such as dependency manifests
+    env: dict[str, str] = {}  # for the validation commands, such as the database URL of a service
+    services: list[Service] = []
+
+    @field_validator("dockerfile")
+    @classmethod
+    def _dockerfile(cls, value: str) -> str:
+        return _check_pattern(value) if value else value
+
+    @field_validator("setup_inputs")
+    @classmethod
+    def _inputs(cls, value: list[str]) -> list[str]:
+        return [_check_pattern(pattern) for pattern in value]
+
+    @field_validator("env")
+    @classmethod
+    def _env(cls, value: dict[str, str]) -> dict[str, str]:
+        if any(not ENV_NAME.fullmatch(k) for k in value):
+            raise ValueError("environment variable names must be upper case letters, digits and '_'")
+        return value
+
+    @model_validator(mode="after")
+    def _unique(self) -> "Environment":
+        names = [s.name for s in self.services]
+        if len(names) != len(set(names)):
+            raise ValueError("service names must be unique")
+        return self
+
+
 class Testing(Strict):
     red_check: bool = True
     qa_executor: Literal["codex", "claude"] | None = None
@@ -154,7 +206,7 @@ class ProjectConfig(Strict):
     schema_version: Literal[1]
     project: str
     default_branch: str = "main"
-    validation_image: str
+    validation_image: str = ""  # a toolchain of the platform; or environment.dockerfile
     setup: list[str] = []
     validation: list[ValidationCommand] = Field(min_length=1)
     paths: Paths
@@ -167,9 +219,12 @@ class ProjectConfig(Strict):
     artifacts: Artifacts = Artifacts()
     discovery: Discovery = Discovery()
     architecture: Architecture = Architecture()
+    environment: Environment = Environment()
 
     @model_validator(mode="after")
     def _consistent(self) -> "ProjectConfig":
+        if not self.validation_image and not self.environment.dockerfile:
+            raise ValueError("name a validation_image, or an environment.dockerfile the platform builds")
         if self.default_executor not in self.executors:
             raise ValueError("default_executor must be one of executors")
         if self.testing.qa_executor and self.testing.qa_executor not in self.executors:
@@ -230,6 +285,11 @@ class EffectivePolicy(Strict):
     container_tmp_mb: int = 256
     hosting_platforms: list[str] = list(HOSTING_PLATFORMS)
     max_hosting_variants: int = 3
+    project: str = ""  # names the image built from environment.dockerfile
+    env_dockerfile: str = ""  # with it, validation_image is built from this file of the worktree
+    env: dict[str, str] = {}
+    services: list[Service] = []
+    setup_inputs: list[str] = []
 
 
 def effective_policy(config: ProjectConfig, defaults: PlatformDefaults = PlatformDefaults()) -> EffectivePolicy:
@@ -248,7 +308,7 @@ def effective_policy(config: ProjectConfig, defaults: PlatformDefaults = Platfor
         validation=list(config.validation),
         stages=config.stages,
         commit_artifacts=config.artifacts.commit_to_repo,
-        validation_image=dict(defaults.validation_images).get(config.validation_image, ""),
+        validation_image="" if config.environment.dockerfile else dict(defaults.validation_images).get(config.validation_image, ""),
         setup=list(config.setup),
         red_check=config.testing.red_check,
         session_timeout_seconds=config.limits.session_timeout_minutes * 60,
@@ -262,6 +322,11 @@ def effective_policy(config: ProjectConfig, defaults: PlatformDefaults = Platfor
         container_tmp_mb=config.limits.container.tmp_mb,
         hosting_platforms=list(config.architecture.hosting_platforms),
         max_hosting_variants=config.architecture.max_hosting_variants,
+        project=config.project,
+        env_dockerfile=config.environment.dockerfile,
+        env=dict(config.environment.env),
+        services=list(config.environment.services),
+        setup_inputs=list(config.environment.setup_inputs),
     )
 
 

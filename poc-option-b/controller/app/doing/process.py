@@ -162,6 +162,11 @@ def kill_orphans() -> list[str]:
     for name in names:
         subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=30, check=False)
         stopped.append(f"container {name}")
+    networks = subprocess.run(["docker", "network", "ls", "-q", "--filter", f"name={CONTAINER_PREFIX}net-"],
+                              capture_output=True, text=True, check=False).stdout.split()
+    for network in networks:  # the networks of the project services, once their containers are gone
+        subprocess.run(["docker", "network", "rm", network], capture_output=True, timeout=30, check=False)
+        stopped.append(f"network {network}")
     return stopped
 
 
