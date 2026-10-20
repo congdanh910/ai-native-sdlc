@@ -162,3 +162,26 @@ def test_options_compare_hosting_variants_on_the_projects_platforms():
     text = render_options(options, title="Shop")
     assert "| Platform | AWS | On-premise |" in text and "**Recommended hosting for PA1:** PA1-H2 Own data centre." in text
     assert "| API | VM with Docker | — |" in text
+
+
+def test_the_schema_draws_relationships_and_reads_top_to_bottom_by_group():
+    from controller.app.project_docs import data_schema, foreign_keys, mermaid_erd
+    col = lambda name, notes="", required=True: {"name": name, "type": "uuid", "notes": notes, "required": required}
+    tables = [Table.model_validate(t) for t in [
+        {"name": "departments", "group": "Employees", "fields": [col("id", "Primary key.")]},
+        {"name": "employees", "group": "Employees", "fields": [col("id", "Primary key."), col("department_id", "FK departments.id.", False)]},
+        {"name": "attendance_records", "group": "Attendance", "fields": [col("id", "Primary key."), col("employee_id")]},
+        {"name": "face_data", "group": "Face data", "fields": [col("employee_id", "Primary key; references employees")]}]]
+    assert [(t, c.name, target) for t, c, target in foreign_keys(tables)] == [
+        ("employees", "department_id", "departments"), ("attendance_records", "employee_id", "employees"),
+        ("face_data", "employee_id", "employees")]
+    erd = "\n".join(mermaid_erd(tables))
+    assert "uuid department_id FK" in erd and "uuid id PK" in erd
+    assert 'departments |o--o{ employees : "department_id"' in erd and 'employees ||--o{ attendance_records' in erd
+    text = "\n".join(data_schema(tables))
+    assert text.count("```mermaid") == 4 and "flowchart TB" in text  # the overview of groups, then one per group
+    assert 'g1 -- "1 FK" --> g0' in text and "Group **Attendance** (`attendance_records`):" in text
+    attendance = text.split("Group **Attendance**")[1].split("Group **Face data**")[0]
+    assert "    employees\n" in attendance and "department_id" not in attendance  # another group's table, by name
+    single = "\n".join(data_schema([t.model_copy(update={"group": ""}) for t in tables]))
+    assert single.count("```mermaid") == 1 and "erDiagram" in single

@@ -707,6 +707,7 @@ class Table(Contract):
     columns: str = ""  # older SDS: one line
     fields: list[Column] = []
     notes: str = ""
+    group: str = ""  # the business area, such as Employees or Attendance: one detailed diagram per group
 
 
 class Zone(Contract):
@@ -986,12 +987,90 @@ def mermaid_deployment(zones: list[Zone], nodes: list[Node], links: list[Network
     return _mermaid(lines)
 
 
-def mermaid_erd(tables: list[Table]) -> list[str]:
+FOREIGN_KEY = re.compile(r"\b(?:FK|foreign key|references?)\b[\s:→>-]*`?([A-Za-z_][\w]*)(?:\.\w+)?", re.IGNORECASE)
+
+
+def _is_key(column: Column) -> bool:
+    return bool(re.search(r"\bprimary key\b|\bPK\b", column.notes, re.IGNORECASE))
+
+
+def foreign_keys(tables: list[Table]) -> list[tuple[str, Column, str]]:
+    """(table, column, referenced table) from the column notes ("FK departments.id", "references employees"), or
+    from a column named after a table (department_id -> departments)."""
+    names = {t.name.lower(): t.name for t in tables}
+    out = []
+    for table in tables:
+        for column in table.fields:
+            match = FOREIGN_KEY.search(column.notes)
+            target = names.get(match[1].lower()) if match else None
+            if target is None and column.name.lower().endswith("_id") and not _is_key(column):
+                stem = column.name.lower()[:-3]
+                target = next((names[n] for n in (stem, f"{stem}s", f"{stem}es", f"{stem[:-1]}ies" if stem.endswith("y") else "")
+                               if n in names), None)
+            if target:
+                out.append((table.name, column, target))
+    return out
+
+
+def data_schema(tables: list[Table]) -> list[str]:
+    """One diagram while the schema is small; with groups, an overview of names and relationships, then one detailed
+    diagram per group, each with the tables of other groups it connects to by name: a page reads top to bottom
+    instead of one wide picture (attendance SDS, 24 tables in one row, 2026-10-20)."""
+    groups = list(dict.fromkeys(t.group.strip() or "Other" for t in tables))
+    if len(groups) < 2:
+        return ["Physical data schema:", "", *mermaid_erd(tables)]
+    out = ["Physical data schema: the overview shows the groups of tables and how many foreign keys join them; each "
+           "group follows with its columns and the tables of other groups it connects to.", "",
+           "Overview:", "", *mermaid_groups(tables)]
+    for group in groups:
+        members = [t for t in tables if (t.group.strip() or "Other") == group]
+        out += [f"Group **{group}** ({', '.join(f'`{t.name}`' for t in members)}):", "",
+                *mermaid_erd(members, context=[t for t in tables if t not in members])]
+    return out
+
+
+def mermaid_groups(tables: list[Table]) -> list[str]:
+    """The groups of a schema as boxes listing their tables, joined by the number of foreign keys between them."""
+    group = {t.name: t.group.strip() or "Other" for t in tables}
+    names = list(dict.fromkeys(group.values()))
+    ids = {g: f"g{index}" for index, g in enumerate(names)}
+    lines = ["flowchart TB"]
+    for g in names:
+        members = "<br/>".join(_label(t.name) for t in tables if group[t.name] == g)
+        lines.append(f'    {ids[g]}["<b>{_label(g)}</b><br/>{members}"]')
+    joins: dict[tuple[str, str], int] = {}
+    for table, _, target in foreign_keys(tables):
+        if group[table] != group[target]:
+            key = (group[table], group[target])
+            joins[key] = joins.get(key, 0) + 1
+    lines += [f'    {ids[a]} -- "{n} FK" --> {ids[b]}' for (a, b), n in joins.items()]
+    return _mermaid(lines)
+
+
+def mermaid_erd(tables: list[Table], columns: str = "all", context: list[Table] = ()) -> list[str]:
+    """Tables and the relationships of their foreign keys, so the layout follows the data instead of one long row.
+    columns: "all", "keys" (primary and foreign keys only) or "none" (names only, for the overview of a large
+    schema). context: tables of other groups that the tables refer to or are referred by, drawn by name only."""
+    drawn = {t.name for t in tables}
+    keys = [k for k in foreign_keys([*tables, *context]) if k[0] in drawn or k[2] in drawn]
+    fk_columns = {(t, c.name) for t, c, _ in keys}
+    linked = {x for t, _, target in keys for x in (t, target)}
     lines = ["erDiagram"]
     for table in tables:
+        shown = [] if columns == "none" else [c for c in table.fields if columns == "all" or _is_key(c)
+                                              or (table.name, c.name) in fk_columns]
+        if not shown:
+            lines.append(f"    {_ident(table.name)}")
+            continue
         lines.append(f"    {_ident(table.name)} {{")
-        lines += [f"        {_ident(c.type) or 'text'} {_ident(c.name)}" for c in table.fields]
+        for c in shown:
+            mark = " PK" if _is_key(c) else " FK" if (table.name, c.name) in fk_columns else ""
+            lines.append(f"        {_ident(c.type) or 'text'} {_ident(c.name)}{mark}")
         lines.append("    }")
+    lines += [f"    {_ident(t.name)}" for t in context if t.name in linked and t.name not in drawn]
+    for table, column, target in keys:
+        # many rows of the table point at one row of the target; an optional key may point at none
+        lines.append(f'    {_ident(target)} {"||" if column.required else "|o"}--o{{ {_ident(table)} : "{_label(column.name)}"')
     return _mermaid(lines)
 
 
@@ -1118,7 +1197,7 @@ def render_sds(sds: Sds, features: list[SrsFeature], *, product: str, author: st
     if sds.storage:
         out += ["Storage choices:", "", *_bullets(sds.storage), ""]
     if any(t.fields for t in sds.tables):
-        out += ["Physical data schema:", "", *mermaid_erd([t for t in sds.tables if t.fields])]
+        out += data_schema([t for t in sds.tables if t.fields])
     for table in sds.tables:
         if table.fields:
             out += [f"**`{table.name}`**" + (f": {table.notes}" if table.notes else ""), "",

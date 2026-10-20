@@ -153,6 +153,17 @@ hay thay công nghệ ở mọi chỗ, không để lại làm phương án dự
   (`check_options(open_hosting=True)`), prompt yêu cầu phủ mô hình deploy (on-premise, một cloud, hybrid) trước hãng.
 - Test: 230 pass. Chưa chạy thật với Codex.
 
+## Thêm ngày 20/10: xem sơ đồ và ERD theo nhóm
+
+- Sơ đồ trong control room: nút toàn màn hình (zoom bằng chuột, kéo, Fit, 100%), mở SVG ở tab mới, tải SVG
+  (`frontend/src/components/DiagramViewer.tsx`).
+- ERD cũ chỉ có bảng, không quan hệ, nên Mermaid xếp 24 bảng thành một hàng. Nay `foreign_keys` đọc "FK bảng.cột",
+  "references bảng" hoặc tên `xxx_id`; ERD có quan hệ và PK/FK. `Table.group`: có từ 2 nhóm thì `data_schema` vẽ
+  `mermaid_groups` (tổng quan nhóm, số FK giữa nhóm) rồi mỗi nhóm một ERD (bảng nhóm khác chỉ hiện tên). Prompt
+  sds-architecture yêu cầu `group`, ghi "Primary key." và "FK bảng.cột". Thử trên dữ liệu thật run facec4d9 (nhóm gán
+  tay): tổng quan 886×1062 thay vì 3548×990.
+- Test: 231 pass.
+
 ## Bước tiếp theo
 
 Người dùng chạy lại từ đầu trên `attendance`: Discovery → SRS từ baseline → SDS → story đầu tiên. Mọi vai đang chạy
