@@ -140,6 +140,17 @@ hay thay công nghệ ở mọi chỗ, không để lại làm phương án dự
   §9 phải ghi biến thể hosting đã chọn. Prompt options.md, sds-architecture.md, sds-operations.md cập nhật.
 - Test: 229 pass. Chưa chạy thật với Codex.
 
+## Thêm ngày 20/10: hỏi môi trường deploy trước khi so sánh hosting
+
+- Run SDS 67de4971 ra AWS vì nguồn không nói gì về hạ tầng, Architect khuyến nghị AWS và giao diện chọn sẵn.
+- `ArchitectureBrief.deployment_context` (`DeploymentContext`: platform, existing_infrastructure, data_residency,
+  operations_team, budget, scale, availability), vào brief Markdown mục "Deployment context". Platform được kiểm với
+  `architecture.hosting_platforms` khi tạo run; có platform thì `RunContext.hosting_platforms` = [platform].
+- Options lưu `hosting_basis` (stated/assumed) cạnh dữ liệu (`stored_options` bỏ khoá này khi đọc). Assumed: cổng
+  không chọn sẵn, cảnh báo, bắt buộc `hosting_reason` (vào `chosen_option` và §9). Options hiện "Questions for the
+  Solution Architect". Prompt options.md, sds-architecture.md, sds-operations.md cập nhật.
+- Test: 230 pass. Chưa chạy thật với Codex.
+
 ## Bước tiếp theo
 
 Người dùng chạy lại từ đầu trên `attendance`: Discovery → SRS từ baseline → SDS → story đầu tiên. Mọi vai đang chạy

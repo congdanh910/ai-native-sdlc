@@ -564,6 +564,26 @@ SDS_PATH = "SDS.md"
 API_ID = re.compile(r"API-[A-Z]{2,4}-\d{2}")
 
 
+class DeploymentContext(Contract):
+    """What the customer's environment already decides about hosting. The Architect designs on a stated platform
+    and compares platforms only when it is left open; then the Solution Architect chooses knowingly."""
+    platform: str = ""  # one of the project's architecture.hosting_platforms; empty when not decided
+    existing_infrastructure: str = ""  # cloud contracts, data centre, servers, network already in place
+    data_residency: str = ""  # where personal and biometric data must stay
+    operations_team: str = ""  # who runs it and what they know
+    budget: str = ""
+    scale: str = ""  # sites, users, devices, growth
+    availability: str = ""  # uptime, maintenance windows, recovery targets
+
+    def stated(self) -> bool:
+        return any(str(v).strip() for v in self.model_dump().values())
+
+
+DEPLOYMENT_CONTEXT = (("platform", "Hosting platform"), ("existing_infrastructure", "Existing infrastructure"),
+                      ("data_residency", "Data residency"), ("operations_team", "Operations team"),
+                      ("budget", "Budget"), ("scale", "Scale"), ("availability", "Availability"))
+
+
 class ArchitectureBrief(Contract):
     """The SDS run's input. With propose_stack the Architect proposes the stack, deployment and integrations in the
     Options step from the SRS, the baseline and the repository; what the brief fills in is a constraint it follows."""
@@ -573,6 +593,18 @@ class ArchitectureBrief(Contract):
     integrations: str = ""
     notes: str = ""
     propose_stack: bool = False
+    deployment_context: DeploymentContext = DeploymentContext()
+
+    @field_validator("deployment_context", mode="before")
+    @classmethod
+    def _platform_word(cls, value):
+        if isinstance(value, dict) and isinstance(value.get("platform"), str):
+            value = {**value, "platform": value["platform"].strip().lower().replace("-", "_").replace(" ", "_")}
+        return value
+
+    def hosting_stated(self) -> bool:
+        """The customer's deployment is known (a platform, the environment, or a deployment constraint)."""
+        return self.deployment_context.stated() or bool(self.deployment.strip())
 
     @model_validator(mode="after")
     def _stack(self) -> "ArchitectureBrief":
@@ -581,8 +613,17 @@ class ArchitectureBrief(Contract):
         return self
 
 
+def render_deployment_context(context: DeploymentContext) -> str:
+    lines = [f"- {label}: {platform_name(value) if key == 'platform' else value.strip()}"
+             for key, label in DEPLOYMENT_CONTEXT if (value := getattr(context, key)).strip()]
+    if not context.platform:
+        lines.append("- Hosting platform: not decided; compare the platforms and ask the Solution Architect what decides it")
+    return "\n".join(lines)
+
+
 def render_architecture_brief(brief: ArchitectureBrief) -> str:
     sections = [("Technology and stack", brief.stack), ("Deployment and infrastructure", brief.deployment),
+                ("Deployment context", render_deployment_context(brief.deployment_context)),
                 ("Integrations", brief.integrations), ("Notes", brief.notes)]
     if brief.propose_stack:
         lead = ("The Architect proposes the stack, deployment and integrations in the Options step, from the SRS, the "
@@ -1369,6 +1410,11 @@ class Options(Contract):
     questions: list[Question] = []
 
 
+def stored_options(data: dict) -> Options:
+    """The options of a document's data, without what the controller keeps beside them (hosting_basis)."""
+    return Options.model_validate({k: v for k, v in data.items() if k != "hosting_basis"})
+
+
 def number_options(options: Options) -> Options:
     data = options.model_dump()
     for index, option in enumerate(data["options"], start=1):
@@ -1397,6 +1443,9 @@ def render_options(options: Options, *, title: str) -> str:
                       ["Cons", *["; ".join(o.cons) or "—" for o in options.options]],
                       ["From the baseline", *[", ".join(o.refs) or "proposed by the Architect" for o in options.options]]]),
            "", f"**Recommendation:** {options.recommendation}. {options.reason.strip()}", ""]
+    if options.questions:
+        out += ["**Questions for the Solution Architect:**", "",
+                *[f"- {q.question}" + (" (blocking)" if q.blocking else "") for q in options.questions], ""]
     for option in options.options:
         if option.stack:
             out += [f"### {option.id} {option.name}: stack", "",

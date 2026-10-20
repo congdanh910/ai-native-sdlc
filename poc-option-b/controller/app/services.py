@@ -98,6 +98,14 @@ def create_run(session: Session, project: Project, intent: Intent | ProjectBrief
         if not srs_item or srs_item.get("status") != "ok":
             raise DecisionError(f"{project.key} has no SRS.md with user stories on {project.default_branch}; "
                                 "write and merge the SRS first, then run the project check")
+        platform = intent.deployment_context.platform
+        if platform:
+            from controller.app.projects.config import parse_project_config
+            raw = mirror_for(project).read_file(project.checked_commit, ".sdlc/project.yaml") or ""
+            allowed = parse_project_config(raw).architecture.hosting_platforms if raw else []
+            if allowed and platform not in allowed:
+                raise DecisionError(f"hosting platform {platform} is not one of {project.key}'s "
+                                    f"architecture.hosting_platforms ({', '.join(allowed)})")
     title = {RunKind.SRS: f"SRS: {intent.title}", RunKind.SDS: f"SDS: {intent.title}",
              RunKind.DISCOVERY: f"Discovery: {intent.title}"}.get(kind, intent.title)
     run = Run(project_id=project.id, title=title, kind=kind.value, idempotency_key=idempotency_key,
@@ -499,34 +507,40 @@ SA = HumanRole.SOLUTION_ARCHITECT.value
 
 
 def choose_option(session: Session, run: Run, document_id: uuid.UUID, option: str, *, actor: str, reason: str,
-                  checked: list[str] | None, adjustments: str = "", hosting: str = "") -> None:
+                  checked: list[str] | None, adjustments: str = "", hosting: str = "", hosting_reason: str = "") -> None:
     """The Solution Architect picks the option the SDS designs and how it is hosted (one of its hosting variants),
     with adjustments to it if any (another database, an added queue); the reason and the adjustments go to SDS
     section 9."""
-    from controller.app.project_docs import Options
+    from controller.app.project_docs import stored_options
     _require(run, RunStatus.WAITING_OPTIONS_APPROVAL)
     document = latest_document(session, run.id, "options")
     if document is None or document.id != document_id:
         raise DecisionError("the options changed; reload the page")
     if not reason.strip():
         raise DecisionError("say why this option was chosen; it goes into SDS section 9")
-    options = Options.model_validate(document.data)
+    options = stored_options(document.data)
     chosen = next((o for o in options.options if o.id == option), None)
     if chosen is None:
         raise DecisionError(f"{option} is not one of the options")
     variant = None
     if chosen.hosting:
-        variant = next((v for v in chosen.hosting if v.id == (hosting or chosen.recommended_hosting)), None)
+        assumed = document.data.get("hosting_basis") == "assumed"
+        variant = next((v for v in chosen.hosting if v.id == (hosting or ("" if assumed else chosen.recommended_hosting))), None)
         if variant is None:
             raise DecisionError(f"pick one of the hosting variants of {chosen.id}")
+        if assumed and not hosting_reason.strip():
+            raise DecisionError("the brief does not state the deployment environment: say why this hosting "
+                                "(contracts, data residency, the team that runs it); it goes into SDS section 9")
     checklist = _checklist(session, run, checked)
     _approval(session, run, "options", "approve", actor, SA, reason=f"{chosen.id} {chosen.name}"
               + (f", hosted as {variant.id} {variant.name}" if variant else "") + f": {reason}"
+              + (f" | hosting: {hosting_reason.strip()}" if hosting_reason.strip() else "")
               + (f" | adjustments: {adjustments.strip()}" if adjustments.strip() else ""),
               document_id=document.id, checklist=checklist)
     coordinator.store_artifact(session, run, "chosen_option", TeamRole.COORDINATOR, json.dumps({
         **chosen.model_dump(exclude={"hosting"}), "reason": reason.strip(), "chosen_by": actor,
         "adjustments": adjustments.strip(), "hosting": variant.model_dump() if variant else None,
+        "hosting_reason": hosting_reason.strip(),
         "other_hosting": [{"id": v.id, "name": v.name} for v in chosen.hosting if variant and v.id != variant.id],
         "others": [{"id": o.id, "name": o.name} for o in options.options if o.id != chosen.id]}))
     coordinator.enter_stage(session, run, "spec", actor=actor, acting_role=SA)

@@ -346,8 +346,11 @@ function OptionsPanel({ run, doc, checklist, checked, post }: { run: RunDetail; 
   const [option, setOption] = useState(recommended);
   const choice = doc.choices?.options.find((o) => o.id === option);
   const [picked, setPicked] = useState<Record<string, string>>({});  // option id -> hosting variant id
-  const hosting = choice ? picked[choice.id] ?? choice.recommended_hosting : "";
+  // Hosting the brief did not state is the Architect's assumption: nothing is preselected and the SA says why.
+  const assumed = doc.choices?.hosting_basis === "assumed";
+  const hosting = choice ? picked[choice.id] ?? (assumed ? "" : choice.recommended_hosting) : "";
   const variant = choice?.hosting.find((v) => v.id === hosting);
+  const [hostingWhy, setHostingWhy] = useState("");
   const [why, setWhy] = useState("");
   const [adjust, setAdjust] = useState("");
   return (
@@ -362,6 +365,9 @@ function OptionsPanel({ run, doc, checklist, checked, post }: { run: RunDetail; 
       {choice?.hosting.length ? (
         <div className="flex flex-col gap-1.5 text-sm">
           <span className="font-semibold">Hosting of {choice.id}</span>
+          {assumed ? (
+            <p className="m-0 rounded-md border border-warn/40 bg-warn-soft p-2 text-warn">The brief does not state the deployment environment, so the recommended hosting is the Architect's assumption. Choose it knowingly and say why below; the questions above say what would decide it.</p>
+          ) : null}
           <div className="flex flex-wrap items-center gap-3">
             {choice.hosting.map((v) => (
               <label key={v.id} className="flex items-center gap-1.5">
@@ -370,13 +376,16 @@ function OptionsPanel({ run, doc, checklist, checked, post }: { run: RunDetail; 
               </label>
             ))}
           </div>
+          {assumed ? (
+            <Field label="Why this hosting" htmlFor="hosting-why"><Textarea id="hosting-why" className="min-h-12" value={hostingWhy} onChange={(e) => setHostingWhy(e.target.value)} placeholder="The customer already runs its HR system on Azure; biometric data must stay in Vietnam" /></Field>
+          ) : null}
         </div>
       ) : null}
       {checklist}
       <Field label="Adjustments to the chosen option" hint="optional: what you add or change before the SDS is written, such as another database or an added queue" htmlFor="option-adjust"><Textarea id="option-adjust" className="min-h-14" value={adjust} onChange={(e) => setAdjust(e.target.value)} placeholder="Use PostgreSQL instead of MySQL; add Redis for the event queue" /></Field>
       <Field label="Why this option" htmlFor="option-why"><Textarea id="option-why" className="min-h-16" value={why} onChange={(e) => setWhy(e.target.value)} placeholder="Against the quality targets, constraints and cost; required, also to ask for other options" /></Field>
       <div className="flex flex-wrap gap-2">
-        <ActionButton variant="primary" disabled={!option || !why.trim() || (!!choice?.hosting.length && !variant)} success={`${option} chosen; the Architect writes the SDS`} action={() => post("options/choose", { document_id: doc.id, option, hosting, reason: why, checked, adjustments: adjust })}>Choose {option}{variant ? ` on ${variant.platform}` : ""}</ActionButton>
+        <ActionButton variant="primary" disabled={!option || !why.trim() || (!!choice?.hosting.length && (!variant || (assumed && !hostingWhy.trim())))} success={`${option} chosen; the Architect writes the SDS`} action={() => post("options/choose", { document_id: doc.id, option, hosting, hosting_reason: hostingWhy, reason: why, checked, adjustments: adjust })}>Choose {option}{variant ? ` on ${variant.platform}` : ""}</ActionButton>
         <ActionButton variant="danger" disabled={!why.trim()} action={() => post("options/redo", { reason: why })}>Ask for other options</ActionButton>
       </div>
     </Panel>

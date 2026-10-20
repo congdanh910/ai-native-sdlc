@@ -127,6 +127,7 @@ export interface Doc {
 
 export interface OptionChoices {
   recommendation: string;
+  hosting_basis: "stated" | "assumed";  // assumed: the brief did not state the deployment environment
   options: { id: string; name: string; recommended_hosting: string; hosting: { id: string; name: string; platform: string }[] }[];
 }
 export interface FeedbackReply { feedback: string; change: string; where: string[] }

@@ -388,13 +388,15 @@ class OptionChoice(Body):
     checked: list[str] = []
     adjustments: str = ""  # the Solution Architect's changes to the chosen option
     hosting: str = ""  # PA1-H2: the hosting variant of the option; empty takes the recommended one
+    hosting_reason: str = ""  # why this hosting; required when the brief does not state the deployment
 
 
 @router.post("/runs/{run_id}/options/choose")
 def choose_option(run_id: uuid.UUID, body: OptionChoice) -> dict:
     return _decide(run_id, lambda s, r: services.choose_option(s, r, body.document_id, body.option, actor=operator(),
                                                                reason=body.reason, checked=body.checked,
-                                                               adjustments=body.adjustments, hosting=body.hosting))
+                                                               adjustments=body.adjustments, hosting=body.hosting,
+                                                               hosting_reason=body.hosting_reason))
 
 
 @router.post("/runs/{run_id}/options/redo")

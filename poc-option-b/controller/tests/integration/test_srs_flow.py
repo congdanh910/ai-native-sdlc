@@ -1,5 +1,6 @@
 """The project SRS run: brief, Business Analyst, SRS gate, SRS.md in a draft PR."""
 
+import json
 import subprocess
 import uuid
 
@@ -299,3 +300,45 @@ def test_a_merge_after_the_project_check_is_seen_when_the_next_run_starts(db, sa
     assert run["kind"] == "sds"
     project = client.get("/api/projects").json()[0]
     assert next(i for i in project["report"] if i["name"] == "SRS.md")["status"] == "ok"
+
+
+def test_a_stated_platform_shapes_the_hosting_and_an_open_one_asks_the_sa_why(db, sample_repo):
+    from controller.app.coordinator import artifact
+    with_srs(sample_repo)
+    post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
+    proposal = {"title": "Attendance", "propose_stack": True}
+    refused = client.post("/api/runs", json={"project": "task-board", "idempotency_key": str(uuid.uuid4()),
+                                             "architecture": {**proposal, "deployment_context": {"platform": "mainframe"}}})
+    assert refused.status_code == 409 and "not one of task-board's architecture.hosting_platforms" in refused.text
+
+    # stated: every variant runs on the customer's platform, the recommended one is preselected
+    run = post("/api/runs", {"project": "task-board", "idempotency_key": str(uuid.uuid4()), "architecture": {
+        **proposal, "deployment_context": {"platform": "On-Premise", "data_residency": "in Vietnam"}}}, status=201)
+    drain()
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    brief = [d for d in detail["documents"] if d["kind"] == "intent"][-1]["content"]
+    assert "- Hosting platform: On-premise" in brief and "- Data residency: in Vietnam" in brief
+    options = [d for d in detail["documents"] if d["kind"] == "options"][-1]
+    assert options["choices"]["hosting_basis"] == "stated"
+    assert {v["platform"] for o in options["choices"]["options"] for v in o["hosting"]} == {"On-premise"}
+    assert {c["id"]: c["ok"] for c in detail["checklist"]["controller"]}["compared"] is True
+
+    # open: the Architect's recommendation is an assumption, so the SA picks a variant and says why
+    run = post("/api/runs", {"project": "task-board", "idempotency_key": str(uuid.uuid4()), "architecture": proposal},
+               status=201)
+    drain()
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    brief = [d for d in detail["documents"] if d["kind"] == "intent"][-1]["content"]
+    assert "Hosting platform: not decided" in brief
+    options = [d for d in detail["documents"] if d["kind"] == "options"][-1]
+    assert options["choices"]["hosting_basis"] == "assumed"
+    ticks = [h["id"] for h in detail["checklist"]["human"]]
+    choice = {"document_id": options["id"], "option": "PA1", "reason": "central", "checked": ticks}
+    refused = client.post(f"/api/runs/{run['id']}/options/choose", json=choice)
+    assert refused.status_code == 409 and "hosting variants of PA1" in refused.text  # nothing preselected
+    refused = client.post(f"/api/runs/{run['id']}/options/choose", json={**choice, "hosting": "PA1-H2"})
+    assert refused.status_code == 409 and "say why this hosting" in refused.text
+    post(f"/api/runs/{run['id']}/options/choose", {**choice, "hosting": "PA1-H2", "hosting_reason": "HR runs on Azure"})
+    with session_scope() as session:
+        chosen = json.loads(artifact(session, uuid.UUID(run["id"]), "chosen_option"))
+    assert chosen["hosting"]["id"] == "PA1-H2" and chosen["hosting_reason"] == "HR runs on Azure"

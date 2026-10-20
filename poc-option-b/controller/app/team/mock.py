@@ -117,7 +117,7 @@ class MockTeam:
                     "refs": [i["id"]]} for i in named]
         while len(options) < 2:
             options.append({"name": ["Single server", "Managed cloud"][len(options)], "summary": "Mock Architect option"})
-        platforms = (context.policy.hosting_platforms if context.policy else ["aws", "on_premise"])
+        platforms = context.hosting_platforms or (context.policy.hosting_platforms if context.policy else ["aws", "on_premise"])
         platforms = platforms[:max(1, min(2, context.policy.max_hosting_variants if context.policy else 2))]
         for option in options:  # a proposed stack, as when the brief leaves it to the Architect
             option["stack"] = [{"layer": "backend", "technology": "Node.js 20", "why": "the repository's stack"},

@@ -48,6 +48,17 @@ const ARCHITECTURE: DocField[] = [
   ["notes", "Notes", "security, data protection, performance targets; start a line with [blocking] if the SDS must wait for an answer", false],
 ];
 type DocField = readonly [string, string, string, boolean];
+// The customer's environment: a stated platform makes the Architect design on it; left open, it compares platforms.
+const PLATFORMS: [string, string][] = [["", "Not decided yet: compare the platforms"], ["aws", "AWS"], ["azure", "Microsoft Azure"],
+  ["gcp", "Google Cloud"], ["on_premise", "On-premise"], ["hybrid", "Hybrid"]];
+const DEPLOYMENT_CONTEXT: [string, string, string][] = [
+  ["existing_infrastructure", "Existing infrastructure", "cloud contracts, data centre, servers, network the customer already has"],
+  ["data_residency", "Data residency", "where personal and biometric data must stay, such as in Vietnam or on the customer's premises"],
+  ["operations_team", "Operations team", "who will run it and what they know (Linux, Kubernetes, Windows Server ...)"],
+  ["budget", "Budget", "for hosting and licences, if known"],
+  ["scale", "Scale", "sites, users, cameras or devices, expected growth"],
+  ["availability", "Availability", "uptime, maintenance windows, how fast it must recover"],
+];
 type Kind = "discovery" | "feature" | "srs" | "sds";
 
 function validateDoc(fields: readonly DocField[], values: Record<string, string>, onlyTitle = false): Record<string, string> {
@@ -62,7 +73,8 @@ function validateDoc(fields: readonly DocField[], values: Record<string, string>
 
 /** A project document request: a brief the Business Analyst turns into SRS.md, or an architecture brief the
  * Architect turns into SDS.md. Both come before any feature run. */
-function DocumentForm({ project, fields, bodyKey, submit, allowBaseline, allowProposal }: { project: string; fields: readonly DocField[]; bodyKey: "brief" | "architecture" | "discovery"; submit: string; allowBaseline?: boolean; allowProposal?: boolean }) {
+function DocumentForm({ project, fields, bodyKey, submit, allowBaseline, allowProposal, askDeployment }: { project: string; fields: readonly DocField[]; bodyKey: "brief" | "architecture" | "discovery"; submit: string; allowBaseline?: boolean; allowProposal?: boolean; askDeployment?: boolean }) {
+  const [deployment, setDeployment] = useState<Record<string, string>>({ platform: "" });
   const [fromBaseline, setFromBaseline] = useState(false);
   const [propose, setPropose] = useState(!!allowProposal);  // the Architect proposes the stack in the Options step
   const [, navigate] = useLocation();
@@ -99,6 +111,22 @@ function DocumentForm({ project, fields, bodyKey, submit, allowBaseline, allowPr
           )}
         </Field>
       ))}
+      {askDeployment ? (
+        <fieldset className="flex flex-col gap-3 rounded-lg border border-line p-3">
+          <legend className="px-1 text-sm font-semibold">Deployment context</legend>
+          <p className="m-0 text-sm text-muted">Where the customer will run it. A stated platform makes the Architect design the deployment on it; left open, the Architect compares platforms and the Solution Architect chooses with a reason. Fill in what you know.</p>
+          <Field label="Hosting platform" htmlFor="deploy-platform">
+            <Select id="deploy-platform" value={deployment.platform} onChange={(e) => setDeployment({ ...deployment, platform: e.target.value })}>
+              {PLATFORMS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </Select>
+          </Field>
+          {DEPLOYMENT_CONTEXT.map(([key, label, hint]) => (
+            <Field key={key} label={label} hint={`optional: ${hint}`} htmlFor={`deploy-${key}`}>
+              <Input id={`deploy-${key}`} value={deployment[key] ?? ""} onChange={(e) => setDeployment({ ...deployment, [key]: e.target.value })} />
+            </Field>
+          ))}
+        </fieldset>
+      ) : null}
       <div>
         <ActionButton variant="primary" action={async () => {
           setTried(true);
@@ -109,7 +137,8 @@ function DocumentForm({ project, fields, bodyKey, submit, allowBaseline, allowPr
             throw new ApiError(`Fill in ${Object.keys(local).length} required field(s) before submitting.`);
           }
           try {
-            const body = fromBaseline ? { ...brief, from_baseline: true } : allowProposal ? { ...brief, propose_stack: propose } : brief;
+            const body = fromBaseline ? { ...brief, from_baseline: true }
+              : allowProposal ? { ...brief, propose_stack: propose, ...(askDeployment ? { deployment_context: deployment } : {}) } : brief;
             const run = await api<RunSummary>("/api/runs", { method: "POST", body: { project, [bodyKey]: body, idempotency_key: idempotencyKey } });
             navigate(`/runs/${run.id}`);
           } catch (error) {
@@ -218,7 +247,7 @@ export function NewRequestView() {
             ) : null}
             {kind === "discovery" ? <DocumentForm key="discovery" project={chosen} fields={DISCOVERY} bodyKey="discovery" submit="Start discovery, then add sources" />
               : kind === "srs" ? <DocumentForm key="srs" project={chosen} fields={BRIEF} bodyKey="brief" submit="Write SRS.md" allowBaseline />
-        : kind === "sds" ? <DocumentForm key="sds" project={chosen} fields={ARCHITECTURE} bodyKey="architecture" submit="Submit, write SDS.md" allowProposal /> : FIELDS.map(([key, label, hint, required]) => {
+        : kind === "sds" ? <DocumentForm key="sds" project={chosen} fields={ARCHITECTURE} bodyKey="architecture" submit="Submit, write SDS.md" allowProposal askDeployment /> : FIELDS.map(([key, label, hint, required]) => {
               const props = {
                 id: key,
                 value: intent[key],

@@ -33,6 +33,7 @@ class RunContext:
     sources_dir: str = ""  # discovery: the folder of the raw requirement files the Business Analyst reads
     baseline: dict | None = None  # an SRS (or SDS) run built on requirements/baseline.json
     chosen_option: dict | None = None  # SDS: the architecture option the Solution Architect chose, with the reason
+    hosting_platforms: list[str] = field(default_factory=list)  # SDS options: the platforms hosting variants may use
 
 
 @dataclass(frozen=True)

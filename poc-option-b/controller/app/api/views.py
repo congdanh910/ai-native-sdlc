@@ -57,9 +57,9 @@ def _document(document: Document) -> dict:
 
 def _option_choices(data: dict) -> dict:
     """What the Solution Architect picks from: the options and the hosting variants of each, with the recommendations."""
-    from controller.app.project_docs import Options, number_options, platform_name
-    options = number_options(Options.model_validate(data))
-    return {"recommendation": options.recommendation,
+    from controller.app.project_docs import number_options, platform_name, stored_options
+    options = number_options(stored_options(data))
+    return {"recommendation": options.recommendation, "hosting_basis": data.get("hosting_basis", "stated"),
             "options": [{"id": o.id, "name": o.name, "recommended_hosting": o.recommended_hosting,
                          "hosting": [{"id": v.id, "name": v.name, "platform": platform_name(v.platform)} for v in o.hosting]}
                         for o in options.options]}

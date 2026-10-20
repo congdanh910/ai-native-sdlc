@@ -35,9 +35,10 @@ from controller.app.feature_docs import (PHASE_HEADING, FeatureRef, link_once, p
                                          tasks_header, tasks_section, tc_numbers, test_cases_header, test_cases_section,
                                          upsert_section)
 from controller.app import analysis, checklists, joblog
-from controller.app.project_docs import (SDS_PATH, SRS_PATH, Options, Sds, Srs, check_chosen_option, check_options,
-                                         check_sds_depth, check_sds_markdown, check_srs_markdown, check_srs_trace, number_options, render_options,
-                                         render_sds, render_srs, sds_sync_findings, srs_features)
+from controller.app.project_docs import (SDS_PATH, SRS_PATH, ArchitectureBrief, Options, Sds, Srs, check_chosen_option,
+                                         check_options, check_sds_depth, check_sds_markdown, check_srs_markdown,
+                                         check_srs_trace, number_options, render_options, render_sds, render_srs,
+                                         sds_sync_findings, srs_features, stored_options)
 from controller.app.projects.config import EffectivePolicy, effective_policy, matches_any
 from controller.app.projects.registry import mirror_for, read_snapshot
 from controller.app.projects.repo import Worktree
@@ -263,8 +264,9 @@ def evaluate_gate(session: Session, run: Run, gate: str | None = None) -> dict |
         controller, ai = baseline_checks(session, run)
     elif gate == "options":
         document = latest_document(session, run.id, "options")
-        platforms = EffectivePolicy.model_validate_json(raw_policy).hosting_platforms if raw_policy else None
-        problems = check_options(Options.model_validate(document.data), json.loads(artifact(session, run.id, "baseline") or "null"),
+        platforms = options_platforms(EffectivePolicy.model_validate_json(raw_policy), _deployment_context(session, run)) \
+            if raw_policy else None
+        problems = check_options(stored_options(document.data), json.loads(artifact(session, run.id, "baseline") or "null"),
                                  platforms)
         controller = [checklists._result("compared", "Every option in the baseline is compared, the recommendation is one "
                                          "of the options, and each option has hosting variants on the project's "
@@ -441,7 +443,9 @@ def build_context(session: Session, run: Run, *, kind: str = "", feedback: list[
                       run_id=str(run.id), worktree=run.worktree_path or "", base_commit=run.base_commit or "",
                       engines=json.loads(artifact(session, run.id, "engines") or "{}"),
                       baseline=json.loads(artifact(session, run.id, "baseline") or "null"),
-                      chosen_option=json.loads(artifact(session, run.id, "chosen_option") or "null"))
+                      chosen_option=json.loads(artifact(session, run.id, "chosen_option") or "null"),
+                      hosting_platforms=options_platforms(policy, _deployment_context(session, run))
+                      if run.kind == RunKind.SDS else [])
 
 
 def _story_context(session: Session, run: Run) -> dict | None:
@@ -729,11 +733,24 @@ def _apply_preflight(session: Session, run: Run, execution: Execution, result: d
     enter_stage(session, run, "spec")
 
 
+def _deployment_context(session: Session, run: Run) -> dict:
+    intent = latest_document(session, run.id, "intent")
+    return (intent.data or {}).get("deployment_context") or {} if intent else {}
+
+
+def options_platforms(policy: EffectivePolicy, deployment: dict) -> list[str]:
+    """The platforms the hosting variants may use: the one the brief states, or the project's list."""
+    return [deployment["platform"]] if deployment.get("platform") else list(policy.hosting_platforms)
+
+
 def _apply_options(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
     options = number_options(Options.model_validate(result["options"]))
     content = render_options(options, title=run.title.removeprefix("SDS: "))
+    brief = ArchitectureBrief.model_validate(latest_document(session, run.id, "intent").data)
+    # hosting the brief does not state is the Architect's assumption: the gate then asks the SA to choose knowingly
+    basis = "stated" if brief.hosting_stated() else "assumed"
     document = add_document(session, run.id, "options", content, author_kind="ai", author=TeamRole.ARCHITECT.value,
-                            data=options.model_dump())
+                            data={**options.model_dump(), "hosting_basis": basis})
     document.commit_sha = commit_thread(session, run, "options", content, f"sdlc: architecture options v{document.version}")
     transition_run(session, run, RunStatus.WAITING_OPTIONS_APPROVAL, actor=TeamRole.ARCHITECT.value,
                    reason=f"{len(options.options)} options compared; the Architect recommends {options.recommendation}")
