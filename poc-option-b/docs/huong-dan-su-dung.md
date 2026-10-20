@@ -229,7 +229,22 @@ Nếu baseline chưa merge, run dừng ở `NEEDS_HUMAN` với lý do "merge the
 3. Cổng Options (vai SA): đọc bảng so sánh, bảng stack và bảng hosting của từng phương án, rồi chọn phương án và **Hosting of PAx**. Brief đã nêu môi trường deploy thì biến thể khuyến nghị được chọn sẵn. Brief **không** nêu thì mỗi phương án phải so sánh các **mô hình deploy** khác nhau, không phải nhiều hãng cloud: luôn có **on-premise** (controller kiểm), một cloud phù hợp nhất, và hybrid khi phương án tách giữa site và trung tâm; khuyến nghị chỉ là giả định của Architect: không chọn sẵn, có cảnh báo vàng, kèm **Questions for the Solution Architect** (điều gì quyết định hosting), và SA phải ghi **Why this hosting** (vào SDS §9). Controller kiểm: mỗi phương án có biến thể hosting, nằm trong các nền tảng của dự án, có một biến thể được khuyến nghị.
    - Ghi **Adjustments to the chosen option** nếu muốn bổ sung hoặc sửa, ví dụ "dùng PostgreSQL thay MySQL; thêm Redis cho hàng đợi". Architect phải áp đúng các điều chỉnh này.
    - Ghi **Why this option** (bắt buộc), tick checklist rồi bấm **Choose PAx**.
-   - Muốn Architect so sánh lại với góp ý thì ghi lý do rồi bấm **Ask for other options**.
+   - Muốn Architect so sánh lại với góp ý thì ghi lý do rồi bấm **Ask for other options**, ví dụ "thêm phương án on-premise cho PA1".
+
+#### Thêm một nền tảng hosting khác (Alibaba Cloud, Viettel Cloud, FPT Cloud…)
+
+Architect chỉ được đề xuất biến thể trên các nền tảng trong `architecture.hosting_platforms`. Ghi góp ý "thêm Alibaba Cloud" ở cổng Options **chưa đủ**: Architect sẽ đưa biến thể, nhưng controller báo ✗ *"hosting outside architecture.hosting_platforms"* và không cho duyệt. Cách làm:
+
+1. Thêm nền tảng vào `.sdlc/project.yaml` của repo dự án, merge vào nhánh mặc định:
+   ```yaml
+   architecture:
+     hosting_platforms: [aws, azure, gcp, alibaba_cloud, on_premise, hybrid]
+   ```
+   Tên viết thường, nối bằng `_` (`alibaba_cloud`, `viettel_cloud`, `fpt_cloud`, `oracle_cloud`…). Giao diện tự hiển thị thành "Alibaba Cloud"; Architect viết "Alibaba Cloud" hay "alibaba-cloud" đều được quy về `alibaba_cloud`. Khách chỉ nhận một nền tảng thì để danh sách một phần tử, ví dụ `[on_premise]`.
+2. **Projects → Check again** để nền tảng đọc lại cấu hình.
+3. Tạo **run SDS mới**. Danh sách nền tảng được ghim vào run lúc bắt đầu, nên run đang mở vẫn dùng danh sách cũ; ở run đó chỉ xin thêm biến thể trên nền tảng đã có trong danh sách.
+
+Lưu ý: ô **Hosting platform** trong form SDS hiện chỉ liệt kê AWS, Azure, Google Cloud, On-premise, Hybrid. Muốn khách dùng nền tảng mới (ví dụ chỉ Alibaba Cloud), để ô này *Not decided yet* và ghi vào ô **Existing infrastructure** hoặc **Deployment and infrastructure**, ví dụ "khách đã có hợp đồng Alibaba Cloud, bắt buộc dùng"; hoặc để `hosting_platforms: [alibaba_cloud]` trong `project.yaml`.
 4. Architect viết `SDS.md` (§1–§13, đủ outline của template công ty như SDS của GRM) **qua 4 lượt**: mô hình miền và UI (§1–3); kiến trúc (§4); API, bảo mật, NFR (§6–8); quyết định, metric, phụ lục, tích hợp (§5, §9–13). Lượt sau đọc những gì lượt trước đã viết. Controller tự vẽ sơ đồ Mermaid từ dữ liệu (context, logical view, **deployment**, quan hệ, state, ERD, sequence cho từng luồng, luồng đăng nhập). **§4.5 Physical View** là deployment view theo biến thể hosting đã chọn: sơ đồ các vùng (tài khoản cloud, VPC/subnet, data centre, LAN của site, Internet) với node bên trong và kết nối có giao thức/port và cách bảo mật; bảng node (vùng, dịch vụ host, chạy gì, scale); bảng kết nối; bảng môi trường (dev/test/staging/prod); backup, phục hồi (RPO/RTO), giám sát; control room và GitHub đều hiển thị được. Architect viết theo stack của phương án đã chọn cộng các điều chỉnh; mục §9.1 "Architecture Option" ghi phương án đã chọn, lý do của SA, các điều chỉnh và các phương án đã cân nhắc. Ở cổng SDS (Tech Lead), controller kiểm thêm: dòng Decision của §9 có ghi phương án và biến thể hosting đã chọn, và **độ sâu**: có sơ đồ context, sơ đồ deployment ở §4.5, sơ đồ dữ liệu, sequence cho mọi luồng SRS §6, state diagram cho mọi thực thể SRS §2.4, DTO, API specification và luồng đăng nhập. Thiếu thì không duyệt được; dùng **Reject: rewrite** kèm góp ý. Duyệt, merge PR, **Check again**.
 
 Muốn bỏ bước Options thì đặt `stages.options: skip` trong `.sdlc/project.yaml`.
@@ -320,7 +335,7 @@ Không có giới hạn nào cố định trong code. Giới hạn theo dự án
 | `discovery.limits.max_source_mb`, `max_pages_per_source` | 50, 300 | Kích thước một nguồn |
 | `discovery.limits.pages_per_read` | 10 | Số trang PDF một lượt đọc (tối đa 20); lượt nào câu trả lời quá dài thì tự chia đôi |
 | `discovery.limits.chars_per_read` | 30.000 | Số ký tự văn bản một lượt đọc |
-| `architecture.hosting_platforms` | aws, azure, gcp, on_premise, hybrid | Nền tảng hosting Architect được đề xuất ở bước Options |
+| `architecture.hosting_platforms` | aws, azure, gcp, on_premise, hybrid | Nền tảng hosting Architect được đề xuất ở bước Options; thêm nền tảng khác như `alibaba_cloud` (xem mục 7) |
 | `architecture.max_hosting_variants` | 3 | Số biến thể hosting tối đa cho mỗi phương án |
 | `discovery.question_owners` | xem thiết kế | Loại câu hỏi → vai trả lời |
 | `discovery.commit_sources` | `true` | File thô vào `requirements/sources/` |
