@@ -1,5 +1,7 @@
 """The preview of a run: started and stopped on request, stopped when its time is up, never stopping the run."""
 
+import os
+from pathlib import Path
 import uuid
 
 from fastapi.testclient import TestClient
@@ -79,6 +81,19 @@ def test_a_failing_preview_job_leaves_the_run_where_it_was(db, sample_repo, monk
     state = client.get(f"/api/runs/{run_id}").json()
     assert state["status"] == status and state["preview"]["status"] == "failed"
     assert "docker is not running" in state["preview"]["detail"]
+
+    with session_scope() as session:  # the run's branch moves on after the failed start
+        from controller.app.models import Run
+        worktree = session.get(Run, uuid.UUID(run_id)).worktree_path
+    (Path(worktree) / "later.txt").write_text("x")
+    git(Path(worktree), "add", ".")
+    os.environ["GIT_COMMITTER_DATE"] = "2099-01-01T00:00:00Z"  # later than the failure, whatever the clock's second
+    try:
+        git(Path(worktree), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "-m", "later")
+    finally:
+        del os.environ["GIT_COMMITTER_DATE"]
+    preview = client.get(f"/api/runs/{run_id}").json()["preview"]
+    assert preview["status"] == "stopped" and "branch changed since" in preview["detail"]
 
 
 def test_a_preview_waits_for_the_code_its_compose_file_builds(db, sample_repo):

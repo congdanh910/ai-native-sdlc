@@ -7,6 +7,7 @@ the in-session guards only stop mistakes earlier.
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 import re
 
@@ -182,3 +183,7 @@ def run_diff(worktree: Path, base: str, test_paths: list[str], budget: int) -> s
 
 def head(worktree: Path) -> str:
     return _git("rev-parse", "HEAD", cwd=worktree).strip()
+
+
+def head_time(worktree: Path) -> datetime:
+    return datetime.fromisoformat(_git("log", "-1", "--format=%cI", cwd=worktree).strip())

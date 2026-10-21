@@ -3,7 +3,7 @@
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from controller.app.models import (Approval, Clarification, Document, Event, Execution, Plan, Project, PullRequest,
+from controller.app.models import (Approval, Artifact, Clarification, Document, Event, Execution, Plan, Project, PullRequest,
                                    Run, Source, Task)
 from controller.app.project_docs import SRS_PATH, srs_features
 from controller.app.projects.registry import mirror_for
@@ -94,6 +94,7 @@ def _preview_view(session: Session, run: Run) -> dict | None:
     if policy is None or policy.preview is None:
         return None
     from pathlib import Path
+    from controller.app.doing.changes import head_time
     from controller.app.preview import missing_parts
     state = preview_state(session, run.id) or {"status": "stopped", "detail": "not started"}
     missing = missing_parts(Path(run.worktree_path), policy.preview) if run.worktree_path else ["the run's branch"]
@@ -101,6 +102,13 @@ def _preview_view(session: Session, run: Run) -> dict | None:
         # an earlier try failed for the same reason: show why it cannot start now, not the old error
         state = {"status": "unavailable", "detail": f"Available once the code exists: {', '.join(missing)} not in the "
                                                      "run's branch yet (the run's coding creates them)"}
+    elif state.get("status") == "failed" and run.worktree_path:
+        # a failed start before the latest commit: the code changed since, so its error may no longer hold
+        failed_at = session.scalar(select(Artifact.created_at).where(Artifact.run_id == run.id, Artifact.kind == "preview")
+                                   .order_by(Artifact.created_at.desc()).limit(1))
+        if failed_at and head_time(Path(run.worktree_path)) > failed_at:
+            state = {"status": "stopped", "detail": "The last start failed on earlier code; the branch changed since, "
+                                                     f"start it again. Earlier error: {state.get('detail', '')[:300]}"}
     return {**state, "accounts": [a.model_dump() for a in policy.preview.accounts], "available": bool(run.worktree_path),
             "missing": missing}
 
