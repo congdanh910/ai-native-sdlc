@@ -179,6 +179,19 @@ Thiết kế: `poc-option-b/docs/foundation-design.md`.
   Onboarding, pipeline có Onboarding/Environment.
 - Test: 237 pass. Chưa chạy thật với Codex trên attendance.
 
+## Sự cố và thêm ngày 21/10
+
+- Sự cố: ổ ảo Docker Desktop (58,4 GB) đầy → PostgreSQL của nền tảng sập lặp (recovery mode), API 500. Người dùng
+  duyệt xoá build cache (10 GB) và image không tên; còn 9,5 GB trống, PostgreSQL tự khôi phục, dữ liệu đủ. Nên tăng
+  Disk usage limit của Docker Desktop. Run Foundation 9ac65faa: lần build môi trường đầu (08:53) hỏng có lẽ cũng do ổ
+  đầy, nhưng `--quiet` che lỗi nên run gửi lại Architect; job onboarding v2 đang chạy.
+- Sửa: build dùng `--progress=plain`; "no space left on device" khi build/bật service → NEEDS_HUMAN, không gửi
+  Architect. Test Docker xoá image nó build.
+- Test double cho tích hợp: `Onboarding.test_doubles` (system, service, kind, fixtures, notes), `check_test_doubles`
+  so với bảng SDS §13 (cảnh báo ở cổng onboarding, không chặn); prompt onboarding có bảng giao thức → bản giả; spec
+  Foundation có kết quả "adapter + test double cho mọi hệ thống §13". BACKLOG 3.7: gọi ra ngoài qua allowlist.
+- Test: 239 pass.
+
 ## Bước tiếp theo
 
 Attendance: SRS và SDS (PR #9) đã merge. Chạy **Foundation** trên attendance (Codex), duyệt Onboarding, rồi các story

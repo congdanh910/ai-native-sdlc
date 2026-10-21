@@ -10,7 +10,9 @@ Full design: `AI_Native_SDLC_Option_B.md`. This page is the map an agent needs t
   macOS `caffeinate -i` assertion while jobs are queued/running, polls PRs.
 - **Coordinator** (`coordinator.py`): each job is load (DB, short) → compute (calls a team role, no DB) → apply
   (re-check run version, store artifacts, transition, queue next). Job kinds in `KINDS`: preflight, specify, plan,
-  ground, design_tests, code_task, review, release, extract.
+  ground, design_tests, code_task, review, release, extract, options, onboarding, environment.
+- **Run kinds** (`RunKind`): discovery (raw sources → baseline), srs, sds (Options step with hosting variants, then
+  four SDS passes), foundation (onboarding files from the SDS, then the walking skeleton), feature (one SRS story).
 - **State machine**: `states.py` (RunStatus, RunKind, transitions, who a waiting run waits for) and
   `state_machine.py` (`transition_run` with optimistic versioning).
 
@@ -24,13 +26,40 @@ Full design: `AI_Native_SDLC_Option_B.md`. This page is the map an agent needs t
 - `team/mock.py`: deterministic roles for tests. `team/composite.py`: thinking + doing teams.
 - `doing/`: Codex/Claude sessions for tests and code, validation container, change checks, GitHub PRs.
 
+## Validation environment (`doing/validation.py`)
+
+- `ValidationGate.run`: image → setup → services → commands. The image is a platform toolchain (`validation_image`)
+  or the project's `environment.dockerfile`, built once per content (`docker build --progress=plain`, tag
+  `sdlc-validate-env-<project>:<sha12>`).
+- Setup runs with network and a writable worktree, again whenever the `environment.setup_inputs` change.
+- `services()`: an `--internal` Docker network (no Internet) per validation, the project's service containers with
+  their `ready` command, then removal; commands get `environment.env`. Orphans (containers, networks) are removed
+  at worker start (`doing/process.py`).
+- External systems are never called from validation: each one of SDS §13 has a test double among the services
+  (WireMock, LocalStack, MinIO, Mailpit, MediaMTX …). Controlled outbound calls: BACKLOG 3.7.
+
+## Foundation run (`foundation.py`, design `poc-option-b/docs/foundation-design.md`)
+
+- `onboarding` job (Architect on the Tech Lead's engine, prompt `onboarding.md`): `Onboarding` = AGENTS.md,
+  REVIEW.md, .gitignore, CI workflow, Dockerfile, the technical part of project.yaml, test doubles per SDS §13.
+  `onboarding_files` keeps the rest of project.yaml and must load; an invalid file goes back to the Architect.
+- Gate `onboarding` (Tech Lead): diff per file, controller check of the files, warning when an SDS §13 system has no
+  test double. Approval: the controller commits the files (`onboarding_commit` artifact).
+- `environment` job: builds the image and starts the services on the run's worktree. Failure → back to the Architect
+  with the log (≤ `limits.max_remediations`); a full Docker disk → NEEDS_HUMAN. Success → the run re-pins
+  project_config, effective_policy, agents_md, review_md from the onboarding commit and enters the spec stage like a
+  story run (spec → plan → test cases → code → review → PR).
+
 ## Documents and gates
 
 - `documents.py`: versioned documents per run (intent, spec, srs, sds, tests, review, inventory …) with SHA-256;
   committed to the run thread `.sdlc/runs/<run8>/` on branch `sdlc/run-<run8>` when `commit_to_repo`.
 - `project_docs.py` (SRS/SDS models and rendering), `feature_docs.py` (`specs/NNN-slug/` artifacts),
   `checklists.py` (controller / AI self-check / human-ticked checklist at each gate), `analysis.py`.
-- `projects/config.py`: `.sdlc/project.yaml` schema (paths, validation, limits, stages, `discovery:`).
+- `projects/config.py`: `.sdlc/project.yaml` schema (paths, validation, limits, stages, `discovery:`,
+  `architecture:` hosting platforms, `environment:` Dockerfile, services, env, setup inputs).
+- Rewrites after a rejection keep `data.revision` (feedback, the role's `feedback_replies`, changed sections);
+  `GET /api/runs/{id}/documents/{kind}/diff`.
 
 ## Discovery (`controller/app/discovery/`)
 

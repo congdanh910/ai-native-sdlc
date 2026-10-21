@@ -277,6 +277,22 @@ environment:
 
 Mỗi lần validation: mạng Docker riêng **không ra Internet**, bật service, chờ lệnh `ready`, chạy lệnh validation với `env`, xong thì xoá service và mạng. Setup (cài dependency, có mạng) chạy lại khi file trong `setup_inputs` đổi. Chỉ dùng mật khẩu test.
 
+### Hệ thống bên ngoài: dùng bản giả (test double)
+
+Test **không bao giờ** gọi hệ thống thật. Mỗi tích hợp trong SDS §13 có một bản giả chạy như một service trong mạng của lần validation; code gọi hệ thống ngoài qua adapter (tầng `integrations` của SDS) và địa chỉ lấy từ biến môi trường, nên chỉ đổi URL là chuyển giữa bản giả và bản thật. Bước Onboarding tự chọn bản giả theo giao thức SDS ghi và liệt kê trong bảng **External systems and their test doubles**:
+
+| Loại tích hợp | Bản giả |
+|---|---|
+| REST/SOAP API (HR, payroll, CRM, đối tác, SMS, push, thanh toán) | WireMock (mapping JSON), Prism (từ OpenAPI) |
+| OAuth2 / OIDC / SSO | Keycloak với realm test, mock-oauth2-server |
+| Lưu trữ object, dịch vụ AWS | MinIO, Azurite, fake-gcs-server, LocalStack |
+| Message broker | Kafka, RabbitMQ, MQTT chạy với cấu hình nhỏ |
+| Email | Mailpit (test đọc được thư đã gửi) |
+| Camera, luồng video | MediaMTX + FFmpeg phát video mẫu |
+| FTP/SFTP, LDAP/AD, database của hệ thống khác, thiết bị | SFTP server, OpenLDAP, cùng loại database có dữ liệu mẫu, WireMock hoặc trình giả lập giao thức |
+
+Kịch bản của bản giả (thành công, lỗi 4xx/5xx, chậm/timeout, dữ liệu biên) nằm trong repo và được review như code. Thành phần do chính repo xây (ví dụ gateway) không cần bản giả, chỉ cần ghi lý do. Ở cổng Onboarding, mục **Every external system of SDS section 13 has a test double** báo vàng khi còn tích hợp chưa có bản giả hay lý do; không chặn duyệt. Muốn gọi sandbox thật của bên ngoài: chưa hỗ trợ (BACKLOG 3.7).
+
 ## 8. Feature run (một user story)
 
 1. **New request → Feature request**: chọn dự án và **User story** trong SRS §7, điền Desired outcome, bấm **Submit intent.md**.
@@ -381,6 +397,8 @@ Không có giới hạn nào cố định trong code. Giới hạn theo dự án
 | Run ở `NEEDS_HUMAN` | Đọc lý do trong khung đỏ, chọn **Resume**, **Replan** hoặc **Cancel run** kèm lý do |
 | Dự án báo **not ready** | Mở dòng lỗi ở Projects, sửa trong repo, push, **Check again** |
 | Giao diện không đổi sau khi cập nhật | Tải lại trang (Cmd+R) |
+| "Something went wrong · Internal Server Error", doctor báo postgres "recovery mode" | Ổ đĩa ảo của Docker Desktop đầy (log PostgreSQL: `No space left on device`). Giải phóng: `docker builder prune -f`, xoá image không dùng; hoặc Docker Desktop → Settings → Resources → tăng Disk usage limit. PostgreSQL tự khôi phục khi có chỗ |
+| Run Foundation dừng: "Docker has no disk space left" | Như trên, rồi **Resume** để build lại môi trường |
 
 ## 14. Dữ liệu ở đâu
 

@@ -117,3 +117,41 @@ def test_a_broken_environment_goes_back_to_the_architect_then_to_a_human(db, sam
         assert revision["feedback"] == ["service-postgres failed: not ready after 60s"]
     assert seen == ["WAITING_ONBOARDING_APPROVAL", "WAITING_ONBOARDING_APPROVAL", "NEEDS_HUMAN"]
     assert "validation environment does not work" in state["reason"]
+
+
+def test_every_integration_of_the_sds_has_a_test_double_or_a_reason():
+    from controller.app.foundation import Onboarding, check_test_doubles, render_onboarding, sds_integrations
+    sds = ("## 13. External Integrations <a id=\"13\"></a>\n\n| Integration | Purpose |\n|---|---|\n"
+           "| HR system | status |\n| Site capture gateways | frames |\n| Cameras | video |\n")
+    assert sds_integrations(sds) == ["HR system", "Site capture gateways", "Cameras"]
+    onboarding = Onboarding.model_validate({
+        "agents_md": "# Attendance\n\nPython and React.\n", "validation_image": "python-3.13",
+        "validation": [{"name": "tests", "run": ["pytest"]}], "paths": {"allowed": ["backend/**"], "tests": ["tests/**"]},
+        "environment": {"services": [{"name": "hr-mock", "image": "wiremock/wiremock:3.9.1"}]},
+        "test_doubles": [{"system": "HR system", "service": "hr-mock", "kind": "WireMock", "fixtures": "tests/fixtures/hr"},
+                         {"system": "site capture gateways", "notes": "built in this repository"},
+                         {"system": "Camera", "service": "camera-sim"}]})
+    assert check_test_doubles(onboarding, sds) == ["Cameras: no test double and no reason",
+                                                   "Camera: service 'camera-sim' is not in environment.services"]
+    text = render_onboarding("Attendance", onboarding, {}, {})
+    assert "| HR system | `hr-mock` | WireMock | tests/fixtures/hr | — |" in text
+
+
+def test_a_full_docker_disk_stops_for_a_human_instead_of_the_architect(db, sample_repo, monkeypatch):
+    from controller.app import coordinator
+    with_sds(sample_repo, with_srs(sample_repo))
+    post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
+    run = post("/api/runs", {"project": "task-board", "idempotency_key": str(uuid.uuid4()),
+                             "foundation": {"title": "Attendance"}}, status=201)
+    drain()
+    state = detail(run["id"])
+    warning = {a["id"]: a for a in state["checklist"]["ai"]}["test-doubles"]
+    assert warning["status"] == "pass"  # the sample SDS lists no external integration in section 13
+    monkeypatch.setattr(coordinator, "_try_environment", lambda loaded: {
+        "ok": False, "platform": True, "detail": "environment-build failed: no space left on device"})
+    onboarding = [d for d in state["documents"] if d["kind"] == "onboarding"][-1]
+    post(f"/api/runs/{run['id']}/onboarding/approve", {"document_id": onboarding["id"], "checked": TICKS})
+    drain()
+    state = detail(run["id"])
+    assert state["status"] == "NEEDS_HUMAN" and "Docker has no disk space" in state["reason"]
+    assert len([d for d in state["documents"] if d["kind"] == "onboarding"]) == 1  # the Architect was not asked again

@@ -266,10 +266,17 @@ def evaluate_gate(session: Session, run: Run, gate: str | None = None) -> dict |
     if gate == "baseline":
         controller, ai = baseline_checks(session, run)
     elif gate == "onboarding":
-        from controller.app.foundation import CONFIG_PATH
-        files = (latest_document(session, run.id, "onboarding").data or {}).get("files", {})
+        from controller.app.foundation import CONFIG_PATH, Onboarding, check_test_doubles
+        data = latest_document(session, run.id, "onboarding").data or {}
+        files = data.get("files", {})
         controller = [checklists._result("files", "AGENTS.md and a .sdlc/project.yaml that loads are present",
                                          [f"{p} is missing" for p in ("AGENTS.md", CONFIG_PATH) if p not in files])]
+        # a warning, not a block: the Tech Lead may accept an integration without a double for now
+        sds = mirror_for(session.get(Project, run.project_id)).read_file(run.base_commit, SDS_PATH) or ""
+        onboarding = Onboarding.model_validate({k: v for k, v in data.items() if k not in ("files", "revision")})
+        missing = check_test_doubles(onboarding, sds)
+        ai = [{"id": "test-doubles", "text": "Every external system of SDS section 13 has a test double, or a reason "
+               "for none", "status": "warning" if missing else "pass", "note": "; ".join(missing[:8])}]
     elif gate == "options":
         document = latest_document(session, run.id, "options")
         platforms = options_platforms(EffectivePolicy.model_validate_json(raw_policy), _deployment_context(session, run)) \
@@ -842,13 +849,21 @@ def _try_environment(loaded: Loaded) -> dict:
         with gate.services() as (_, failed):
             pass
     if failed:
-        return {"ok": False, "detail": f"{failed.name} failed (exit {failed.exit_code}): {failed.tail[-1500:]}"}
+        log = Path(failed.log_path).read_text(errors="replace") if Path(failed.log_path).is_file() else failed.tail
+        # the machine, not the Architect's files: Docker's disk is full (attendance, 2026-10-21)
+        platform = "no space left on device" in log.lower()
+        return {"ok": False, "platform": platform,
+                "detail": f"{failed.name} failed (exit {failed.exit_code}): {failed.tail[-1500:]}"}
     return {"ok": True, "detail": f"image {image} built; {len(policy.services)} service(s) ready"}
 
 
 def _apply_environment(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
     """A working environment: the run now follows the new onboarding files (policy, AGENTS.md, REVIEW.md) and builds
     the skeleton. A broken one goes back to the Architect with the log, at most limits.max_remediations times."""
+    if not result["ok"] and result.get("platform"):
+        to_needs_human(session, run, "Docker has no disk space left, so the environment could not be built; free "
+                       "space (docker builder prune, unused images) or raise Docker Desktop's disk limit, then resume")
+        return
     if not result["ok"]:
         policy = EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy"))
         tried = session.scalar(select(func.count()).select_from(Approval).where(

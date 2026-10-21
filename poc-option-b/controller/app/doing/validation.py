@@ -98,7 +98,8 @@ class ValidationGate:
         tag = f"{CONTAINER_PREFIX}env-{self.policy.project or 'project'}:{hashlib.sha256(dockerfile.read_bytes()).hexdigest()[:12]}"
         if run_bounded(["docker", "image", "inspect", tag], timeout=60).ok:
             return tag, None
-        result = run_bounded(["docker", "build", "--quiet", "-f", str(dockerfile), "-t", tag, str(dockerfile.parent)],
+        # plain progress, so the log holds the failing command's own output (--quiet hid "no space left on device")
+        result = run_bounded(["docker", "build", "--progress=plain", "-f", str(dockerfile), "-t", tag, str(dockerfile.parent)],
                              timeout=self.policy.setup_timeout_seconds)
         return (tag, None) if result.ok else ("", self._report("environment-build", result))
 

@@ -20,8 +20,9 @@ CONFIG_PATH = ".sdlc/project.yaml"
 DOCKERFILE_PATH = ".sdlc/validation.Dockerfile"
 CI_PATH = ".github/workflows/ci.yml"
 # The parts of the SDS the foundation builds on: stack, structure, principles, API standards, security, conventions.
-FOUNDATION_SECTIONS = ("4.3.1", "4.3.2", "4.3.3", "4.3.5", "4.7", "6.1", "6.6", "7.1", "7.2", "7.5", "12.1", "12.2")
-ONBOARDING_SECTIONS = ("4.3", "4.5", "4.7", "6.1", "7.", "8.", "12.")
+FOUNDATION_SECTIONS = ("4.3.1", "4.3.2", "4.3.3", "4.3.5", "4.7", "6.1", "6.6", "7.1", "7.2", "7.5", "12.1", "12.2",
+                       "13.")
+ONBOARDING_SECTIONS = ("4.1", "4.3", "4.5", "4.7", "6.1", "7.", "8.", "12.", "13.")
 
 
 class Contract(BaseModel):
@@ -38,6 +39,15 @@ class OnboardingLimits(Contract):
     max_changed_files: int = Field(default=30, ge=1, le=500)
 
 
+class TestDouble(Contract):
+    """How the tests stand in for one system of SDS section 13: a service in the validation network, or why none."""
+    system: str  # the integration, as SDS section 13 names it
+    service: str = ""  # the name of its service in environment.services; empty when it needs none
+    kind: str = ""  # what the double is, such as WireMock with mappings, MinIO, Mailpit, MediaMTX with a sample video
+    fixtures: str = ""  # where its scenarios live in the repository
+    notes: str = ""  # the scenarios it covers, or why it needs no service (an internal component, an in-process fake)
+
+
 class Onboarding(Contract):
     """The Architect's onboarding files for the stack the SDS chose."""
     agents_md: str = Field(min_length=20)
@@ -52,6 +62,7 @@ class Onboarding(Contract):
     context: Context = Context()
     environment: Environment = Environment()
     limits: OnboardingLimits = OnboardingLimits()
+    test_doubles: list[TestDouble] = []
     notes: str = ""  # what the reviewer should know: choices, what the skeleton must create first
     questions: list[Question] = []
     feedback_replies: list[FeedbackReply] = []
@@ -85,6 +96,9 @@ def foundation_intent(request: FoundationRequest, sds: str) -> str:
         "Sign-in, sessions and role checks of SDS sections 7.1 and 7.2 work end to end, so every user story can "
         "rely on them.",
         "Errors follow the API standards and error catalog of SDS sections 6.1 and 6.6.",
+        "Every external system of SDS section 13 is reached through an adapter in the integrations layer, at an "
+        "address from configuration, and the tests run against its test double (the services of .sdlc/project.yaml "
+        "with their scenarios in the repository), never against the real system.",
     ]
     return "\n".join([
         f"# Intent: {request.title}", "",
@@ -98,6 +112,27 @@ def foundation_intent(request: FoundationRequest, sds: str) -> str:
         "## Notes", "", request.notes.strip() or "_None._", "",
         "## Design reference (from SDS.md)", "", sds_excerpt(sds, FOUNDATION_SECTIONS) or "_SDS.md has none of these "
         "sections._", ""])
+
+
+def sds_integrations(sds: str) -> list[str]:
+    """The integrations SDS section 13 lists: the first cell of each row of its table."""
+    section = sds_excerpt(sds, ("13.",))
+    rows = [line.strip("|").split("|")[0].strip() for line in section.splitlines() if line.startswith("|")]
+    return [r.strip("`*") for r in rows[2:] if r and not set(r) <= set("-: ")]
+
+
+def check_test_doubles(onboarding: Onboarding, sds: str) -> list[str]:
+    """Each integration of SDS section 13 has a test double, or a reason for none; each double names a real service."""
+    def key(text: str) -> str:
+        return re.sub(r"\W+", " ", text.lower()).strip()
+    covered = {key(d.system) for d in onboarding.test_doubles}
+    services = {s.name for s in onboarding.environment.services}
+    problems = [f"{name}: no test double and no reason" for name in sds_integrations(sds) if key(name) not in covered]
+    problems += [f"{d.system}: service {d.service!r} is not in environment.services" for d in onboarding.test_doubles
+                 if d.service and d.service not in services]
+    problems += [f"{d.system}: no service and no reason" for d in onboarding.test_doubles
+                 if not d.service and not d.notes.strip()]
+    return problems
 
 
 def onboarding_files(onboarding: Onboarding, current_config: str) -> dict[str, str]:
@@ -134,6 +169,12 @@ def render_onboarding(title: str, onboarding: Onboarding, files: dict[str, str],
     if onboarding.questions:
         out += ["## Questions", "", *[f"- {q.question}" + (" (blocking)" if q.blocking else "")
                                       for q in onboarding.questions], ""]
+    if onboarding.test_doubles:
+        cell = lambda text: " ".join(str(text).split()).replace("|", "\\|") or "—"
+        out += ["## External systems and their test doubles", "", "| System | Service | Double | Scenarios in | Notes |",
+                "|---|---|---|---|---|",
+                *[f"| {cell(d.system)} | {cell(d.service and f'`{d.service}`')} | {cell(d.kind)} | {cell(d.fixtures)} | "
+                  f"{cell(d.notes)} |" for d in onboarding.test_doubles], ""]
     for path, content in files.items():
         before = current.get(path)
         out += [f"## `{path}` ({'changed' if before else 'new'})", ""]
