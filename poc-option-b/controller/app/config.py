@@ -91,6 +91,9 @@ class Settings(BaseSettings):
     langflow_max_response_bytes: int = Field(default=2_000_000, ge=100_000)
     # Previews: the application of a run started for people to try and for the acceptance tests (127.0.0.1 only).
     sdlc_preview_ports: str = "9100-9199"  # host ports a preview may take
+    # comma-separated folders, besides the worktree and the tools on PATH, that an AI CLI session may read (macOS:
+    # the command line tools that git and python3 need, and the OpenSSL configuration node reads)
+    sdlc_executor_read_paths: str = "/Library/Developer/CommandLineTools,/System/Library/OpenSSL"
     sdlc_preview_max_running: int = Field(default=2, ge=1, le=20)  # more stops the oldest
     sdlc_preview_ttl_minutes: int = Field(default=60, ge=5)  # a preview stops this long after it started
 

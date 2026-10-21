@@ -11,12 +11,14 @@ also for the Tech Lead and QA Analyst of normal runs (SDLC_ENGINES).
 import json
 from pathlib import Path
 import shlex
+import sys
 import tempfile
 
 from controller.app import joblog
 from controller.app.config import Settings
-from controller.app.doing.executors import LIMIT, _base_env
+from controller.app.doing.executors import GUARD, LIMIT, _base_env, sandboxed_env
 from controller.app.doing.process import run_bounded
+from controller.app.doing.sandbox import codex_args
 from controller.app.integrations.langflow import FLOW_PREFIX, LangflowError, role_prompt
 from controller.app.team.base import CallRecord, RunContext, SubscriptionLimit
 from controller.app.team.langflow_team import LangflowTeam
@@ -40,11 +42,14 @@ class CliReasoningClient:
     def args(self, cwd: str, last_message: Path) -> list[str]:
         if self.cli == "claude":
             tools = ["Read", "Glob", "Grep"]
+            hook = f"{shlex.quote(sys.executable)} -I {shlex.quote(str(GUARD))}"  # reads stay in the folder
+            settings = {"hooks": {"PreToolUse": [{"matcher": "Read|Glob|Grep",
+                                                  "hooks": [{"type": "command", "command": hook}]}]}}
             return ["claude", "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "dontAsk",
                     "--no-session-persistence", "--setting-sources", "local", "--strict-mcp-config",
-                    "--tools", ",".join(tools), "--allowedTools", *tools]
-        # A discovery reads its sources folder, which is not a git repository; the sandbox stays read-only.
-        return ["codex", "exec", "--sandbox", "read-only", "--cd", cwd, "--ephemeral", "--skip-git-repo-check",
+                    "--tools", ",".join(tools), "--allowedTools", *tools, "--settings", json.dumps(settings)]
+        # A discovery reads its sources folder, which is not a git repository; the folder is read-only to it.
+        return ["codex", "exec", "--cd", cwd, "--ephemeral", "--skip-git-repo-check", *codex_args(Path(cwd), write=False),
                 "-c", 'approval_policy="never"', "--json", "--output-last-message", str(last_message), "-"]
 
     def run(self, endpoint: str, payload: dict, *, session_id: str) -> str:
@@ -54,8 +59,9 @@ class CliReasoningClient:
         with tempfile.TemporaryDirectory(prefix="sdlc-readonly-") as tmp:
             cwd = self.cwd if self.cwd and Path(self.cwd).is_dir() else tmp
             last = Path(tmp) / "last-message.txt"
-            result = self.runner(self.args(cwd, last), cwd=Path(cwd), timeout=self.timeout, input_text=prompt,
-                                 env=_base_env())
+            env = _base_env() | {"SDLC_GUARD_ROOT": cwd, "SDLC_GUARD_ALLOW": "[]"} if self.cli == "claude" \
+                else sandboxed_env()
+            result = self.runner(self.args(cwd, last), cwd=Path(cwd), timeout=self.timeout, input_text=prompt, env=env)
             message = last.read_text() if last.exists() else ""
         self.last_usage = {"seconds": result.seconds}
         if self.cli == "claude":

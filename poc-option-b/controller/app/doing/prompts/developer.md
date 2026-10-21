@@ -24,6 +24,7 @@ The QA Engineer already wrote these tests in {test_files}. Read them first; they
 - Follow AGENTS.md: put each rule where its architecture says it belongs.
 - The project validates with: {commands}. All of them must pass after your change, including the tests of earlier tasks.
 - Do not commit, push, or install anything.
+- You have no network, and you read only this worktree and the installed tools. {lock_note}
 - Return the exact status codes and error codes the tests assert; enforce the spec's rules in code, not only in the database.
 - Never edit an existing database migration; add a new numbered one.
 - If a test contradicts the acceptance criteria or cannot pass without breaking another rule, do not change the test: stop and answer with a line that starts with "DISPUTE:" followed by the test and the reason.

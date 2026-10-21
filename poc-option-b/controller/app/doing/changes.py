@@ -181,6 +181,11 @@ def run_diff(worktree: Path, base: str, test_paths: list[str], budget: int) -> s
     return "".join(parts)
 
 
+def changed_since(worktree: Path, base: str) -> list[str]:
+    """Paths the commits since base changed."""
+    return [line for line in _git("diff", "--name-only", "--no-renames", base, "HEAD", cwd=worktree).splitlines() if line]
+
+
 def head(worktree: Path) -> str:
     return _git("rev-parse", "HEAD", cwd=worktree).strip()
 

@@ -311,6 +311,8 @@ def onboarding(data: dict) -> dict:
                 service["env"] = dict(str(x).split("=", 1) for x in service["env"] if "=" in str(x))
         if isinstance(environment.get("setup_inputs"), str):
             environment["setup_inputs"] = [environment["setup_inputs"]]
+        if isinstance(environment.get("lock"), str):
+            environment["lock"] = ["sh", "-c", environment["lock"]] if environment["lock"].strip() else []
     preview = data.get("preview")
     if isinstance(preview, dict):
         from controller.app.foundation import PREVIEW_COMPOSE_PATH

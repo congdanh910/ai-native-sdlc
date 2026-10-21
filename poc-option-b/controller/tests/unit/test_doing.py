@@ -1,3 +1,4 @@
+import dataclasses
 import json
 from pathlib import Path
 import shutil
@@ -246,8 +247,32 @@ def test_claude_result_and_usage_are_parsed(tmp_path):
 
 def test_codex_runs_sandboxed_without_network(tmp_path):
     args = CodexExecutor().args(Session("qa_engineer", "p", tmp_path, [], [], [], 60, tmp_path / "l"), tmp_path / "m")
-    assert args[args.index("--sandbox") + 1] == "workspace-write"
-    assert "sandbox_workspace_write.network_access=false" in args and args[-1] == "-"
+    assert "--sandbox" not in args and 'default_permissions="sdlc"' in args  # the profile, not the older flag
+    assert "permissions.sdlc.network.enabled=false" in args and args[-1] == "-"
+    filesystem = next(a for a in args if a.startswith("permissions.sdlc.filesystem="))
+    assert '":workspace_roots" = {"." = "write"}' in filesystem and f'"{Path.home()}" = "read"' not in filesystem
+
+
+def test_the_tools_on_path_are_readable_but_not_the_home_folder(tmp_path):
+    from controller.app.doing.sandbox import tool_roots
+    home = tmp_path / "home"
+    for folder in ("bin", ".nvm/v20/bin", "opt/tool/bin", "opt/sdk"):
+        (home / folder).mkdir(parents=True)
+    path = ":".join(str(home / f) for f in ("bin", ".nvm/v20/bin", "opt/tool/bin", "opt/sdk")) + ":relative/bin"
+    assert tool_roots(path, home) == [(home / "bin").resolve(), (home / ".nvm/v20").resolve(),
+                                      (home / "opt/tool").resolve(), (home / "opt/sdk").resolve()]
+
+
+def test_claude_reads_stay_in_the_worktree(tmp_path):
+    def reason(tool, **tool_input):
+        return decide({"tool_name": tool, "tool_input": tool_input, "cwd": str(tmp_path)}, tmp_path, [], [])
+    assert reason("Read", file_path="src/a.js") is None
+    assert "outside the repository" in reason("Read", file_path="/Users/someone/other-project/README.md")
+    assert "outside the repository" in reason("Read", file_path="~/.ssh/id_ed25519")
+    assert reason("Grep", pattern="def |class ") is None  # a regular expression, not a path
+    assert "outside the repository" in reason("Grep", pattern="x", path="/Users/someone/other-project")
+    assert "outside the repository" in reason("Glob", pattern="/Users/someone/**/*.json")
+    assert reason("Glob", pattern="**/*.ts", path="web") is None
 
 
 def test_each_command_runs_in_its_own_image_with_its_own_setup(worktree, tmp_path):
@@ -571,3 +596,58 @@ def test_the_tech_lead_plans_with_the_preview_compose_file(worktree):
     (worktree / ".sdlc" / "preview.compose.yml").write_text("services:\n  seed:\n    command: [python, -m, app.seed_demo]\n")
     sent = LangflowTeam._preview(context(worktree, preview=preview))
     assert "app.seed_demo" in sent["compose"] and sent["accounts"] == [{"role": "ADMIN", "username": "demo.admin"}]
+
+
+class LockRunner:
+    """The lock command writes the lockfile (or another file); validation commands pass."""
+
+    def __init__(self, writes: dict[str, str], lock_exit: int = 0):
+        self.writes, self.lock_exit, self.calls = writes, lock_exit, []
+
+    def __call__(self, image, worktree, argv, timeout, network=False, writable=False):
+        self.calls.append((argv, network, writable))
+        if argv[:1] == ["lock"]:
+            for path, text in self.writes.items():
+                (worktree / path).write_text(text)
+            return ProcessResult(["docker", *argv], self.lock_exit, "npm ERR! notarget" if self.lock_exit else "", 0.1)
+        return ProcessResult(["docker", *argv], 0, "ok", 0.1)
+
+
+def locking(tmp_path, runner):
+    return CliDoing({"codex": FakeExecutor("codex"), "claude": FakeExecutor("claude")},
+                    gate_factory=lambda p, w, l: ValidationGate(p, w, l, runner=runner), log_root=tmp_path / "logs")
+
+
+def test_the_platform_locks_dependencies_after_a_manifest_changes(worktree, tmp_path):
+    base = changes.head(worktree)
+    (worktree / "package.json").write_text('{"dependencies": {"left-pad": "^1.3.0"}}\n')
+    changes.stage_changes(worktree)
+    changes.commit(worktree, "feat(T1): Add due date", "developer")
+    lock_policy = dict(setup_inputs=["package.json", "package-lock.json"], lock=["lock"])
+    ctx = dataclasses.replace(context(worktree, **lock_policy), base_commit=base)
+    runner = LockRunner({"package-lock.json": '{"lockfileVersion": 3}\n'})
+    team = locking(tmp_path, runner)
+    assert team.validate(ctx, TASK).ok
+    assert runner.calls[0] == (["lock"], True, True)  # with network, the worktree writable
+    assert git(worktree, "log", "-1", "--format=%s").strip() == "build(T1): lock dependencies"
+    assert team.validate(ctx, TASK).ok and [c for c in runner.calls if c[0] == ["lock"]] == [runner.calls[0]]  # once
+
+    changes.discard(worktree)
+    (worktree / "package.json").write_text('{"dependencies": {"left-pad": "^99"}}\n')
+    changes.stage_changes(worktree)
+    changes.commit(worktree, "feat(T1): Add due date (attempt 2)", "developer")
+    failed = locking(tmp_path, LockRunner({}, lock_exit=1)).validate(ctx, TASK)
+    assert not failed.ok and "the lock command failed" in failed.detail and "notarget" in failed.evidence["failures"]
+
+    other = locking(tmp_path, LockRunner({"package-lock.json": "{}\n", "src/tasks.js": "// hm\n"})).validate(ctx, TASK)
+    assert not other.ok and "src/tasks.js" in other.detail and git(worktree, "status", "--porcelain") == ""
+
+
+def test_without_a_manifest_change_nothing_is_locked(worktree, tmp_path):
+    base = changes.head(worktree)
+    (worktree / "src" / "tasks.js").write_text("export const due = 1;\n")
+    changes.stage_changes(worktree)
+    changes.commit(worktree, "feat(T1): Add due date", "developer")
+    runner = LockRunner({})
+    ctx = dataclasses.replace(context(worktree, setup_inputs=["package.json"], lock=["lock"]), base_commit=base)
+    assert locking(tmp_path, runner).validate(ctx, TASK).ok and all(c[0] != ["lock"] for c in runner.calls)

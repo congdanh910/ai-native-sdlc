@@ -1,4 +1,4 @@
-"""Claude Code PreToolUse hook: block file edits outside the role's writable paths.
+"""Claude Code PreToolUse hook: block file edits outside the role's writable paths, and reads outside the worktree.
 
 Runs as `python -I guard.py` with only the standard library. The controller
 passes the worktree root and the path patterns in environment variables.
@@ -39,18 +39,38 @@ def matches(path: str, patterns: list[str]) -> bool:
     return any(glob_to_regex(p).match(path) for p in patterns)
 
 
-def decide(event: dict, root: Path, allow: list[str], deny: list[str]) -> str | None:
-    """The reason to block, or None to let the tool run."""
-    tool_input = event.get("tool_input") or {}
-    target = tool_input.get("file_path") or tool_input.get("notebook_path")
-    if not target:
-        return None
-    path = Path(target)
+READ_TOOLS = ("Read", "Glob", "Grep")
+
+
+def _inside(target: str, event: dict, root: Path) -> str | None:
+    """The path relative to the worktree, or None when it is outside."""
+    path = Path(target).expanduser()
     if not path.is_absolute():
         path = Path(event.get("cwd") or root) / path
     try:
-        relative = path.resolve().relative_to(root.resolve()).as_posix()
+        return path.resolve().relative_to(root.resolve()).as_posix()
     except ValueError:
+        return None
+
+
+def decide(event: dict, root: Path, allow: list[str], deny: list[str]) -> str | None:
+    """The reason to block, or None to let the tool run."""
+    tool_input = event.get("tool_input") or {}
+    tool = event.get("tool_name")
+    if tool in READ_TOOLS:  # other projects and the operator's files stay unread
+        targets = [tool_input.get("file_path"), tool_input.get("path")]
+        pattern = tool_input.get("pattern") or ""
+        if tool == "Glob" and pattern.startswith(("/", "~")):  # Grep's pattern is a regular expression, not a path
+            targets.append(pattern)
+        for target in filter(None, targets):
+            if _inside(target, event, root) is None:
+                return f"{target} is outside the repository worktree"
+        return None
+    target = tool_input.get("file_path") or tool_input.get("notebook_path")
+    if not target:
+        return None
+    relative = _inside(target, event, root)
+    if relative is None:
         return f"{target} is outside the repository worktree"
     if matches(relative, deny):
         return f"{relative} is protected for this role"

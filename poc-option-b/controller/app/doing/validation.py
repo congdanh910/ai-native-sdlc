@@ -133,6 +133,15 @@ class ValidationGate:
         marker.write_text(f"{key}\n")
         return None
 
+    def lock(self) -> CommandReport:
+        """The project's lock command, with network and the worktree writable, in the validation image."""
+        image, failed = self.image()
+        if failed:
+            return failed
+        result = self.runner(image, self.worktree, list(self.policy.lock), self.policy.setup_timeout_seconds,
+                             network=True, writable=True)
+        return self._report("lock", result)
+
     @contextmanager
     def services(self):
         """The project's services in a network of their own, without Internet access; yields the network name, or

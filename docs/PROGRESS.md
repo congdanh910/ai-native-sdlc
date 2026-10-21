@@ -12,8 +12,8 @@ _Cập nhật: 2026-10-21_
   ACCEPTANCE_TESTING với key job riêng (27ca98c); nút preview chỉ khi run chờ người, khóa khi Acceptance (18cc6c7);
   preview lỗi ghi service hỏng + log và dọn container, Tech Lead đọc compose của preview, onboarding chỉ đưa vào
   preview cái Foundation xây, Back to onboarding từ Needs human.
-- Còn chờ người dùng quyết: nền tảng tự sinh lockfile (Developer không có mạng, đã đọc lockfile repo khác trên máy);
-  giới hạn Developer/QA chỉ đọc trong worktree. Backlog 3.13 chạy task song song.
+- Đã làm (người dùng duyệt): `environment.lock` (nền tảng sinh lockfile có mạng) và giới hạn đọc của AI trong worktree +
+  công cụ (Codex permission profile, hook Read/Glob/Grep cho Claude). Backlog 3.13 chạy task song song.
 
 ## Việc đang làm: Discovery (tài liệu thô → baseline → SRS và SDS)
 

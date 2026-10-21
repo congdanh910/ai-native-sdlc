@@ -13,6 +13,7 @@ from controller.app.config import DATA_DIR
 from controller.app.doing import changes
 from controller.app.doing.executors import Session, SessionResult, executors as default_executors
 from controller.app.doing.validation import ValidationGate, failures, red_check, summary
+from controller.app.projects.config import matches_any
 from controller.app.schemas import PlanTask, TestPlan, parse_criteria
 from controller.app.team.base import RunContext, StepResult, SubscriptionLimit
 
@@ -200,6 +201,10 @@ class CliDoing:
                          test_files=", ".join(sorted({c["target_file"] for c in cases})) or "the test paths",
                          cases=json.dumps(cases, indent=2),
                          commands="; ".join(" ".join(c) for c in self._commands(context, task)),
+                         lock_note=(f"When you change a dependency manifest, do not write its lockfile: the platform runs "
+                                    f"`{' '.join(context.policy.lock)}` with network after your change and commits the "
+                                    "lockfiles." if context.policy.lock else
+                                    "Do not compose a lockfile by hand from other projects; leave it to setup."),
                          feedback="" if not feedback else
                          f"\n# Note from the Tech Lead\n\n{feedback}\n" if attempt == 1 else
                          (f"\n# Validation failed after your previous attempt ({attempt - 1})\n\n"
@@ -231,7 +236,40 @@ class CliDoing:
         return StepResult(True, f"changed {', '.join(files)} ({result.executor}, attempt {attempt})",
                           changed_files=files, evidence=self._evidence(result, label, commit=sha))
 
+    def lock(self, context: RunContext, task: PlanTask) -> StepResult | None:
+        """After the task changed a dependency manifest, the project's lock command writes the lockfiles (with
+        network, which the Developer's session has not) and the platform commits them; None when nothing to do."""
+        policy, worktree = context.policy, self._worktree(context)
+        base = context.task_base or context.base_commit
+        if not policy.lock or not base or not any(matches_any(p, policy.setup_inputs)
+                                                  for p in changes.changed_since(worktree, base)):
+            return None
+        gate = self._gate(context)
+        marker = self._log_dir(context) / "lock.done"
+        if marker.exists() and marker.read_text().strip() == gate._setup_key(list(policy.lock)):
+            return None
+        report = gate.lock()
+        if not report.ok:
+            changes.discard(worktree)
+            return StepResult(False, f"the lock command failed (exit {report.exit_code}): {report.tail[-600:]}",
+                              evidence={"reports": [asdict(report)], "failures": report.tail[-6000:]})
+        staged = changes.stage_changes(worktree)
+        other = [c.path for c in staged if not matches_any(c.path, policy.setup_inputs)]
+        if other:
+            changes.discard(worktree)
+            return StepResult(False, "the lock command changed files that are not setup inputs: " + ", ".join(other),
+                              evidence={"reports": [asdict(report)]})
+        if staged:
+            changes.commit(worktree, f"build({task.id}): lock dependencies", "validation_gate")
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(gate._setup_key(list(policy.lock)) + "\n")
+        return StepResult(True, "locked: " + (", ".join(c.path for c in staged) or "lockfiles already current"),
+                          changed_files=[c.path for c in staged])
+
     def validate(self, context: RunContext, task: PlanTask, attempt: int = 1) -> StepResult:
+        locked = self.lock(context, task)
+        if locked and not locked.ok:  # the Developer's remediation gets the lock command's error
+            return locked
         reports = self._gate(context).run([c.name for c in context.policy.validation], f"{task.id}-validate-{attempt}")
         ok = bool(reports) and all(r.ok for r in reports)
         return StepResult(ok, summary(reports), evidence={"reports": [asdict(r) for r in reports],

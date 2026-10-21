@@ -97,6 +97,9 @@ class Environment(Strict):
     """The project's own validation environment, for a stack the platform's toolchains do not cover."""
     dockerfile: str = ""  # repository path; the platform builds it into the validation image
     setup_inputs: list[str] = []  # files whose change runs setup again, such as dependency manifests
+    # argv run with network in the validation image after a task changes a dependency manifest: it writes the
+    # lockfiles (npm install --package-lock-only, uv lock), which a session without network cannot resolve
+    lock: list[str] = []
     env: dict[str, str] = {}  # for the validation commands, such as the database URL of a service
     services: list[Service] = []
 
@@ -356,6 +359,7 @@ class EffectivePolicy(Strict):
     env: dict[str, str] = {}
     services: list[Service] = []
     setup_inputs: list[str] = []
+    lock: list[str] = []
     preview: Preview | None = None
     toolchains: dict[str, str] = {}  # platform toolchain name -> image, for a validation command's own image
 
@@ -395,6 +399,7 @@ def effective_policy(config: ProjectConfig, defaults: PlatformDefaults = Platfor
         env=dict(config.environment.env),
         services=list(config.environment.services),
         setup_inputs=list(config.environment.setup_inputs),
+        lock=list(config.environment.lock),
         preview=config.preview,
         toolchains=dict(defaults.validation_images),
     )

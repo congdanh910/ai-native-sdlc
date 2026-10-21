@@ -23,6 +23,7 @@ import tempfile
 
 from controller.app import joblog
 from controller.app.doing.process import ProcessResult, run_bounded
+from controller.app.doing.sandbox import codex_args
 
 GUARD = Path(__file__).with_name("guard.py")
 DISPUTE_PREFIX = "DISPUTE:"
@@ -75,6 +76,14 @@ def _base_env() -> dict[str, str]:
     return env
 
 
+def sandboxed_env() -> dict[str, str]:
+    """For a session whose commands cannot read the home folder: git skips the operator's configuration and global
+    ignore file, npm keeps its cache in /tmp."""
+    return _base_env() | {"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_COUNT": "1",
+                          "GIT_CONFIG_KEY_0": "core.excludesFile", "GIT_CONFIG_VALUE_0": "/dev/null",
+                          "npm_config_cache": "/tmp/sdlc-npm-cache"}
+
+
 def _write_log(path: Path, result: ProcessResult, extra: str = "") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"$ {shlex.join(result.args[:12])} …\nexit={result.exit_code} seconds={result.seconds}"
@@ -89,7 +98,7 @@ class ClaudeExecutor:
 
     def args(self, session: Session) -> list[str]:
         hook = f"{shlex.quote(sys.executable)} -I {shlex.quote(str(GUARD))}"
-        settings = {"hooks": {"PreToolUse": [{"matcher": "Edit|MultiEdit|Write|NotebookEdit",
+        settings = {"hooks": {"PreToolUse": [{"matcher": "Read|Glob|Grep|Edit|MultiEdit|Write|NotebookEdit",
                                               "hooks": [{"type": "command", "command": hook}]}]}}
         tools = ["Read", "Glob", "Grep", "Edit", "MultiEdit", "Write"]
         return [self.binary, "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "dontAsk",
@@ -123,8 +132,9 @@ class CodexExecutor:
         self.binary, self.runner = binary, runner
 
     def args(self, session: Session, last_message: Path) -> list[str]:
-        return [self.binary, "exec", "--sandbox", "workspace-write", "--cd", str(session.worktree), "--ephemeral",
-                "-c", "sandbox_workspace_write.network_access=false", "-c", 'approval_policy="never"',
+        # a permission profile, not --sandbox: commands read only the worktree and the installed tools
+        return [self.binary, "exec", "--cd", str(session.worktree), "--ephemeral",
+                *codex_args(session.worktree, write=True), "-c", 'approval_policy="never"',
                 "--json", "--output-last-message", str(last_message), "-"]
 
     def run(self, session: Session) -> SessionResult:
@@ -132,7 +142,7 @@ class CodexExecutor:
         with tempfile.TemporaryDirectory(prefix="sdlc-codex-") as tmp:
             last = Path(tmp) / "last-message.txt"
             result = self.runner(self.args(session, last), cwd=session.worktree, timeout=session.timeout,
-                                 input_text=session.prompt, env=_base_env())
+                                 input_text=session.prompt, env=sandboxed_env())
             message = last.read_text() if last.exists() else result.tail()
         usage = {}
         for line in result.output.splitlines():

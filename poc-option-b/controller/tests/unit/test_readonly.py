@@ -33,7 +33,8 @@ def test_claude_readonly_answers_the_same_contract(settings, tmp_path):
 def test_codex_readonly_uses_the_read_only_sandbox(settings):
     client = CliReasoningClient("codex")
     args = client.args("/tmp/x", tmp := __import__("pathlib").Path("/tmp/m"))
-    assert args[args.index("--sandbox") + 1] == "read-only" and args[-1] == "-"
+    assert "--sandbox" not in args and 'default_permissions="sdlc"' in args and args[-1] == "-"
+    assert '":workspace_roots" = {"." = "read"}' in next(a for a in args if a.startswith("permissions.sdlc.filesystem="))
 
 
 def test_invalid_answers_are_retried_and_limits_postpone(settings):
