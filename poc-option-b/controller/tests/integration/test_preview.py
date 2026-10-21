@@ -20,11 +20,14 @@ PREVIEW = ("preview:\n  compose: .sdlc/preview.compose.yml\n  service: web\n  po
            "  accounts:\n    - {role: ADMIN, username: admin@example.test, password: Demo-123}\n")
 
 
-def start_run(sample_repo, with_preview: bool) -> str:
+def start_run(sample_repo, with_preview: bool, compose: str = "services:\n  web:\n    build: ./src\n") -> str:
     if with_preview:
         config = sample_repo / ".sdlc" / "project.yaml"
         config.write_text(config.read_text() + PREVIEW)
-        git(sample_repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "-am", "preview")
+        if compose:
+            (sample_repo / ".sdlc" / "preview.compose.yml").write_text(compose)
+        git(sample_repo, "add", ".")
+        git(sample_repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "-m", "preview")
     post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
     run = post("/api/runs", {"project": "task-board", "intent": INTENT, "idempotency_key": str(uuid.uuid4())}, status=201)
     drain()
@@ -76,3 +79,12 @@ def test_a_failing_preview_job_leaves_the_run_where_it_was(db, sample_repo, monk
     state = client.get(f"/api/runs/{run_id}").json()
     assert state["status"] == status and state["preview"]["status"] == "failed"
     assert "docker is not running" in state["preview"]["detail"]
+
+
+def test_a_preview_waits_for_the_code_its_compose_file_builds(db, sample_repo):
+    run_id = start_run(sample_repo, with_preview=True,
+                       compose="services:\n  web:\n    build: ./web\n  api:\n    build:\n      context: ./backend\n")
+    preview = client.get(f"/api/runs/{run_id}").json()["preview"]
+    assert preview["missing"] == ["web/", "backend/"]
+    refused = client.post(f"/api/runs/{run_id}/preview", json={"action": "start"})
+    assert refused.status_code == 409 and "nothing to preview yet: web/, backend/" in refused.text

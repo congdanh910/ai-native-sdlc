@@ -615,6 +615,13 @@ def preview(session: Session, run: Run, *, actor: str, start: bool) -> None:
         raise DecisionError("the project has no preview in .sdlc/project.yaml; the foundation run sets it up")
     if start and not run.worktree_path:
         raise DecisionError("the run has no branch to preview yet")
+    if start:
+        from pathlib import Path
+        from controller.app.preview import missing_parts
+        missing = missing_parts(Path(run.worktree_path), EffectivePolicy.model_validate_json(raw).preview)
+        if missing:
+            raise DecisionError(f"nothing to preview yet: {', '.join(missing)} not in the run's branch; "
+                                "the run's coding creates them")
     record_event(session, f"preview.{'requested' if start else 'stop_requested'}", actor=actor, run_id=run.id, payload={})
     coordinator.queue_preview(session, run, start=start, reason=f"requested by {actor}")
 

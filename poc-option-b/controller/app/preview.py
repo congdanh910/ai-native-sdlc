@@ -41,6 +41,28 @@ def free_port(taken: set[int]) -> int | None:
     return None
 
 
+def missing_parts(worktree: Path, preview: Preview) -> list[str]:
+    """What the preview cannot start without: its compose file, and the build folders its services name (the code a
+    run has not written yet, such as backend/ before the foundation's coding)."""
+    import yaml
+    compose_file = worktree / preview.compose
+    if not compose_file.is_file():
+        return [preview.compose]
+    try:
+        services = (yaml.safe_load(compose_file.read_text()) or {}).get("services") or {}
+    except yaml.YAMLError:
+        return []  # docker compose reports the error itself
+    missing = []
+    for service in services.values():
+        build = service.get("build") if isinstance(service, dict) else None
+        context = build.get("context") if isinstance(build, dict) else build
+        if isinstance(context, str) and not context.startswith(("http://", "https://", "git@")):
+            path = (worktree / context).resolve()
+            if not path.is_dir() and context not in missing:
+                missing.append(context.removeprefix("./").rstrip("/") + "/")
+    return missing
+
+
 def _compose(run_id: str, worktree: Path, preview: Preview, override: Path | None, *args: str) -> list[str]:
     files = ["-f", str(worktree / preview.compose)] + (["-f", str(override)] if override else [])
     return ["docker", "compose", "-p", project_name(run_id), "--project-directory", str(worktree), *files, *args]
@@ -49,8 +71,10 @@ def _compose(run_id: str, worktree: Path, preview: Preview, override: Path | Non
 def start(run_id: str, worktree: Path, preview: Preview, port: int, log_dir: Path) -> dict:
     """Build and start the preview, wait for its health path; returns the state to keep (status, url, port ...)."""
     log_dir.mkdir(parents=True, exist_ok=True)
-    if not (worktree / preview.compose).is_file():
-        return {"status": "failed", "detail": f"{preview.compose} is not in the run's branch yet"}
+    missing = missing_parts(worktree, preview)
+    if missing:
+        return {"status": "failed", "detail": f"nothing to run yet: {', '.join(missing)} not in the run's branch "
+                                              "(the run's coding creates them)"}
     override = log_dir / "preview.override.yml"
     # ports as a list of one mapping: the platform's host port, on the loopback interface only
     override.write_text(json.dumps({"services": {preview.service: {"ports": [f"127.0.0.1:{port}:{preview.port}"]}}}))

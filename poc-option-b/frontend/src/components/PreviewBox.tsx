@@ -26,7 +26,9 @@ export function PreviewBox({ run, onChange }: { run: RunDetail; onChange: () => 
           <span className="text-xs text-muted">stops at {new Date(preview.expires_at).toLocaleTimeString()}</span>
         ) : null}
         <span className="ml-auto flex gap-2">
-          {preview.status === "running" || busy ? (
+          {preview.missing?.length && preview.status !== "running" && !busy ? (
+            <span className="text-xs text-muted">Available once the code exists: {preview.missing.join(", ")} not in the run's branch yet</span>
+          ) : preview.status === "running" || busy ? (
             <ActionButton disabled={preview.status === "stopping"} success="Stopping the preview" action={() => act("stop")}>
               <Square className="size-3.5" /> Stop</ActionButton>
           ) : (

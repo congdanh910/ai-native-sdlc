@@ -93,9 +93,12 @@ def _preview_view(session: Session, run: Run) -> dict | None:
     policy = EffectivePolicy.model_validate_json(raw) if raw else None
     if policy is None or policy.preview is None:
         return None
+    from pathlib import Path
+    from controller.app.preview import missing_parts
     state = preview_state(session, run.id) or {"status": "stopped", "detail": "not started"}
-    return {**state, "accounts": [a.model_dump() for a in policy.preview.accounts],
-            "available": bool(run.worktree_path)}
+    missing = missing_parts(Path(run.worktree_path), policy.preview) if run.worktree_path else ["the run's branch"]
+    return {**state, "accounts": [a.model_dump() for a in policy.preview.accounts], "available": bool(run.worktree_path),
+            "missing": missing}
 
 
 def run_detail(session: Session, run: Run) -> dict:
