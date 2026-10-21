@@ -272,8 +272,8 @@ function WorkTab({ run }: { run: RunDetail }) {
         <table className="w-full min-w-[640px] border-collapse text-sm">
           <thead><tr className="bg-side text-left text-xs text-muted">{["Job", "Role", "Engine", "Status", "Time", "Attempts", "Error", ""].map((h, i) => <th key={i} className="border-b border-line px-3 py-2.5 font-semibold">{h}</th>)}</tr></thead>
           <tbody>
-            {run.executions.map((e, i) => (
-              <tr key={i} className={cn(open?.id === e.id && "bg-accent-soft")}>
+            {[...run.executions].reverse().map((e) => (  /* latest first */
+              <tr key={e.id} className={cn(open?.id === e.id && "bg-accent-soft")}>
                 <td className="border-b border-line px-3 py-2"><Mono>{e.kind}{e.task ? ` ${e.task}` : ""}</Mono></td>
                 <td className="border-b border-line px-3 py-2">{role(e.role)}</td>
                 <td className="border-b border-line px-3 py-2"><Mono className="text-muted">{e.engine}</Mono></td>
@@ -294,7 +294,7 @@ function WorkTab({ run }: { run: RunDetail }) {
         <h3 className="mt-0 mb-2 text-base font-semibold">Human decisions</h3>
         {run.approvals.length ? (
           <ol className="m-0 list-none p-0">
-            {run.approvals.map((a, i) => (
+            {[...run.approvals].reverse().map((a, i) => (  /* latest first */
               <li key={i} className="border-t border-line py-2 first:border-t-0">
                 <b>{a.stage} {a.decision}</b> <span className="text-muted">by {a.actor} as {role(a.role)} · {when(a.created_at)}</span>
                 {a.reason ? <div className="text-sm text-ink-2">{a.reason}</div> : null}
