@@ -12,7 +12,7 @@ from pathlib import Path
 import re
 
 from controller.app.projects.config import EffectivePolicy, matches_any
-from controller.app.projects.repo import COMMITTER, _git
+from controller.app.projects.repo import COMMITTER, GitError, _git
 from controller.app.schemas import PlanTask
 
 # Dependencies and caches that setup or test runs create; never part of a role's change, never cleaned away.
@@ -67,12 +67,33 @@ def _import(line: str) -> tuple[str, set[str]] | None:
     return module, names
 
 
+IMPORT_BLOCK = re.compile(r"^\s*from\s+[\w.]+\s+import\s*\((?P<py>[^)]*)\)|^\s*import\s*\{(?P<js>[^}]*)\}\s*from",
+                          re.MULTILINE)
+NAMES_LINE = re.compile(r"^\s*[A-Za-z_$][\w$]*(?:\s+as\s+\w+)?(?:\s*,\s*[A-Za-z_$][\w$]*(?:\s+as\s+\w+)?)*\s*,?\s*$")
+
+
+def _names(line: str) -> set[str]:
+    return {n.strip() for n in line.split(",") if n.strip()}
+
+
 def _widened_imports(worktree: Path, path: str) -> bool:
-    """Every removed line is an import that an added line imports again with at least the same names."""
-    added = [parsed for line in _added_lines(worktree, path) if (parsed := _import(line))]
+    """Every removed line is an import that an added line imports again with at least the same names: a one-line
+    import, or a line of names inside a multi-line one (from conftest import (\n a, b,\n))."""
+    added_lines = _added_lines(worktree, path)
+    added = [parsed for line in added_lines if (parsed := _import(line))]
+    try:
+        before = _git("show", f"HEAD:{path}", cwd=worktree)
+    except GitError:  # a new file has no removed lines
+        before = ""
+    in_blocks = {line.strip() for block in IMPORT_BLOCK.finditer(before)
+                 for line in (block["py"] or block["js"] or "").splitlines() if line.strip()}
     for line in _removed_lines(worktree, path):
         old = _import(line)
-        if old is None or not any(module == old[0] and old[1] <= names for module, names in added):
+        if old is not None:
+            if not any(module == old[0] and old[1] <= names for module, names in added):
+                return False
+        elif not (line.strip() in in_blocks and NAMES_LINE.match(line)
+                  and any(NAMES_LINE.match(a) and _names(line) <= _names(a) for a in added_lines)):
             return False
     return True
 
@@ -100,7 +121,9 @@ def check_tests(worktree: Path, changes: list[Change], policy: EffectivePolicy, 
         if change.status == "D":
             problems.append(f"deletes test file {change.path}")
         elif change.deleted and not allow_edits and not _widened_imports(worktree, change.path):
-            problems.append(f"changes or removes {change.deleted} existing line(s) in {change.path}; tests may only be added")
+            shown = "; ".join(repr(line.strip()[:120]) for line in _removed_lines(worktree, change.path)[:3])
+            problems.append(f"changes or removes {change.deleted} existing line(s) in {change.path} ({shown}); "
+                            "tests may only be added")
         if change.status != "D" and any(SKIP_MARKER.search(line) for line in _added_lines(worktree, change.path)):
             problems.append(f"adds a skipped or focused test in {change.path}")
     if not changes:

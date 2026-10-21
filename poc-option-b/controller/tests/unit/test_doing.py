@@ -572,6 +572,18 @@ def test_widening_an_import_is_not_an_edit_of_existing_tests(worktree):
     assert "existing line" in changes.check_tests(worktree, changes.stage_changes(worktree), policy())[0]
 
 
+def test_a_name_added_inside_a_multi_line_import_is_not_an_edit(worktree):
+    path = worktree / "test" / "test_identity.py"
+    path.write_text("from conftest import (\n    NOW, account,\n    session,\n)\n\n\ndef test_a():\n    call(\n        a, b,\n    )\n")
+    git(worktree, "-c", "user.name=t", "-c", "user.email=t@t", "add", ".")
+    git(worktree, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "imports")
+    path.write_text(path.read_text().replace("    session,\n)", "    session, revoke_all,\n)") + "\n\ndef test_b():\n    pass\n")
+    assert changes.check_tests(worktree, changes.stage_changes(worktree), policy(test_paths=["test/**"])) == []
+    changes.discard(worktree)
+    path.write_text(path.read_text().replace("        a, b,\n", "        a, b, c,\n"))  # an argument list, not an import
+    assert "existing line" in changes.check_tests(worktree, changes.stage_changes(worktree), policy(test_paths=["test/**"]))[0]
+
+
 def test_session_timeout_comes_from_the_project_limits(worktree, tmp_path):
     dev = FakeExecutor("codex", edits={"src/tasks.js": "export const due = 1;\n"})
     team, _ = doing(tmp_path, dev=dev)

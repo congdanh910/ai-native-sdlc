@@ -694,6 +694,11 @@ def _work_task(team: Team, loaded: Loaded) -> list[dict]:
     else:
         first = team.write_tests(context, task, tests)  # reuses tests already committed for the task
     steps = [step(TaskStatus.WRITING_TESTS, TeamRole.QA_ENGINEER, first)]
+    if not steps[-1]["ok"] and steps[-1]["detail"].startswith("test changes rejected"):
+        # once more with the controller's reason, as after a failed red check (the task stays in WRITING_TESTS)
+        retry = step(TaskStatus.WRITING_TESTS, TeamRole.QA_ENGINEER,
+                     team.write_tests(context, task, tests, feedback=steps[-1]["detail"]))
+        steps[-1] = {**retry, "evidence": {**retry["evidence"], "earlier": steps[-1]["detail"]}}
     if not steps[-1]["ok"]:
         return steps
     steps.append(step(TaskStatus.RED_CHECK, TeamRole.VALIDATION_GATE, team.red_check(context, task, tests)))

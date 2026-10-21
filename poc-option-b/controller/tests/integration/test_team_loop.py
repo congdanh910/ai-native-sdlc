@@ -476,3 +476,26 @@ def test_a_code_task_whose_job_breaks_is_started_again_on_resume(db, sample_repo
                         reason="the prompt and the worker match again")
     drain()
     assert status(run_id) == RunStatus.WAITING_PR_APPROVAL
+
+
+class EditsATestFirst(MockTeam):
+    def __init__(self):
+        self.feedback = []
+
+    def write_tests(self, context, task, tests, feedback="", amend=False):
+        self.feedback.append(feedback)
+        if not feedback:
+            return StepResult(False, "test changes rejected: changes or removes 1 existing line(s) in test/a.test.js")
+        return super().write_tests(context, task, tests, feedback=feedback, amend=amend)
+
+
+def test_tests_rejected_by_the_controller_are_written_once_more_with_the_reason(db, sample_repo):
+    run_id = new_run(add_project(sample_repo))
+    drain()
+    approve_spec(run_id)
+    drain()
+    approve_plan(run_id)
+    team = EditsATestFirst()
+    drain(team)
+    assert team.feedback[:2] == ["", "test changes rejected: changes or removes 1 existing line(s) in test/a.test.js"]
+    assert status(run_id) == RunStatus.WAITING_PR_APPROVAL
