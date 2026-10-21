@@ -679,3 +679,18 @@ def test_the_tests_a_commit_adds_and_the_earlier_commits_of_a_file(worktree):
                                                    ("test/test_due.py", "test_tc2_rejects_a_past_date")]
     earlier = changes.commits_touching(worktree, base, plan_base, ["src/tasks.js", "src/other.js"])
     assert [(c["sha"], c["subject"], c["files"]) for c in earlier] == [(built, "feat(T2): Add due date", ["src/tasks.js"])]
+
+
+def test_the_qa_engineer_sees_the_preview_and_sends_an_unclear_ruling_back(worktree, tmp_path):
+    from controller.app.projects.config import Preview
+    (worktree / ".sdlc" / "preview.compose.yml").write_text("services:\n  api:\n    build: ./backend\n")
+    git(worktree, "add", ".")
+    git(worktree, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "preview")
+    preview = Preview(compose=".sdlc/preview.compose.yml", service="api", port=8000)
+    qa = FakeExecutor("claude", message="UNCLEAR: the decision says 201 but TC-1 says 200; which one?")
+    team, _ = doing(tmp_path, qa=qa)
+    result = team.write_tests(context(worktree, qa_executor="claude", preview=preview), TASK, TESTS,
+                              feedback="use 201", amend=True)
+    assert result.dispute and not result.ok and "which one" in result.detail
+    prompt = qa.sessions[0].prompt
+    assert "build: ./backend" in prompt and "the decision wins over the test cases" in prompt

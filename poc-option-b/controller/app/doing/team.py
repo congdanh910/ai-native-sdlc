@@ -49,6 +49,17 @@ class CliDoing:
         return [list(c.run) for c in context.policy.validation if c.name in task.validation] or \
                [list(c.run) for c in context.policy.validation]
 
+    def _preview(self, context: RunContext) -> str:
+        """The preview's compose file as it is now: tests that start or check the running application use only its
+        services (a later story's services are not there yet)."""
+        preview = context.policy.preview
+        compose = self._worktree(context) / preview.compose if preview else None
+        if compose is None or not compose.is_file():
+            return ""
+        return (f"\n# The preview ({preview.compose})\n\nTests that start, check or call the running application use "
+                f"only the services of this file, as it is now; do not expect services it does not have.\n\n"
+                f"```yaml\n{compose.read_text()}\n```\n")
+
     @staticmethod
     def _criteria(context: RunContext, task: PlanTask) -> str:
         texts = {c.id: c.full for c in parse_criteria(context.spec_md or "")}
@@ -98,12 +109,15 @@ class CliDoing:
                          task_files=", ".join(task.modify + task.create), criteria=self._criteria(context, task),
                          cases=json.dumps(cases, indent=2), test_paths=", ".join(context.policy.test_paths),
                          commands="; ".join(" ".join(c) for c in self._commands(context, task)),
-                         edit_rule=edit_rule,
+                         edit_rule=edit_rule, preview=self._preview(context),
                          feedback=f"\n# {'Decision on the dispute' if amend else 'Previous attempt'}\n\n{feedback}\n"
                          if feedback else "")
         label = f"{task.id}-tests-{'amend' if amend else 2 if feedback else 1}"
         result = self._session(context.policy.qa_executor, "qa_engineer", prompt, context, task,
                                list(context.policy.test_paths), label)
+        if amend and result.dispute:  # the decision cannot be followed as written: back to the Tech Lead
+            changes.discard(worktree)
+            return StepResult(False, result.dispute, dispute=True, evidence=self._evidence(result, label))
         if not result.ok:
             changes.discard(worktree)
             return StepResult(False, f"QA Engineer session failed ({result.executor}): {result.message[-300:]}",
@@ -141,6 +155,7 @@ class CliDoing:
                              for a in preview.accounts) or "  - none: ask in your answer"
         prompt = _prompt("acceptance-tests", agents_md=context.agents_md, story=story, criteria=criteria,
                          e2e_paths=", ".join(preview.e2e_paths), accounts=accounts, e2e_command=" ".join(preview.e2e),
+                         preview=self._preview(context),
                          feedback=f"\n# Previous attempt\n\n{feedback}\n" if feedback else "")
         # not a task of the plan: built without its checks, and every validation command is available to the session
         task = PlanTask.model_construct(id="ACC", title="Acceptance tests", acceptance_criteria=["all"], validation=[])

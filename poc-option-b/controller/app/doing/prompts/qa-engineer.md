@@ -24,5 +24,6 @@ Each case names its target file, the criterion it proves, the scenario and the e
 - Write one test for each case above. Use fixed values for ids, dates and times.
 - The project validates with: {commands}.
 - Do not commit, push, or install anything.
-{feedback}
+- When the Tech Lead decided a dispute (below), the decision wins over the test cases above wherever they differ: follow its reason exactly, even if a case says otherwise, and change only what it requires. If the decision is unclear or impossible within the test files, do not guess: answer with a line that starts with "UNCLEAR:" and say what is missing.
+{preview}{feedback}
 When you are done, answer with one short paragraph naming the test files you changed and the cases you covered.

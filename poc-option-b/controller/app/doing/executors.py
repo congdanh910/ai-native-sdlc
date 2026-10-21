@@ -27,6 +27,7 @@ from controller.app.doing.sandbox import codex_args
 
 GUARD = Path(__file__).with_name("guard.py")
 DISPUTE_PREFIX = "DISPUTE:"
+UNCLEAR_PREFIX = "UNCLEAR:"  # the QA Engineer cannot follow the Tech Lead's decision on a dispute
 # How the CLIs report an exhausted subscription window; the job waits instead of failing.
 LIMIT = re.compile(r"usage limit|rate limit|rate_limit|too many requests|\b429\b|quota exceeded|"
                    r"hit your (?:\w+ )?limit|(?:session|usage|weekly) limit|limit reached|resets \d", re.I)
@@ -65,6 +66,8 @@ class SessionResult:
         for line in self.message.splitlines():
             if line.strip().upper().startswith(DISPUTE_PREFIX):
                 return line.strip()[len(DISPUTE_PREFIX):].strip() or "the Developer disputes a test"
+            if line.strip().upper().startswith(UNCLEAR_PREFIX):
+                return line.strip()[len(UNCLEAR_PREFIX):].strip() or "the decision does not say what to change"
         return None
 
 

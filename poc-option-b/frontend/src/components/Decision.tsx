@@ -338,7 +338,7 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
         {run.already_built ? <AlreadyBuilt evidence={run.already_built} /> : null}
         {disputed ? (
           <div className="flex flex-col gap-2 rounded-lg border border-line p-3">
-            <p className="m-0 text-sm text-ink-2">The Developer disputes a test. Decide who is right: let the QA Engineer update the tests (existing test lines may change and are listed in the PR), or keep the tests and send the Developer back.</p>
+            <p className="m-0 text-sm text-ink-2">{(run.reason ?? "").includes("QA Engineer finds the decision") ? "The QA Engineer could not follow your decision as written. Decide again with a reason that says exactly what the tests must check (which test, which value), or keep the tests." : "The Developer disputes a test. Decide who is right: let the QA Engineer update the tests (existing test lines may change and are listed in the PR), or keep the tests and send the Developer back."}</p>
             <div className="flex flex-wrap gap-2">
               <ActionButton variant="primary" action={() => post("resume", { decision: "amend_tests", reason })}>Let QA update the tests</ActionButton>
               <ActionButton action={() => post("resume", { decision: "keep_tests", reason })}>Keep the tests</ActionButton>

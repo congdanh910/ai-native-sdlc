@@ -1319,7 +1319,9 @@ def _apply_code_task(session: Session, run: Run, execution: Execution, result: d
                          payload={"task": task.external_task_id, "state": state.value, "detail": step["detail"]})
         if step["dispute"]:
             transition_task(session, task, TaskStatus.DISPUTED, actor=step["role"], reason=step["detail"])
-            to_needs_human(session, run, f"{task.external_task_id}: the Developer disputes a test: {step['detail']}")
+            who = ("the QA Engineer finds the decision on the dispute unclear" if step["role"] == TeamRole.QA_ENGINEER.value
+                   else "the Developer disputes a test")
+            to_needs_human(session, run, f"{task.external_task_id}: {who}: {step['detail']}")
             return
         if not step["ok"] and final and state in (TaskStatus.WRITING_TESTS, TaskStatus.RED_CHECK, TaskStatus.CODING,
                                                   TaskStatus.REMEDIATING):

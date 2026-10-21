@@ -211,6 +211,35 @@ def test_kept_tests_send_the_developer_back_with_the_decision(db, sample_repo, t
     assert sum(s.startswith("test(T1)") for s in _subjects(run_id)) == 1  # the tests were reused, not rewritten
 
 
+class UnclearRuling(DisputingCli):
+    """The QA Engineer cannot follow the first decision and says so; the second one it follows."""
+
+    def __init__(self):
+        super().__init__()
+        self.unclear = False
+
+    def run(self, session: Session) -> SessionResult:
+        if session.role == "qa_engineer" and "Decision on the dispute" in session.prompt and not self.unclear:
+            self.unclear = True
+            self.sessions.append(session)
+            return SessionResult(self.name, True, "UNCLEAR: the decision names no test", 0.5, 0, False)
+        return super().run(session)
+
+
+def test_a_decision_the_qa_engineer_cannot_follow_goes_back_to_the_tech_lead(db, sample_repo, tmp_path):
+    run_id = _to_coding(sample_repo)
+    cli = UnclearRuling()
+    drain(team(cli, FakeContainer(), tmp_path))
+    _decide(run_id, "amend_tests", reason="fix it")
+    drain(team(cli, FakeContainer(), tmp_path))
+    with session_scope() as session:
+        run = session.get(Run, run_id)
+        assert run.status == "NEEDS_HUMAN" and "QA Engineer finds the decision on the dispute unclear" in run.status_reason
+    _decide(run_id, "amend_tests", reason="test/tasks.test.js must expect the priority field")
+    drain(team(cli, FakeContainer(), tmp_path))
+    assert status(run_id) == "WAITING_PR_APPROVAL"
+
+
 def coordinator_report(session, run_id) -> str:
     from controller.app import coordinator
     return coordinator.execution_report(session, session.get(Run, run_id))
