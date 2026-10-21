@@ -348,6 +348,7 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
         <div className="flex flex-wrap gap-2">
           <ActionButton variant={disputed ? "default" : "primary"} action={() => post("resume", { decision: "resume", reason })}>Resume</ActionButton>
           <ActionButton action={() => post("resume", { decision: "replan", reason })}>Replan</ActionButton>
+          {run.kind === "foundation" ? <ActionButton disabled={!reason.trim()} title="The onboarding files are the cause (the preview's compose file, a command, a path): the Architect revises them, you approve them again, and the Tech Lead plans again on the approved spec" action={() => post("onboarding/reopen", { reason })}>Back to onboarding</ActionButton> : null}
           <ActionButton variant="danger" action={() => post("resume", { decision: "cancel", reason })}>Cancel run</ActionButton>
         </div>
       </Panel>

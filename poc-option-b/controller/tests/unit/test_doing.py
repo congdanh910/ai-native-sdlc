@@ -364,6 +364,28 @@ def test_a_preview_starts_on_the_loopback_and_stops(tmp_path, monkeypatch):
 
 
 @pytest.mark.skipif(shutil.which("docker") is None or subprocess.run(["docker", "info"], capture_output=True).returncode
+                    or subprocess.run(["docker", "image", "inspect", "python:3.12-slim"], capture_output=True).returncode,
+                    reason="docker or the python:3.12-slim image is not available")
+def test_a_preview_that_fails_says_which_service_failed_and_why_and_leaves_nothing_running(tmp_path):
+    from controller.app import preview
+    from controller.app.projects.config import Preview
+    repo = tmp_path / "repo"
+    (repo / ".sdlc").mkdir(parents=True)
+    (repo / ".sdlc" / "preview.compose.yml").write_text(
+        "services:\n  seed:\n    image: python:3.12-slim\n    command: [python, -m, app.seed_demo]\n"
+        "  web:\n    image: python:3.12-slim\n    command: [python, -m, http.server, '8000']\n"
+        "    depends_on:\n      seed:\n        condition: service_completed_successfully\n")
+    config = Preview(compose=".sdlc/preview.compose.yml", service="web", port=8000, start_timeout_seconds=60)
+    run_id = "testfail" + "0" * 28
+    state = preview.start(run_id, repo, config, preview.free_port(set()), tmp_path / "logs")
+    assert state["status"] == "failed"
+    assert "seed (exit 1)" in state["detail"] and "app.seed_demo" in state["detail"].split("compose:")[0]
+    left = subprocess.run(["docker", "ps", "-aq", "--filter", f"label=com.docker.compose.project={preview.project_name(run_id)}"],
+                          capture_output=True, text=True).stdout.strip()
+    assert left == ""
+
+
+@pytest.mark.skipif(shutil.which("docker") is None or subprocess.run(["docker", "info"], capture_output=True).returncode
                     or any(subprocess.run(["docker", "image", "inspect", i], capture_output=True).returncode
                            for i in ("python:3.12-slim", "node:22-alpine")),
                     reason="docker or the python and node images are not available")
@@ -538,3 +560,14 @@ def test_every_subscription_limit_message_is_recognised():
                     "You've hit your weekly limit", "429 Too Many Requests"):
         assert LIMIT.search(message), message
     assert not LIMIT.search("AssertionError: expected 1 to equal 2")
+
+
+def test_the_tech_lead_plans_with_the_preview_compose_file(worktree):
+    from controller.app.projects.config import Preview
+    from controller.app.team.langflow_team import LangflowTeam
+    preview = Preview(compose=".sdlc/preview.compose.yml", service="web", port=8000,
+                      accounts=[{"role": "ADMIN", "username": "demo.admin", "password": "x"}])
+    assert LangflowTeam._preview(context(worktree, preview=preview)) is None  # no compose file yet
+    (worktree / ".sdlc" / "preview.compose.yml").write_text("services:\n  seed:\n    command: [python, -m, app.seed_demo]\n")
+    sent = LangflowTeam._preview(context(worktree, preview=preview))
+    assert "app.seed_demo" in sent["compose"] and sent["accounts"] == [{"role": "ADMIN", "username": "demo.admin"}]

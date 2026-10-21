@@ -7,6 +7,7 @@ because thinking roles have no side effects.
 
 from collections.abc import Callable
 import json
+from pathlib import Path
 import time
 from typing import TypeVar
 
@@ -127,6 +128,16 @@ class LangflowTeam(MockTeam):
                 "validation": [command.name for command in policy.validation],
                 "dependency_manifests": policy.setup_inputs}
 
+    @staticmethod
+    def _preview(context: RunContext) -> dict | None:
+        """The preview's compose file and demo accounts: the plan creates what the compose file runs."""
+        preview = context.policy.preview
+        compose = Path(context.worktree) / preview.compose if preview and context.worktree else None
+        if compose is None or not compose.is_file():
+            return None
+        return {"compose_file": preview.compose, "compose": compose.read_text(),
+                "accounts": [{"role": a.role, "username": a.username} for a in preview.accounts]}
+
     # ------------------------------------------------------------ thinking roles
 
     def draft_intent(self, text: str, title: str) -> Intent:
@@ -224,7 +235,7 @@ class LangflowTeam(MockTeam):
                                          if not matches_any(f["path"], policy.test_paths)],
                       "ui_files": [p for p in files if p.endswith(UI_SUFFIXES) and matches_any(p, policy.allowed_paths)]}
         payload = {"spec": context.spec_md, "agents_md": context.agents_md, "constitution": self._constitution(context), "repository": repository,
-                   "policy": self._policy(context), "feedback": context.feedback}
+                   "policy": self._policy(context), "feedback": context.feedback, "preview": self._preview(context)}
         return self._ask("plan", payload, PlanPayload, lambda data: normalize.plan(data, validations),
                          context.session_id,
                          retries=context.policy.max_format_retries)

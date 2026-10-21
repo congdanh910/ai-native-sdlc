@@ -211,3 +211,30 @@ def test_a_gap_found_at_the_plan_gate_reopens_the_onboarding_and_comes_back_to_t
     state = detail(run["id"])
     assert state["status"] == "WAITING_PLAN_APPROVAL"  # planned again; the approved spec was not rewritten
     assert len([d for d in state["documents"] if d["kind"] == "spec"]) == 1 and len(state["plans"]) == 2
+
+
+def test_a_foundation_that_needs_a_human_goes_back_to_onboarding_and_plans_again(db, sample_repo):
+    from controller.app.db import session_scope
+    from controller.app.models import Run
+    from controller.app.states import RunStatus
+    with_sds(sample_repo, with_srs(sample_repo))
+    post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
+    run = post("/api/runs", {"project": "task-board", "idempotency_key": str(uuid.uuid4()),
+                             "foundation": {"title": "Attendance"}}, status=201)
+    drain()
+    onboarding = [d for d in detail(run["id"])["documents"] if d["kind"] == "onboarding"][-1]
+    post(f"/api/runs/{run['id']}/onboarding/approve", {"document_id": onboarding["id"], "checked": TICKS})
+    drain()
+    spec = [d for d in detail(run["id"])["documents"] if d["kind"] == "spec"][-1]
+    post(f"/api/runs/{run['id']}/approve-spec", {"document_id": spec["id"], "sha256": spec["sha256"], "checked": TICKS})
+    drain()
+    with session_scope() as session:  # such as the preview failing at the acceptance tests
+        found = session.get(Run, uuid.UUID(run["id"]))
+        found.resume_status, found.status = RunStatus.ACCEPTANCE_TESTING, RunStatus.NEEDS_HUMAN
+    post(f"/api/runs/{run['id']}/onboarding/reopen", {"reason": "The preview runs only what the foundation builds"})
+    drain()
+    onboarding = [d for d in detail(run["id"])["documents"] if d["kind"] == "onboarding"][-1]
+    assert detail(run["id"])["status"] == "WAITING_ONBOARDING_APPROVAL" and onboarding["version"] == 2
+    post(f"/api/runs/{run['id']}/onboarding/approve", {"document_id": onboarding["id"], "checked": TICKS})
+    drain()
+    assert detail(run["id"])["status"] == "WAITING_PLAN_APPROVAL"

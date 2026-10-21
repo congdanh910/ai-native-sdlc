@@ -82,7 +82,11 @@ def start(run_id: str, worktree: Path, preview: Preview, port: int, log_dir: Pat
                          timeout=preview.start_timeout_seconds)
     (log_dir / "preview-up.log").write_text(result.output)
     if not result.ok:
-        return {"status": "failed", "detail": f"docker compose up failed (exit {result.exit_code}): {result.tail(25)}"}
+        failed = _failed_services(run_id, worktree, preview, override)
+        stop(run_id, worktree, preview)
+        return {"status": "failed", "detail": f"docker compose up failed (exit {result.exit_code})"
+                                              + "".join(f"\n\n{name}:\n{log}" for name, log in failed)
+                                              + f"\n\ncompose:\n{result.tail(8)}"}
     base = f"http://127.0.0.1:{port}"
     deadline = time.monotonic() + preview.start_timeout_seconds
     while time.monotonic() < deadline:
@@ -101,6 +105,24 @@ def start(run_id: str, worktree: Path, preview: Preview, port: int, log_dir: Pat
     stop(run_id, worktree, preview)
     return {"status": "failed", "detail": f"{preview.health_path} did not answer within {preview.start_timeout_seconds}s:"
                                           f"\n{logs.tail(40)}"}
+
+
+def _failed_services(run_id: str, worktree: Path, preview: Preview, override: Path) -> list[tuple[str, str]]:
+    """The services that exited with an error, and the end of their logs: the reason compose itself does not print."""
+    listed = run_bounded(_compose(run_id, worktree, preview, override, "ps", "-a", "--format", "json"), timeout=60)
+    failed, services = [], []
+    for line in listed.output.splitlines():  # one object per line; older compose versions print one array
+        try:
+            parsed = json.loads(line)
+        except ValueError:
+            continue
+        services += parsed if isinstance(parsed, list) else [parsed]
+    for service in services:
+        if service.get("State") == "exited" and service.get("ExitCode", 0) != 0:
+            logs = run_bounded(_compose(run_id, worktree, preview, override, "logs", "--no-log-prefix", "--tail", "15",
+                                        service["Service"]), timeout=60)
+            failed.append((f"{service['Service']} (exit {service['ExitCode']})", logs.tail(15)))
+    return failed
 
 
 def stop(run_id: str, worktree: Path | None = None, preview: Preview | None = None) -> dict:

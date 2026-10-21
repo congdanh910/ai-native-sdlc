@@ -36,6 +36,7 @@ Output keys:
 
 Rules:
 - policy.dependency_manifests are the files setup installs each part's tools from (such as backend/pyproject.toml or web/package.json). A task that creates or changes code or tests in a part whose manifest does not exist yet creates that manifest itself (with the tools its tests need) or depends on the task that does; otherwise none of its commands can run.
+- preview, when present, is the docker compose file that starts the application for people to try and for the acceptance tests, with its demo accounts. The plan creates everything the compose file runs from this repository that is not there yet: the modules or scripts its commands start, the seed step that creates the demo accounts with these usernames, and the files it mounts. If a service of the compose file belongs to a later story (a part this spec does not build), do not build it: name it in design.findings with the resolution that the onboarding drops it from the preview.
 - Follow agents_md: put rules where its architecture says they belong. Sorting, filtering, ordering, validation, defaults and migration of stored data are rules, not interface code: plan them as functions in the module agents_md names for rules, and let the interface script only call them. This keeps them testable without a browser.
 - Every acceptance criterion and edge case must be delivered by at least one task.
 - Never reference a file, function or storage key that is not in the input. If something you need is missing, say so in the summary.

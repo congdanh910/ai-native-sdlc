@@ -652,8 +652,9 @@ def reopen_onboarding(session: Session, run: Run, *, actor: str, reason: str) ->
     and the run goes back to the stage it was at; an approved spec is not written again."""
     if run.kind != RunKind.FOUNDATION:
         raise DecisionError("only a foundation run writes the onboarding files")
-    if run.status not in (RunStatus.WAITING_SPEC_APPROVAL, RunStatus.WAITING_PLAN_APPROVAL, RunStatus.WAITING_TEST_APPROVAL):
-        raise DecisionError("the onboarding can be reopened at the spec, plan or test-cases gate")
+    if run.status not in (RunStatus.WAITING_SPEC_APPROVAL, RunStatus.WAITING_PLAN_APPROVAL, RunStatus.WAITING_TEST_APPROVAL,
+                          RunStatus.NEEDS_HUMAN):
+        raise DecisionError("the onboarding can be reopened at the spec, plan or test-cases gate, or when the run needs a human")
     if not reason.strip():
         raise DecisionError("say what the onboarding files must change")
     _approval(session, run, "onboarding", "reject", actor, TL, reason=reason)

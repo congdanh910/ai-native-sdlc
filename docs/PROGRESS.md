@@ -1,6 +1,19 @@
 # Tiến độ và bàn giao
 
-_Cập nhật: 2026-10-19_
+_Cập nhật: 2026-10-21_
+
+## Foundation attendance (run a70e419f), 21/10
+
+- T1–T5 PASSED, Code Review xong; Acceptance chạy thật lần đầu, preview không lên: compose của onboarding chạy
+  `app.seed_demo`, recognition, worker, video camera mà plan không tạo. Người dùng chọn A: Back to onboarding thu gọn
+  preview về phạm vi Foundation rồi plan lại.
+- Sửa nền tảng hôm nay: red check "red by construction" khi task tạo manifest của phần chứa test (007d468); preview cũ
+  thất bại trước commit mới hiện stopped (ca8e5b1); acceptance tạo task giả không qua schema (e989892); resume ở
+  ACCEPTANCE_TESTING với key job riêng (27ca98c); nút preview chỉ khi run chờ người, khóa khi Acceptance (18cc6c7);
+  preview lỗi ghi service hỏng + log và dọn container, Tech Lead đọc compose của preview, onboarding chỉ đưa vào
+  preview cái Foundation xây, Back to onboarding từ Needs human.
+- Còn chờ người dùng quyết: nền tảng tự sinh lockfile (Developer không có mạng, đã đọc lockfile repo khác trên máy);
+  giới hạn Developer/QA chỉ đọc trong worktree. Backlog 3.13 chạy task song song.
 
 ## Việc đang làm: Discovery (tài liệu thô → baseline → SRS và SDS)
 
