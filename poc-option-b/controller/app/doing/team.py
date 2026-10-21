@@ -18,10 +18,12 @@ from controller.app.schemas import PlanTask, TestPlan, parse_criteria
 from controller.app.team.base import RunContext, StepResult, SubscriptionLimit
 
 PROMPTS = Path(__file__).with_name("prompts")
+# read when the worker starts: a prompt edited while it runs must not meet code that does not fill its placeholders
+TEMPLATES = {path.stem: path.read_text() for path in PROMPTS.glob("*.md")}
 
 
 def _prompt(name: str, **values: str) -> str:
-    return (PROMPTS / f"{name}.md").read_text().format(**values)
+    return TEMPLATES[name].format(**values)
 
 
 class CliDoing:
