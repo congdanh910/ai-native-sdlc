@@ -934,7 +934,10 @@ def _apply_environment(session: Session, run: Run, execution: Execution, result:
         store_artifact(session, run, "review_md", TeamRole.COORDINATOR, snapshot.review_md)
     record_event(session, "environment.ready", actor=COORDINATOR, run_id=run.id,
                  payload={"detail": result["detail"], "commit": head})
-    enter_stage(session, run, "spec")
+    spec_approved = session.scalar(select(func.count()).select_from(Approval).where(
+        Approval.run_id == run.id, Approval.stage == "spec", Approval.decision == "approve"))
+    # reopened after the spec gate: the approved spec stands, the Tech Lead plans again with the revised files
+    enter_stage(session, run, "plan" if spec_approved else "spec")
 
 
 # ---------------------------------------------------------------- previews

@@ -447,6 +447,11 @@ def approve_onboarding(run_id: uuid.UUID, body: DocumentApproval) -> dict:
                                                                     checked=body.checked))
 
 
+@router.post("/runs/{run_id}/onboarding/reopen")
+def reopen_onboarding(run_id: uuid.UUID, body: Reason) -> dict:
+    return _decide(run_id, lambda s, r: services.reopen_onboarding(s, r, actor=operator(), reason=body.reason))
+
+
 @router.post("/runs/{run_id}/onboarding/redo")
 def redo_onboarding(run_id: uuid.UUID, body: Reason) -> dict:
     return _decide(run_id, lambda s, r: services.redo_onboarding(s, r, actor=operator(), reason=body.reason))

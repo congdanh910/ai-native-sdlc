@@ -39,9 +39,11 @@ def check_plan(plan: PlanPayload, tests: TestPlan, criteria: list[Criterion], po
     if len(plan.tasks) > policy.max_tasks:
         findings.append(f"{len(plan.tasks)} tasks exceed the limit of {policy.max_tasks}")
     for task in plan.tasks:
+        earlier = created_before(task.id)
         for path in task.modify:
-            if path not in files:
-                findings.append(f"{task.id} modifies {path}, which does not exist at the base commit")
+            if path not in files and path not in earlier:  # a task it depends on may create it first
+                findings.append(f"{task.id} modifies {path}, which neither exists at the base commit nor is "
+                                "created by a task it depends on")
         for path in task.create:
             if path in files:
                 findings.append(f"{task.id} creates {path}, which already exists; use modify")

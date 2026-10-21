@@ -219,6 +219,7 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
           {editing ? <ActionButton action={() => post("revise-spec", { content: specDraft, reason: reason || null })}>Save as new version</ActionButton> : null}
           <ActionButton variant="danger" action={() => post("reject-spec", { reason, next: "redo" })}>Reject: rewrite</ActionButton>
           <ActionButton variant="danger" action={() => post("reject-spec", { reason, next: "cancel" })}>Reject: cancel run</ActionButton>
+          {run.kind === "foundation" ? <ActionButton disabled={!reason.trim()} title="The onboarding files miss something this stage needs (a path, a command): the Architect revises them, you approve them again, and the run comes back here" action={() => post("onboarding/reopen", { reason })}>Back to onboarding</ActionButton> : null}
         </div>
       </Panel>
     );
@@ -251,6 +252,7 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
           ) : null}
           <ActionButton variant="danger" action={() => post("reject-plan", { reason, next: "redo" })}>Reject: replan</ActionButton>
           <ActionButton variant="danger" action={() => post("reject-plan", { reason, next: "cancel" })}>Reject: cancel run</ActionButton>
+          {run.kind === "foundation" ? <ActionButton disabled={!reason.trim()} title="The onboarding files miss something this stage needs (a path, a command): the Architect revises them, you approve them again, and the run comes back here" action={() => post("onboarding/reopen", { reason })}>Back to onboarding</ActionButton> : null}
           <span className="ml-auto text-xs text-muted">Approves exactly plan v{plan.version} (<Mono>{short(plan.sha256, 12)}</Mono>); a newer version is refused.</span>
         </div>
       </Panel>
@@ -290,6 +292,7 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
           <ActionButton variant="danger" action={() => post("reject-tests", { reason, next: "redo" })}>Reject: redesign tests</ActionButton>
           <ActionButton variant="danger" action={() => post("reject-tests", { reason, next: "replan" })}>Reject: replan</ActionButton>
           <ActionButton variant="danger" action={() => post("reject-tests", { reason, next: "cancel" })}>Reject: cancel run</ActionButton>
+          {run.kind === "foundation" ? <ActionButton disabled={!reason.trim()} title="The onboarding files miss something this stage needs (a path, a command): the Architect revises them, you approve them again, and the run comes back here" action={() => post("onboarding/reopen", { reason })}>Back to onboarding</ActionButton> : null}
         </div>
       </Panel>
     );

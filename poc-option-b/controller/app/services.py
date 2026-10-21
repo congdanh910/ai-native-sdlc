@@ -626,6 +626,21 @@ def preview(session: Session, run: Run, *, actor: str, start: bool) -> None:
     coordinator.queue_preview(session, run, start=start, reason=f"requested by {actor}")
 
 
+def reopen_onboarding(session: Session, run: Run, *, actor: str, reason: str) -> None:
+    """A foundation run found a gap in its onboarding files after their gate (a path the plan needs, a command):
+    the Architect revises them with the reason, the Tech Lead approves again, the environment is tried again,
+    and the run goes back to the stage it was at; an approved spec is not written again."""
+    if run.kind != RunKind.FOUNDATION:
+        raise DecisionError("only a foundation run writes the onboarding files")
+    if run.status not in (RunStatus.WAITING_SPEC_APPROVAL, RunStatus.WAITING_PLAN_APPROVAL, RunStatus.WAITING_TEST_APPROVAL):
+        raise DecisionError("the onboarding can be reopened at the spec, plan or test-cases gate")
+    if not reason.strip():
+        raise DecisionError("say what the onboarding files must change")
+    _approval(session, run, "onboarding", "reject", actor, TL, reason=reason)
+    transition_run(session, run, RunStatus.DESIGNING_ONBOARDING, actor=actor, acting_role=TL, reason=reason)
+    coordinator.queue(session, run, "onboarding", key=f"reopen:v{run.version}")
+
+
 def redo_onboarding(session: Session, run: Run, *, actor: str, reason: str) -> None:
     _require(run, RunStatus.WAITING_ONBOARDING_APPROVAL)
     if not reason.strip():

@@ -183,3 +183,31 @@ def test_the_preview_compose_must_load_and_name_the_service():
         check_compose("services:\n  gateway:\n    depends_on:\n      - a\n      b:\n        condition: x\n", "gateway")
     with pytest.raises(ValueError, match="no service 'web'"):
         check_compose("services:\n  api:\n    build: ./backend\n", "web")
+
+
+def test_a_gap_found_at_the_plan_gate_reopens_the_onboarding_and_comes_back_to_the_plan(db, sample_repo):
+    with_sds(sample_repo, with_srs(sample_repo))
+    post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
+    run = post("/api/runs", {"project": "task-board", "idempotency_key": str(uuid.uuid4()),
+                             "foundation": {"title": "Attendance"}}, status=201)
+    drain()
+    onboarding = [d for d in detail(run["id"])["documents"] if d["kind"] == "onboarding"][-1]
+    post(f"/api/runs/{run['id']}/onboarding/approve", {"document_id": onboarding["id"], "checked": TICKS})
+    drain()
+    spec = [d for d in detail(run["id"])["documents"] if d["kind"] == "spec"][-1]
+    post(f"/api/runs/{run['id']}/approve-spec", {"document_id": spec["id"], "sha256": spec["sha256"], "checked": TICKS})
+    drain()
+    assert detail(run["id"])["status"] == "WAITING_PLAN_APPROVAL"
+    refused = client.post(f"/api/runs/{run['id']}/onboarding/reopen", json={"reason": ""})
+    assert refused.status_code == 409
+    post(f"/api/runs/{run['id']}/onboarding/reopen", {"reason": "Allow web/index.html: Vite needs it at web/"})
+    drain()
+    state = detail(run["id"])
+    onboarding = [d for d in state["documents"] if d["kind"] == "onboarding"][-1]
+    assert state["status"] == "WAITING_ONBOARDING_APPROVAL" and onboarding["version"] == 2
+    assert onboarding["revision"]["feedback"] == ["Allow web/index.html: Vite needs it at web/"]
+    post(f"/api/runs/{run['id']}/onboarding/approve", {"document_id": onboarding["id"], "checked": TICKS})
+    drain()
+    state = detail(run["id"])
+    assert state["status"] == "WAITING_PLAN_APPROVAL"  # planned again; the approved spec was not rewritten
+    assert len([d for d in state["documents"] if d["kind"] == "spec"]) == 1 and len(state["plans"]) == 2

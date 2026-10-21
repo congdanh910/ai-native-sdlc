@@ -83,7 +83,7 @@ def test_grounding_catches_the_pilot_mistakes():
                create=["src/tasks.js"], validation=["lint"])
     findings = check_plan(bad, tests(), CRITERIA, policy(), FILES, SYMBOLS)["findings"]
     text = "\n".join(findings)
-    assert "src/board.js, which does not exist" in text
+    assert "src/board.js, which neither exists" in text
     assert "renderBoard in src/app.js, which is not defined there" in text
     assert "creates src/tasks.js, which already exists" in text
     assert "unknown validation lint" in text
@@ -135,3 +135,18 @@ def test_references_to_files_created_by_a_dependency_are_grounded():
     assert report["findings"] == [
         "T3 references src/security.js, which does not exist and no task it depends on creates",
         "T4 references verify in src/security.js, which is not defined there"]
+
+
+def test_a_task_may_modify_a_file_a_task_it_depends_on_creates():
+    """Foundation (attendance): T4 creates backend/app/main.py, T5 (after T4) adds its readiness routes to it."""
+    tasks = [
+        {"id": "T1", "title": "Create the API entry point", "create": ["src/main.js"], "acceptance_criteria": ["AC-1"],
+         "validation": ["unit-tests"]},
+        {"id": "T2", "title": "Add readiness routes", "depends_on": ["T1"], "modify": ["src/main.js"],
+         "acceptance_criteria": ["AC-2"], "validation": ["unit-tests"]},
+        {"id": "T3", "title": "No dependency", "modify": ["src/main.js"], "acceptance_criteria": ["AC-2"],
+         "validation": ["unit-tests"]},
+    ]
+    findings = check_plan(PlanPayload(summary="s", tasks=tasks), tests(), CRITERIA, policy(), FILES, SYMBOLS)["findings"]
+    assert findings == ["T3 modifies src/main.js, which neither exists at the base commit nor is created by a task "
+                        "it depends on"]
