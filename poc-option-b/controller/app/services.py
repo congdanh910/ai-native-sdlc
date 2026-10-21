@@ -443,7 +443,7 @@ def _rule_on_dispute(session: Session, run: Run, *, actor: str, decision: str, r
     task = disputed[0]
     if decision == "amend_tests":
         _corrected(run)
-    ruling = {"task": task.external_task_id, "decision": decision, "reason": reason, "actor": actor,
+    ruling = {"task": task.external_task_id, "plan": str(task.plan_id), "decision": decision, "reason": reason, "actor": actor,
               "attempt": task.attempt_count + 1, "dispute": run.status_reason}
     coordinator.store_artifact(session, run, f"ruling:{task.external_task_id}", TeamRole.COORDINATOR, json.dumps(ruling))
     record_event(session, "dispute.ruled", actor=actor, acting_role=TL, run_id=run.id, payload=ruling)

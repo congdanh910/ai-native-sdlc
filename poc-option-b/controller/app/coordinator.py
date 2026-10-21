@@ -576,7 +576,9 @@ def load(session: Session, execution: Execution) -> Loaded:
         task = session.get(Task, execution.task_id)
         loaded.task_payload, loaded.task_attempt = task.payload, task.attempt_count
         ruling = artifact(session, run.id, f"ruling:{task.external_task_id}")
-        if ruling and json.loads(ruling)["attempt"] == task.attempt_count:
+        # a ruling of an earlier plan's task of the same id does not apply (rulings before 2026-10-21 name no plan)
+        if ruling and json.loads(ruling)["attempt"] == task.attempt_count \
+                and json.loads(ruling).get("plan", str(task.plan_id)) == str(task.plan_id):
             loaded.extra["ruling"] = json.loads(ruling)
     return loaded
 
