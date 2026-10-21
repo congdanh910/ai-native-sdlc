@@ -276,6 +276,20 @@ environment:
       ready: [pg_isready, -U, app, -h, 127.0.0.1]
 ```
 
+**Nhiều ngôn ngữ** (ví dụ Java hoặc .NET cho backend và React cho frontend): thay vì gộp mọi toolchain vào một image, mỗi lệnh validation có thể ghi `image` riêng (tên toolchain của nền tảng như `python-3.13`, `node-22`, hoặc image chính thức như `eclipse-temurin:21-jdk`, `golang:1.23`, `mcr.microsoft.com/dotnet/sdk:8.0`) và `setup` riêng (cài dependency trong đúng image đó, có mạng; các lệnh cùng image và setup chỉ cài một lần, cài lại khi `setup_inputs` đổi). Khi mọi lệnh đều có `image` thì không cần `validation_image` hay `dockerfile`:
+
+```yaml
+validation:
+  - name: backend-tests
+    image: eclipse-temurin:21-jdk
+    setup: [./mvnw, -q, dependency:go-offline]
+    run: [./mvnw, -q, test]
+  - name: web-tests
+    image: node-22
+    setup: [npm, --prefix, web, ci]
+    run: [npm, --prefix, web, test]
+```
+
 Mỗi lần validation: mạng Docker riêng **không ra Internet**, bật service, chờ lệnh `ready`, chạy lệnh validation với `env`, xong thì xoá service và mạng. Setup (cài dependency, có mạng) chạy lại khi file trong `setup_inputs` đổi. Chỉ dùng mật khẩu test.
 
 ### Hệ thống bên ngoài: dùng bản giả (test double)

@@ -33,6 +33,9 @@ Full design: `AI_Native_SDLC_Option_B.md`. This page is the map an agent needs t
   or the project's `environment.dockerfile`, built once per content (`docker build --progress=plain`, tag
   `sdlc-validate-env-<project>:<sha12>`).
 - Setup runs with network and a writable worktree, again whenever the `environment.setup_inputs` change.
+- A validation command may name its own `image` (a toolchain name resolved through `policy.toolchains`, or an image
+  reference) and its own `setup`, run in that image once per image and setup pair (markers `setup-<hash>.done`); the
+  project's image and setup are only needed for commands without an image.
 - `services()`: an `--internal` Docker network (no Internet) per validation, the project's service containers with
   their `ready` command, then removal; commands get `environment.env`. Orphans (containers, networks) are removed
   at worker start (`doing/process.py`).

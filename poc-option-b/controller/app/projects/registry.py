@@ -151,7 +151,7 @@ def doing_checks(project: Project, mirror: Mirror, commit: str | None, snapshot:
         return []
     items: list[Item] = []
     policy = effective_policy(snapshot.config)
-    if not policy.validation_image and not policy.env_dockerfile:
+    if not policy.validation_image and not policy.env_dockerfile and any(not c.image for c in policy.validation):
         items.append(Item("validation image", "fail",
                           f"{snapshot.config.validation_image!r} is not a toolchain this platform provides"))
     else:

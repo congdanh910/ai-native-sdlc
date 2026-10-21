@@ -228,6 +228,36 @@ def test_codex_runs_sandboxed_without_network(tmp_path):
     assert "sandbox_workspace_write.network_access=false" in args and args[-1] == "-"
 
 
+def test_each_command_runs_in_its_own_image_with_its_own_setup(worktree, tmp_path):
+    """Several languages without one big image: python tests in python, web tests in node, each set up once."""
+    (worktree / "requirements.txt").write_text("v1\n")
+    commands = [ValidationCommand(name="py", run=["pytest"], image="python-3.13", setup=["pip", "install", "-r", "requirements.txt"]),
+                ValidationCommand(name="lint", run=["ruff", "check"], image="python-3.13", setup=["pip", "install", "-r", "requirements.txt"]),
+                ValidationCommand(name="web", run=["npm", "test"], image="node:22-alpine", setup=["npm", "ci"])]
+    runner = FakeRunner([0] * 20)
+    gate = ValidationGate(policy(validation_image="", setup=[], validation=commands, setup_inputs=["requirements.txt"]),
+                          worktree, tmp_path / "logs", runner=runner)
+    assert all(r.ok for r in gate.run([], "a"))
+    assert [(image, argv[0], net) for image, argv, net, _ in runner.calls] == [
+        ("python:3.13-slim", "pip", True), ("python:3.13-slim", "pytest", False), ("python:3.13-slim", "ruff", False),
+        ("node:22-alpine", "npm", True), ("node:22-alpine", "npm", False)]  # the python setup ran once for two commands
+    runner.calls.clear()
+    (worktree / "requirements.txt").write_text("v2\n")
+    gate.run([], "b")
+    assert [argv[0] for _, argv, net, _ in runner.calls if net] == ["pip", "npm"]  # a changed input sets both up again
+
+
+def test_a_project_may_have_no_image_of_its_own_when_every_command_names_one():
+    base = (PROJECT_ROOT / "examples/task-board/.sdlc/project.yaml").read_text()
+    import re
+    text = re.sub(r"validation_image: node-20.*", "", base)
+    text = re.sub(r"setup: .*", "setup: []", text)
+    text = re.sub(r"validation:.*\n(  - .*\n|    .*\n)+", "validation:\n  - name: unit-tests\n    run: [npm, test]\n    image: node-22\n", text)
+    assert effective_policy(parse_project_config(text)).validation[0].image == "node-22"
+    with pytest.raises(ValueError, match="image on every validation command"):
+        parse_project_config(text.replace("    image: node-22\n", ""))
+
+
 # ------------------------------------------------------------------ the real container
 
 @pytest.mark.skipif(shutil.which("docker") is None or subprocess.run(["docker", "info"], capture_output=True).returncode,
@@ -309,6 +339,21 @@ def test_a_preview_starts_on_the_loopback_and_stops(tmp_path, monkeypatch):
     finally:
         assert preview.stop(run_id)["status"] == "stopped"
     assert preview.free_port(set()) == port  # the port is free again
+
+
+@pytest.mark.skipif(shutil.which("docker") is None or subprocess.run(["docker", "info"], capture_output=True).returncode
+                    or any(subprocess.run(["docker", "image", "inspect", i], capture_output=True).returncode
+                           for i in ("python:3.12-slim", "node:22-alpine")),
+                    reason="docker or the python and node images are not available")
+def test_two_languages_validate_in_their_own_containers(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    commands = [ValidationCommand(name="py", run=["python", "-c", "import sys; print(sys.version_info[0])"], image="python-3.12"),
+                ValidationCommand(name="js", run=["node", "-e", "console.log(process.release.name)"], image="node-22")]
+    gate = ValidationGate(policy(validation_image="", setup=[], validation=commands), repo, tmp_path / "logs")
+    reports = gate.run([], "langs")
+    assert [r.ok for r in reports] == [True, True], [r.tail for r in reports]
+    assert "3" in Path(reports[0].log_path).read_text() and "node" in Path(reports[1].log_path).read_text()
 
 
 # ------------------------------------------------------------------ GitHub

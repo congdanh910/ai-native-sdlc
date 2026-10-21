@@ -205,6 +205,17 @@ Thiết kế: `poc-option-b/docs/acceptance-design.md`.
   (image Playwright chưa tải; ổ Docker còn ít chỗ).
 - Test: 247 pass.
 
+## Thêm ngày 21/10 (tối): sửa sau Foundation attendance, nhiều ngôn ngữ
+
+- Grounding: task sửa file do task phụ thuộc tạo là hợp lệ; task xây code của một phần trước khi file dependency của phần
+  đó (`setup_inputs`) có thì báo lỗi (T1 attendance có test backend, `backend/pyproject.toml` ở T2 → mọi lệnh python
+  "not found"). Developer không đổi gì mà task đã có commit trước → cho qua, validation quyết định. Replan ghi lý do
+  thành góp ý cho Tech Lead; commit của plan cũ không được dùng cho task cùng id (artifact `task_base`).
+- Foundation có **Back to onboarding** ở cổng spec/plan/test; preview chờ code (`missing_parts`), hiện "unavailable".
+- Nhiều ngôn ngữ: `validation[].image` và `validation[].setup` (BACKLOG 3.9–3.12 cho phần còn lại). Test Docker thật
+  Python + Node trong hai container pass.
+- Test: 257 pass.
+
 ## Bước tiếp theo
 
 Attendance: SRS và SDS (PR #9) đã merge. Chạy **Foundation** trên attendance (Codex), duyệt Onboarding, rồi các story

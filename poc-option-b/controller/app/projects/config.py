@@ -21,10 +21,31 @@ class Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
 
+IMAGE = re.compile(r"[a-z0-9][\w.\-/:@]{0,199}")
+
+
 class ValidationCommand(Strict):
     name: str
     run: list[str] = Field(min_length=1)
     timeout_seconds: int = Field(default=300, ge=1, le=3600)
+    # Several languages: the command's own image (a toolchain of the platform such as python-3.13, or an image
+    # reference such as eclipse-temurin:21-jdk) and the setup that installs its dependencies in that image
+    image: str = ""
+    setup: list[str] = []
+
+    @field_validator("image")
+    @classmethod
+    def _image(cls, value: str) -> str:
+        if value and not IMAGE.fullmatch(value):
+            raise ValueError("image must be a toolchain name or an image reference such as eclipse-temurin:21-jdk")
+        return value
+
+    @field_validator("setup")
+    @classmethod
+    def _setup(cls, value: list[str]) -> list[str]:
+        if any(not ARG.fullmatch(arg) for arg in value):
+            raise ValueError("setup arguments must be non-empty single-line strings")
+        return value
 
     @field_validator("name")
     @classmethod
@@ -266,8 +287,10 @@ class ProjectConfig(Strict):
 
     @model_validator(mode="after")
     def _consistent(self) -> "ProjectConfig":
-        if not self.validation_image and not self.environment.dockerfile:
-            raise ValueError("name a validation_image, or an environment.dockerfile the platform builds")
+        if not self.validation_image and not self.environment.dockerfile and (
+                self.setup or any(not command.image for command in self.validation)):
+            raise ValueError("name a validation_image, or an environment.dockerfile the platform builds "
+                             "(or an image on every validation command)")
         if self.default_executor not in self.executors:
             raise ValueError("default_executor must be one of executors")
         if self.testing.qa_executor and self.testing.qa_executor not in self.executors:
@@ -334,6 +357,7 @@ class EffectivePolicy(Strict):
     services: list[Service] = []
     setup_inputs: list[str] = []
     preview: Preview | None = None
+    toolchains: dict[str, str] = {}  # platform toolchain name -> image, for a validation command's own image
 
 
 def effective_policy(config: ProjectConfig, defaults: PlatformDefaults = PlatformDefaults()) -> EffectivePolicy:
@@ -372,6 +396,7 @@ def effective_policy(config: ProjectConfig, defaults: PlatformDefaults = Platfor
         services=list(config.environment.services),
         setup_inputs=list(config.environment.setup_inputs),
         preview=config.preview,
+        toolchains=dict(defaults.validation_images),
     )
 
 

@@ -103,28 +103,33 @@ class ValidationGate:
                              timeout=self.policy.setup_timeout_seconds)
         return (tag, None) if result.ok else ("", self._report("environment-build", result))
 
-    def _setup_key(self) -> str:
-        """What setup depends on: its commands and the content of the setup inputs."""
-        digest = hashlib.sha256("\n".join(self.policy.setup).encode())
+    def _setup_key(self, argv: list[str] | None = None, image: str = "") -> str:
+        """What setup depends on: its commands, its image and the content of the setup inputs."""
+        digest = hashlib.sha256("\n".join([image, *(self.policy.setup if argv is None else argv)]).encode())
         for pattern in self.policy.setup_inputs:
             for path in sorted(self.worktree.glob(pattern)):
                 if path.is_file():
                     digest.update(str(path.relative_to(self.worktree)).encode() + path.read_bytes())
         return digest.hexdigest()
 
-    def ensure_setup(self, image: str | None = None) -> CommandReport | None:
-        """Run setup when it has not run for these inputs yet; returns the failed report, or None when setup is done."""
-        marker = self.log_dir / "setup.done"
-        key = self._setup_key()
+    def ensure_setup(self, image: str | None = None, argv: list[str] | None = None) -> CommandReport | None:
+        """Run setup when it has not run for these inputs yet; returns the failed report, or None when setup is done.
+        Without argv it is the project's setup in its image; with argv, a validation command's own setup in that
+        command's image (each image and setup pair installs once)."""
+        steps = list(self.policy.setup if argv is None else argv)
+        own = argv is not None
+        label = f"setup-{hashlib.sha256(' '.join([image or '', *steps]).encode()).hexdigest()[:10]}" if own else "setup"
+        marker = self.log_dir / f"{label}.done"
+        key = self._setup_key(steps, image or "") if own else self._setup_key()
         done = marker.read_text().strip() if marker.exists() else ""
-        if not self.policy.setup or done == key or (done == "ok" and not self.policy.setup_inputs):  # "ok": older runs
+        if not steps or done == key or (not own and done == "ok" and not self.policy.setup_inputs):  # "ok": older runs
             return None
-        result = self.runner(image or self.policy.validation_image, self.worktree, list(self.policy.setup),
+        result = self.runner(image or self.policy.validation_image, self.worktree, steps,
                              self.policy.setup_timeout_seconds,
                              network=True, writable=True)
-        log = self._log("setup", result)
+        log = self._log(label, result)
         if not result.ok:
-            return CommandReport("setup", False, result.exit_code, result.seconds, result.timed_out, log, result.tail())
+            return CommandReport(label, False, result.exit_code, result.seconds, result.timed_out, log, result.tail())
         marker.write_text(f"{key}\n")
         return None
 
@@ -171,23 +176,35 @@ class ValidationGate:
             time.sleep(1)
         return False
 
+    def command_image(self, command) -> str:
+        """A command's own image: a platform toolchain by name, or an image reference as written."""
+        return self.policy.toolchains.get(command.image, command.image)
+
     def run(self, names: list[str], label: str) -> list[CommandReport]:
-        if not self.policy.validation_image and not self.policy.env_dockerfile:
-            raise ValueError("the project's validation_image is not provided by this platform")
-        image, failed = self.image()
-        if failed:
-            return [failed]
-        failed_setup = self.ensure_setup(image)
-        if failed_setup:
-            return [failed_setup]
         commands = [c for c in self.policy.validation if c.name in names] or list(self.policy.validation)
+        image = ""
+        if any(not c.image for c in commands) or self.policy.setup:  # the project's own image is needed
+            if not self.policy.validation_image and not self.policy.env_dockerfile:
+                raise ValueError("the project's validation_image is not provided by this platform")
+            image, failed = self.image()
+            if failed:
+                return [failed]
+            failed_setup = self.ensure_setup(image)
+            if failed_setup:
+                return [failed_setup]
         reports = []
         with self.services() as (network, failed_service):
             if failed_service:
                 return [failed_service]
             extra = {"network_name": network, "env": dict(self.policy.env)} if network or self.policy.env else {}
             for command in commands:
-                result = self.runner(image, self.worktree, list(command.run), command.timeout_seconds, **extra)
+                command_image = self.command_image(command) if command.image else image
+                if command.setup:
+                    failed_setup = self.ensure_setup(command_image, list(command.setup))
+                    if failed_setup:
+                        reports.append(failed_setup)
+                        continue
+                result = self.runner(command_image, self.worktree, list(command.run), command.timeout_seconds, **extra)
                 reports.append(CommandReport(command.name, result.ok, result.exit_code, result.seconds, result.timed_out,
                                              self._log(f"{label}-{command.name}", result), result.tail()))
         return reports
@@ -209,7 +226,7 @@ def red_check(gate: ValidationGate, names: list[str], expect_pass: bool, label: 
         return True, "red check disabled in .sdlc/project.yaml", []
     reports = gate.run(names, label)
     data = [asdict(r) for r in reports]
-    if any(r.timed_out for r in reports) or (reports and reports[0].name == "setup"):
+    if any(r.timed_out for r in reports) or any(r.name.startswith("setup") and not r.ok for r in reports):
         return False, f"red check could not run: {summary(reports)}", data
     if expect_pass:
         ok = all(r.ok for r in reports)
