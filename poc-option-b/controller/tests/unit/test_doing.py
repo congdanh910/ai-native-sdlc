@@ -276,6 +276,8 @@ def test_a_project_environment_builds_its_image_and_reaches_its_services(tmp_pat
     left = subprocess.run(["docker", "network", "ls", "-q", "--filter", "name=sdlc-validate-net-"], capture_output=True,
                           text=True).stdout.split()
     assert left == []  # services and their network are removed
+    image, _ = gate.image()
+    subprocess.run(["docker", "rmi", "-f", image], capture_output=True)  # the test leaves no image behind
 
 
 # ------------------------------------------------------------------ GitHub
