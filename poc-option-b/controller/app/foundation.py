@@ -140,6 +140,19 @@ def check_test_doubles(onboarding: Onboarding, sds: str) -> list[str]:
     return problems
 
 
+def check_compose(text: str, service: str) -> None:
+    """The preview's compose file loads as YAML, has services, and the one Try it opens is among them."""
+    try:
+        compose = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise ValueError(f"{PREVIEW_COMPOSE_PATH} is not valid YAML: {' '.join(str(exc).split())[:300]}") from exc
+    services = compose.get("services") if isinstance(compose, dict) else None
+    if not isinstance(services, dict) or not services:
+        raise ValueError(f"{PREVIEW_COMPOSE_PATH} has no services")
+    if service not in services:
+        raise ValueError(f"{PREVIEW_COMPOSE_PATH} has no service {service!r}, which preview.service names")
+
+
 def onboarding_files(onboarding: Onboarding, current_config: str) -> dict[str, str]:
     """The files the onboarding commits. project.yaml keeps everything but its technical part (project, executors,
     stages, discovery, architecture and other limits stay); the result must be a valid configuration."""
@@ -163,6 +176,8 @@ def onboarding_files(onboarding: Onboarding, current_config: str) -> dict[str, s
                              "service": onboarding.preview.service, "port": onboarding.preview.port}
     text = yaml.safe_dump(config, sort_keys=False, allow_unicode=True, width=120)
     effective_policy(parse_project_config(text))  # raises with the reason when the configuration is not valid
+    if onboarding.preview is not None:
+        check_compose(onboarding.preview_compose, onboarding.preview.service)
     files = {"AGENTS.md": onboarding.agents_md.rstrip() + "\n", CONFIG_PATH: text}
     for path, content in (("REVIEW.md", onboarding.review_md), (".gitignore", onboarding.gitignore),
                           (CI_PATH, onboarding.ci_workflow), (DOCKERFILE_PATH, onboarding.dockerfile),

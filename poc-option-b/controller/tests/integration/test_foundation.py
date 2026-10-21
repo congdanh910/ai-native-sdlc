@@ -174,3 +174,12 @@ def test_onboarding_answers_in_loose_shapes_are_normalised():
     assert parsed.environment.services[0].env == {"POSTGRES_USER": "app", "POSTGRES_PASSWORD": "app"}
     assert parsed.preview.compose == ".sdlc/preview.compose.yml" and parsed.preview.e2e == ["sh", "-c", "npx playwright test"]
     assert parsed.preview.accounts[0].username == "hr@example.test" and parsed.validation[0].run == ["sh", "-c", "pytest -q"]
+
+
+def test_the_preview_compose_must_load_and_name_the_service():
+    from controller.app.foundation import check_compose
+    check_compose("services:\n  web:\n    build: ./web\n", "web")
+    with pytest.raises(ValueError, match="not valid YAML"):
+        check_compose("services:\n  gateway:\n    depends_on:\n      - a\n      b:\n        condition: x\n", "gateway")
+    with pytest.raises(ValueError, match="no service 'web'"):
+        check_compose("services:\n  api:\n    build: ./backend\n", "web")
