@@ -171,7 +171,21 @@ class CliDoing:
         # Every command, not only the task's: a task may list just a syntax check, and the new tests must run.
         names = [c.name for c in context.policy.validation]
         ok, detail, reports = red_check(self._gate(context), names, expect_pass, f"{task.id}-red")
+        runners = self._runners_this_task_creates(context, task, cases)
+        if not ok and not expect_pass and runners:
+            # The commands skip a part whose manifest is missing, so its new tests cannot fail before the task
+            # creates it; the validation after the code runs them.
+            return StepResult(True, f"red by construction: the tests need {', '.join(runners)}, which this task "
+                                    "creates; the validation after the code runs them", evidence={"reports": reports})
         return StepResult(ok, detail, evidence={"reports": reports})
+
+    def _runners_this_task_creates(self, context: RunContext, task: PlanTask, cases: list[dict]) -> list[str]:
+        """The dependency manifests (environment.setup_inputs) this task creates that the new tests live under."""
+        worktree = self._worktree(context)
+        folders = {str(Path(c["target_file"]).parent) for c in cases if c.get("target_file")}
+        return [m for m in context.policy.setup_inputs if m in task.create and not (worktree / m).exists()
+                and "/" in m and any(f == str(Path(m).parent) or f.startswith(str(Path(m).parent) + "/")
+                                     for f in folders)]
 
     def implement(self, context: RunContext, task: PlanTask, attempt: int, tests: TestPlan | None = None,
                   feedback: str = "") -> StepResult:

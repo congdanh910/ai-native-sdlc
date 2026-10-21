@@ -189,6 +189,18 @@ def test_red_check_needs_a_failing_test_unless_cases_are_regression_guards(workt
     assert runner.calls[0][2:] == (False, False)  # no network, read-only
 
 
+def test_tests_under_a_manifest_the_task_creates_are_red_by_construction(worktree, tmp_path):
+    web = TASK.model_copy(update={"create": ["web/package.json", "web/src/app.ts"]})
+    tests = TestPlan(cases=[{**TESTS.cases[0].model_dump(), "target_file": "web/tests/app.test.ts"}])
+    team, _ = doing(tmp_path, exit_codes=[0] * 6)  # the commands skip web/ while web/package.json is missing
+    result = team.red_check(context(worktree, setup_inputs=["web/package.json"]), web, tests)
+    assert result.ok and "red by construction" in result.detail and "web/package.json" in result.detail
+    assert not team.red_check(context(worktree, setup_inputs=["web/package.json"]), TASK, tests).ok
+    (worktree / "web").mkdir()
+    (worktree / "web/package.json").write_text("{}")  # the manifest exists: the tests could have failed
+    assert not team.red_check(context(worktree, setup_inputs=["web/package.json"]), web, tests).ok
+
+
 def test_setup_runs_once_with_network(worktree, tmp_path):
     runner = FakeRunner([0, 0, 0])
     gate = ValidationGate(policy(setup=["npm", "ci"]), worktree, tmp_path / "logs", runner=runner)
