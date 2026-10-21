@@ -441,6 +441,11 @@ def preview(run_id: uuid.UUID, body: PreviewAction) -> dict:
     return _decide(run_id, lambda s, r: services.preview(s, r, actor=operator(), start=body.action == "start"))
 
 
+@router.post("/runs/{run_id}/advice")
+def advice(run_id: uuid.UUID) -> dict:
+    return _decide(run_id, lambda s, r: services.request_advice(s, r, actor=operator()))
+
+
 @router.post("/runs/{run_id}/onboarding/approve")
 def approve_onboarding(run_id: uuid.UUID, body: DocumentApproval) -> dict:
     return _decide(run_id, lambda s, r: services.approve_onboarding(s, r, body.document_id, actor=operator(),

@@ -499,3 +499,18 @@ def _flatten_rows(rows) -> list:
                        else _sentence(v) if isinstance(v, dict) and k not in KEEP_LISTS else v) for k, v in row.items()}
         out.append(row)
     return out
+
+
+def advice(data: dict) -> dict:
+    """Sides as strings become sides; evidence as one string becomes a list; the decision is lower case."""
+    data = dict(data)
+    data["sides"] = [{"party": "note", "claim": side} if isinstance(side, str) else
+                     {**side, "evidence": [side["evidence"]] if isinstance(side.get("evidence"), str) else
+                      side.get("evidence") or []}
+                     for side in data.get("sides") or [] if side]
+    for key in ("recommendation", "confidence"):
+        if isinstance(data.get(key), str):
+            data[key] = data[key].strip().lower().replace(" ", "_").replace("-", "_")
+    if isinstance(data.get("checks"), str):
+        data["checks"] = [data["checks"]]
+    return data

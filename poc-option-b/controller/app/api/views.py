@@ -1,5 +1,6 @@
 """JSON shapes returned to the web control room."""
 
+import json
 from pathlib import Path
 
 from sqlalchemy import select
@@ -165,8 +166,23 @@ def run_detail(session: Session, run: Run) -> dict:
         "task_steps": [{"task": task_ids.get(e.task_id), "steps": _steps(e.result)} for e in executions
                        if e.kind == "code_task" and e.result],
         "already_built": _already_built(session, run, tasks, executions),
+        "advice": _advice(session, run, executions),
     })
     return detail
+
+
+def _advice(session: Session, run: Run, executions: list[Execution]) -> dict | None:
+    """The Code Reviewer's brief on the stop the run waits on, or that one is being prepared; None otherwise."""
+    if run.status != "NEEDS_HUMAN":
+        return None
+    pending = any(e.kind == "advise" and e.status in ("queued", "running") for e in executions)
+    for content in session.scalars(select(Artifact.content).where(Artifact.run_id == run.id, Artifact.kind == "advice")
+                                   .order_by(Artifact.created_at.desc())):
+        stored = json.loads(content)
+        if stored.get("for") == (run.status_reason or ""):
+            return {"pending": pending, "advice": stored["advice"], "engine": stored.get("engine")}
+    failed = next((e.error for e in reversed(executions) if e.kind == "advise" and e.status == "failed"), None)
+    return {"pending": pending, "advice": None, "error": None if pending else failed}
 
 
 def _already_built(session: Session, run: Run, tasks: list[Task], executions: list[Execution]) -> dict | None:
@@ -180,7 +196,8 @@ def _already_built(session: Session, run: Run, tasks: list[Task], executions: li
     if run.status != "NEEDS_HUMAN" or ALREADY_PASS not in (run.status_reason or ""):
         return None
     task = next((t for t in tasks if t.status == "FAILED"), None)
-    execution = next((e for e in reversed(executions) if task and e.task_id == task.id and e.result), None)
+    execution = next((e for e in reversed(executions)
+                      if task and e.task_id == task.id and e.kind == "code_task" and e.result), None)
     if task is None or execution is None:
         return None
     steps = execution.result.get("steps", [])

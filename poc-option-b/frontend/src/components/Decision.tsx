@@ -335,6 +335,7 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
     return (
       <Panel run={run} title="The team stopped">
         <p className="m-0 rounded-lg bg-bad-soft p-3 text-sm text-bad">{run.reason}</p>
+        {run.advice ? <AdviceCard run={run} onUse={setReason} /> : null}
         {run.already_built ? <AlreadyBuilt evidence={run.already_built} /> : null}
         {disputed ? (
           <div className="flex flex-col gap-2 rounded-lg border border-line p-3">
@@ -469,6 +470,64 @@ function AlreadyBuilt({ evidence }: { evidence: NonNullable<RunDetail["already_b
         <div><b>QA Engineer's note</b><p className="m-0 mt-1 whitespace-pre-wrap text-ink-2">{evidence.qa_note}</p></div>
       ) : null}
       {evidence.red_check ? <p className="m-0 text-xs text-muted">Red check: {evidence.red_check}</p> : null}
+    </div>
+  );
+}
+
+
+const DECISION_LABEL: Record<string, string> = {
+  amend_tests: "Let QA update the tests", keep_tests: "Keep the tests", already_built: "Already built: keep tests as guards",
+  replan: "Replan", resume: "Resume", back_to_onboarding: "Back to onboarding",
+};
+
+/** The Code Reviewer's brief for the Tech Lead on a stopped task: the situation, each side with its evidence, and a
+ * recommended decision with a reason ready to use. The Tech Lead decides. */
+function AdviceCard({ run, onUse }: { run: RunDetail; onUse: (reason: string) => void }) {
+  const brief = run.advice!;
+  const ask = async () => { await api(`/api/runs/${run.id}/advice`, { method: "POST" }); };
+  if (!brief.advice) {
+    return (
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-line p-3 text-sm text-muted">
+        {brief.pending ? "The Code Reviewer is reading the tests and the code to brief you (1–3 minutes)…"
+          : brief.error ? `The brief could not be written: ${brief.error.slice(0, 200)}` : "No brief for this stop yet."}
+        {brief.pending ? null : <ActionButton success="Asked the Code Reviewer for a brief" action={ask}>Ask for a brief</ActionButton>}
+      </div>
+    );
+  }
+  const a = brief.advice;
+  const tone = a.confidence === "high" ? "good" : a.confidence === "medium" ? "warn" : "bad";
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-accent/40 bg-accent-soft/30 p-3 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <b>Brief for the Tech Lead</b>
+        <span className="text-xs text-muted">Code Reviewer{brief.engine ? `, ${brief.engine}` : ""}; advisory, you decide</span>
+      </div>
+      <p className="m-0">{a.situation}</p>
+      <div className="flex flex-col gap-2">
+        {a.sides.map((side, i) => (
+          <div key={i} className="rounded border border-line bg-panel p-2">
+            <b>{side.party}</b>: {side.claim}
+            {side.evidence.length ? (
+              <ul className="m-0 mt-1 pl-5 text-xs text-ink-2">{side.evidence.map((e, j) => <li key={j}><Mono>{e}</Mono></li>)}</ul>
+            ) : null}
+          </div>
+        ))}
+      </div>
+      <div className="flex flex-col gap-1 rounded border border-line bg-panel p-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <span>Recommended: <b>{DECISION_LABEL[a.recommendation] ?? a.recommendation}</b></span>
+          <Badge tone={tone}>{a.confidence} confidence</Badge>
+        </div>
+        <p className="m-0 whitespace-pre-wrap text-ink-2">{a.reason}</p>
+        {a.risk ? <p className="m-0 text-xs text-muted">If this is wrong: {a.risk}</p> : null}
+        {a.checks.length ? (
+          <div className="text-xs"><b>Check before deciding</b><ul className="m-0 pl-5">{a.checks.map((c, i) => <li key={i}>{c}</li>)}</ul></div>
+        ) : null}
+        <div className="flex flex-wrap gap-2 pt-1">
+          <Button onClick={() => onUse(a.reason)}>Use this reason</Button>
+          <ActionButton success="Asked the Code Reviewer for a new brief" action={ask}>Ask again</ActionButton>
+        </div>
+      </div>
     </div>
   );
 }

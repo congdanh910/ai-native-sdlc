@@ -460,6 +460,18 @@ def _rule_on_dispute(session: Session, run: Run, *, actor: str, decision: str, r
 ALREADY_PASS = "already pass before the implementation"
 
 
+def request_advice(session: Session, run: Run, *, actor: str) -> None:
+    """Ask the Code Reviewer again for the brief on the stopped task (for a stop from before briefs, or a new look)."""
+    _require(run, RunStatus.NEEDS_HUMAN)
+    stopped = [t for t in coordinator.current_tasks(session, run)
+               if t.status in (TaskStatus.DISPUTED, TaskStatus.FAILED, TaskStatus.UNKNOWN)]
+    if not stopped:
+        raise DecisionError("no task stopped; the brief is for a stopped task")
+    record_event(session, "advice.requested", actor=actor, run_id=run.id, payload={"task": stopped[0].external_task_id})
+    if coordinator.queue_advice(session, run, stopped[0]) is None:
+        raise DecisionError("briefs are off (SDLC_ADVICE_ENABLED=false)")
+
+
 def _accept_as_built(session: Session, run: Run, *, actor: str, reason: str) -> None:
     """The Tech Lead finds that the code already does what a task's new tests check (a replanned run builds on the
     code of its earlier plan): the tests stay as regression guards, the Developer is skipped, and the validation

@@ -237,6 +237,14 @@ export interface RunDetail extends RunSummary {
   executions: { id: string; kind: string; role: string; status: string; attempts: number; engine: string | null; error: string | null;
     task: string | null; started_at: string | null; finished_at: string | null }[];
   task_steps: { task: string | null; steps: Step[] }[];
+  // the Code Reviewer's brief on the stop the run waits on (null when the run is not stopped)
+  advice?: {
+    pending: boolean; engine?: string | null; error?: string | null;
+    advice: {
+      situation: string; recommendation: string; confidence: "high" | "medium" | "low"; reason: string; risk: string;
+      checks: string[]; sides: { party: string; claim: string; evidence: string[] }[];
+    } | null;
+  } | null;
   // after a red check found a task's new tests passing before any code: what tells code already built from weak tests
   already_built?: {
     task: string; title: string; files: string[]; qa_note: string; red_check: string;

@@ -341,6 +341,7 @@ Với spec, SRS và SDS, bản viết lại có khung **Changes since vN** ngay 
 | Spec (feature) | **Edit** | **Reject: rewrite** | BA, kèm spec trước |
 | Plan | **Edit** (JSON) | **Reject: replan** | Tech Lead |
 | Test cases (Quality) | **Edit JSON** | **Reject: redesign tests**, hoặc **Reject: replan** | QA Analyst, hoặc Tech Lead |
+| Bất kỳ lần dừng nào của một task (khiếu nại test, red check, QA không hiểu quyết định, task fail) | Khung Needs human có **Brief for the Tech Lead** do Code Reviewer (AI, chỉ đọc) viết sau 1–3 phút: chuyện gì xảy ra, mỗi bên nói gì kèm bằng chứng (file:dòng, test case, commit), quyết định khuyến nghị + độ chắc chắn + rủi ro, việc nên kiểm. **Use this reason** điền sẵn lý do; anh vẫn tự chọn nút. **Ask for a brief / Ask again** để hỏi lại. Tắt bằng `SDLC_ADVICE_ENABLED=false` | Tech Lead |
 | Red check: test mới đã pass trước khi code | Code đã có sẵn hành vi đó (ví dụ plan trước của run đã làm) | **Already built: keep tests as guards** (ghi lý do): test giữ làm regression guard, bỏ qua Developer, validation quyết định; hoặc Replan | Validation Gate |
 | Acceptance (QC) | Bấm thử trên preview | **Send defects to the Developer**, hoặc **Run the tests again** (kèm lý do nếu test sai) | Developer, hoặc QA Engineer |
 | PR (feature) | Sửa trên GitHub | **Request changes** (đội sửa code tiếp; ghi chú tới Developer) hoặc **Review again** | Developer, Code Reviewer |

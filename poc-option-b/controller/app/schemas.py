@@ -319,6 +319,27 @@ class Review(Contract):
     markdown: str = ""
 
 
+DECISIONS = ("amend_tests", "keep_tests", "already_built", "replan", "resume", "back_to_onboarding")
+
+
+class AdviceSide(Contract):
+    party: str = Field(min_length=1)  # who says it: Developer, QA Engineer, the approved test case, the code, the SDS
+    claim: str = Field(min_length=1)
+    evidence: list[str] = []  # file:line with the line, a test case id, a commit, an SDS section
+
+
+class Advice(Contract):
+    """A thinking role's brief for the Tech Lead when a task stops (a dispute, a red check, an unclear decision):
+    what happened, who says what with which evidence, and a decision with a reason ready to use. A human decides."""
+    situation: str = Field(min_length=1)
+    sides: list[AdviceSide] = []
+    recommendation: Literal["amend_tests", "keep_tests", "already_built", "replan", "resume", "back_to_onboarding"]
+    confidence: Literal["high", "medium", "low"]
+    reason: str = Field(min_length=1)  # what the Tech Lead's reason would say: which test, which value, which file
+    risk: str = ""  # what goes wrong if this is the wrong call
+    checks: list[str] = []  # what the Tech Lead verifies before deciding
+
+
 def render_review(title: str, review: Review, engine: str) -> str:
     rows = "\n".join(f"| {criterion} | {', '.join(cases) or 'none'} |" for criterion, cases in review.coverage.items())
     findings = "\n".join(f"- {f.severity.capitalize()}: {f.text}" + (f" (`{f.file}`)" if f.file else "")

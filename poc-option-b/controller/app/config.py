@@ -91,6 +91,7 @@ class Settings(BaseSettings):
     langflow_max_response_bytes: int = Field(default=2_000_000, ge=100_000)
     # Previews: the application of a run started for people to try and for the acceptance tests (127.0.0.1 only).
     sdlc_preview_ports: str = "9100-9199"  # host ports a preview may take
+    sdlc_advice_enabled: bool = True  # the Code Reviewer briefs the Tech Lead when a task stops (one model call)
     # comma-separated folders, besides the worktree and the tools on PATH, that an AI CLI session may read (macOS:
     # the command line tools that git and python3 need, and the OpenSSL configuration node reads)
     sdlc_executor_read_paths: str = "/Library/Developer/CommandLineTools,/System/Library/OpenSSL"

@@ -148,6 +148,10 @@ class ReadonlyTeam(LangflowTeam):
         self._in(context)
         return super().review(context, plan, tests, diff=diff, validation=validation)
 
+    def advise(self, context, stop):
+        self._in(context)  # reads the tests and the code it quotes
+        return super().advise(context, stop)
+
     @property
     def reads_files(self) -> bool:  # Claude Code's Read tool opens PDFs (20 pages a call) and images
         return self.engine == "claude-readonly"
@@ -225,6 +229,9 @@ class RoutingTeam:
     def review(self, context, plan, tests, diff="", validation=""):
         return self._call(self._for(context, "code_reviewer"), "review", context, plan, tests, diff=diff,
                           validation=validation)
+
+    def advise(self, context, stop):  # the Code Reviewer reads tests and code for a living
+        return self._call(self._for(context, "code_reviewer"), "advise", context, stop)
 
     def extract_part(self, context, part):
         return self._call(self._for(context, "business_analyst"), "extract_part", context, part)

@@ -43,7 +43,7 @@ from controller.app.project_docs import (SDS_PATH, SRS_PATH, ArchitectureBrief, 
                                          sds_sync_findings, srs_features, stored_options)
 from controller.app.projects.config import EffectivePolicy, effective_policy, matches_any
 from controller.app.projects.registry import mirror_for, read_snapshot
-from controller.app.projects.repo import Worktree
+from controller.app.projects.repo import GitError, Worktree
 from controller.app.schemas import (PlanPayload, PlanTask, Review, Spec, TestPlan, parse_criteria, render_plan,
                                     render_review, render_spec)
 from controller.app.state_machine import transition_run, transition_task
@@ -71,6 +71,8 @@ KINDS: dict[str, tuple[TeamRole, bool, RunStatus]] = {
     # Previews belong to no stage: they start and stop whatever the run is doing.
     "preview": (TeamRole.COORDINATOR, False, None),
     "preview_stop": (TeamRole.COORDINATOR, False, None),
+    # The brief for the Tech Lead when a task stops; it belongs to no stage and changes nothing.
+    "advise": (TeamRole.CODE_REVIEWER, False, None),
 }
 
 
@@ -143,6 +145,32 @@ def fail_task(session: Session, task: Task | None, reason: str) -> None:
     """A task whose job broke mid-step is FAILED, so that resuming the run starts it again."""
     if task is not None and task.status in IN_PROGRESS:
         transition_task(session, task, TaskStatus.FAILED, actor=COORDINATOR, reason=reason[:500])
+
+
+def queue_advice(session: Session, run: Run, task: Task) -> Execution | None:
+    """Ask the Code Reviewer for the Tech Lead's brief on a stopped task (SDLC_ADVICE_ENABLED)."""
+    if not get_settings().sdlc_advice_enabled:
+        return None
+    return queue(session, run, "advise", key=f"advise:{datetime.now(timezone.utc).isoformat()}", task=task)
+
+
+def decisions_for(run: Run, tasks: list[Task]) -> dict[str, str]:
+    """The decisions the Tech Lead can take on a stopped run now, and what each one does."""
+    from controller.app.services import ALREADY_PASS
+    reason = run.status_reason or ""
+    options = {}
+    if any(t.status == TaskStatus.DISPUTED for t in tasks):
+        options["amend_tests"] = "the QA Engineer updates the tests as the reason says; existing test lines may change"
+        options["keep_tests"] = "the tests stand; the Developer makes the code pass them, told the reason"
+    if ALREADY_PASS in reason:
+        options["already_built"] = ("the code already does what the new tests check: they stay as regression guards, "
+                                    "the Developer is skipped, the validation decides")
+    options["resume"] = "run the stopped step again as it is (for a failure outside the code, now fixed)"
+    options["replan"] = "the Tech Lead's plan is written again with the reason; the approved spec stays"
+    if run.kind == RunKind.FOUNDATION:
+        options["back_to_onboarding"] = ("the Architect revises the onboarding files (commands, paths, the preview's "
+                                         "compose file) with the reason; then the plan is written again")
+    return options
 
 
 def to_needs_human(session: Session, run: Run, reason: str, *, actor: str = COORDINATOR) -> None:
@@ -572,6 +600,8 @@ def load(session: Session, execution: Execution) -> Loaded:
             loaded.extra["feedback"] = f"The QC asked for the acceptance tests again: {retest.reason}"
         loaded.extra.update(attempt=session.scalar(select(func.count()).select_from(Document).where(
             Document.run_id == run.id, Document.kind == "acceptance")) + 1)
+    if execution.kind == "advise":
+        _load_advice(session, run, loaded, session.get(Task, execution.task_id))
     if execution.kind == "code_task":
         # what the QC (acceptance) or the Code Owner (pull request) asked since the last review: the Developer's notes
         last_review = latest_document(session, run.id, "review")
@@ -591,6 +621,37 @@ def load(session: Session, execution: Execution) -> Loaded:
         if ruling and json.loads(ruling)["attempt"] == task.attempt_count and _ruling_of_plan(session, run, task):
             loaded.extra["ruling"] = json.loads(ruling)
     return loaded
+
+
+def _load_advice(session: Session, run: Run, loaded: Loaded, task: Task) -> None:
+    """What the brief rests on: the stop, the task and its approved test cases, its last attempt, the rulings, and the
+    run's earlier commits of its files."""
+    last = session.scalar(select(Execution).where(Execution.task_id == task.id, Execution.kind == "code_task",
+                                                  Execution.result.is_not(None))
+                          .order_by(Execution.created_at.desc()).limit(1))
+    steps = [{"state": s["state"], "role": s["role"], "ok": s["ok"], "detail": s["detail"][:1500],
+              "message": (s.get("evidence") or {}).get("message", "")[-1500:]}
+             for s in ((last.result or {}).get("steps", []) if last else [])]
+    plan = session.get(Plan, task.plan_id)
+    cases = [c for c in (plan.test_plan or {}).get("cases", []) if c.get("task_id") == task.external_task_id]
+    files = task.payload.get("modify", []) + task.payload.get("create", [])
+    earlier = []
+    base = artifact(session, run.id, "task_base") or run.base_commit
+    if run.worktree_path and run.base_commit and base:
+        try:
+            earlier = [{"sha": c["sha"][:10], "subject": c["subject"], "files": c["files"]}
+                       for c in changes.commits_touching(Path(run.worktree_path), run.base_commit, base, files)][:8]
+        except GitError:
+            pass
+    rulings = [json.loads(content) for content in session.scalars(
+        select(Artifact.content).where(Artifact.run_id == run.id, Artifact.kind.like("ruling:%"))
+        .order_by(Artifact.created_at))]
+    loaded.extra["stop"] = {
+        "stop": run.status_reason or "", "decisions": decisions_for(run, current_tasks(session, run)),
+        "task": {"id": task.external_task_id, "title": task.payload["title"], "files": files,
+                 "acceptance_criteria": task.payload.get("acceptance_criteria", [])},
+        "test_cases": cases, "steps": steps, "earlier_commits": earlier,
+        "rulings": [{k: r.get(k) for k in ("task", "decision", "reason", "dispute")} for r in rulings]}
 
 
 def _ruling_of_plan(session: Session, run: Run, task: Task) -> bool:
@@ -673,6 +734,10 @@ def compute(team: Team, loaded: Loaded) -> dict:
         steps = _work_task(team, loaded)
         executors = sorted({s["evidence"]["executor"] for s in steps if s["evidence"].get("executor")})
         result = {"steps": steps, "_engine": ",".join(executors) or None}
+    elif loaded.kind == "advise":
+        joblog.note("Code Reviewer prepares the Tech Lead's brief on the stopped task")
+        result = {"advice": team.advise(context, loaded.extra["stop"]).model_dump(), "for": loaded.extra["stop"]["stop"]}
+        record()
     elif loaded.kind == "review":
         result = {"review": team.review(context, loaded.plan, loaded.tests, diff=loaded.extra.get("diff", ""),
                                         validation=loaded.extra.get("validation", "")).model_dump()}
@@ -771,10 +836,16 @@ def apply(session: Session, loaded: Loaded, result: dict, team: Team) -> None:
                "release": _apply_release, "extract": _apply_extract, "options": _apply_options,
                "onboarding": _apply_onboarding, "environment": _apply_environment,
                "preview": _apply_preview, "preview_stop": _apply_preview,
-               "acceptance": _apply_acceptance}[loaded.kind]
+               "acceptance": _apply_acceptance, "advise": _apply_advice}[loaded.kind]
     handler(session, run, execution, result, team)
     if execution.status == "running":
         finish(session, execution, "succeeded", result=result)
+
+
+def _apply_advice(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    """Keep the brief with the stop it answers; the run page shows it while the run waits on that stop."""
+    store_artifact(session, run, "advice", TeamRole.CODE_REVIEWER,
+                   json.dumps({"for": result["for"], "advice": result["advice"], "engine": result.get("_engine")}))
 
 
 def _apply_preflight(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
@@ -1322,11 +1393,13 @@ def _apply_code_task(session: Session, run: Run, execution: Execution, result: d
             who = ("the QA Engineer finds the decision on the dispute unclear" if step["role"] == TeamRole.QA_ENGINEER.value
                    else "the Developer disputes a test")
             to_needs_human(session, run, f"{task.external_task_id}: {who}: {step['detail']}")
+            queue_advice(session, run, task)
             return
         if not step["ok"] and final and state in (TaskStatus.WRITING_TESTS, TaskStatus.RED_CHECK, TaskStatus.CODING,
                                                   TaskStatus.REMEDIATING):
             transition_task(session, task, TaskStatus.FAILED, actor=step["role"], reason=step["detail"])
             to_needs_human(session, run, f"{task.external_task_id} failed at {state.value}: {step['detail']}")
+            queue_advice(session, run, task)
             return
     last = result["steps"][-1]
     if last["state"] == TaskStatus.VALIDATING and last["ok"]:

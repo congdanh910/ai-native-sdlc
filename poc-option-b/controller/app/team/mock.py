@@ -10,7 +10,7 @@ import re
 
 from controller.app.project_docs import Sds, Srs, srs_features, srs_flows, srs_state_entities
 from controller.app.projects.config import matches_any
-from controller.app.schemas import (Criterion, Intent, PlanPayload, PlanTask, Question, Review, Spec, TestCase,
+from controller.app.schemas import (Advice, Criterion, Intent, PlanPayload, PlanTask, Question, Review, Spec, TestCase,
                                     TestPlan, parse_criteria)
 from controller.app.team.base import ReleaseResult, RunContext, StepResult
 
@@ -232,6 +232,11 @@ class MockTeam:
     def validate(self, context, task, attempt=1) -> StepResult:
         names = ", ".join(command.name for command in context.policy.validation)
         return StepResult(True, f"mock: validation not run ({names})")
+
+    def advise(self, context, stop) -> Advice:
+        decision = next(iter(stop.get("decisions") or {"resume": ""}))
+        return Advice(situation=f"Mock advice: {stop.get('stop', '')[:200]}", recommendation=decision, confidence="low",
+                      reason=f"mock: {decision}", sides=[{"party": "the platform", "claim": "no model was asked"}])
 
     def review(self, context, plan, tests, diff="", validation="") -> Review:
         coverage = {c.id: [case.id for case in tests.cases if case.criterion == c.id]

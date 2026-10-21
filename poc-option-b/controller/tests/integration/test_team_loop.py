@@ -530,6 +530,10 @@ def test_tests_that_already_pass_can_be_kept_as_guards_of_code_already_built(db,
     with session_scope() as session:
         from controller.app.api.views import run_detail
         run = services.get_run(session, run_id)
+        brief = run_detail(session, run)["advice"]  # the Code Reviewer's brief, written by the advise job
+        assert brief["advice"]["recommendation"] == "already_built" and brief["advice"]["reason"]
+        services.request_advice(session, run, actor=OPERATOR)  # asked again: a new brief is being written
+        assert run_detail(session, run)["advice"]["pending"]
         evidence = run_detail(session, run)["already_built"]
         assert evidence["task"] == "T1" and "already pass" in evidence["red_check"]
         assert set(evidence["files"]) and isinstance(evidence["earlier_commits"], list)

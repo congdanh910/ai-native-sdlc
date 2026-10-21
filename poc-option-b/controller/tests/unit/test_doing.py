@@ -694,3 +694,14 @@ def test_the_qa_engineer_sees_the_preview_and_sends_an_unclear_ruling_back(workt
     assert result.dispute and not result.ok and "which one" in result.detail
     prompt = qa.sessions[0].prompt
     assert "build: ./backend" in prompt and "the decision wins over the test cases" in prompt
+
+
+def test_a_brief_from_a_model_is_repaired_into_the_contract():
+    from controller.app.schemas import Advice
+    from controller.app.team.normalize import advice
+    brief = Advice.model_validate(advice({
+        "situation": "Two tests disagree.", "recommendation": "Amend tests", "confidence": "High",
+        "reason": "test_t3_tc1 expects 201", "checks": "look at line 137",
+        "sides": ["the code returns 201", {"party": "TC-1", "claim": "200", "evidence": "TC-1: return 200"}]}))
+    assert brief.recommendation == "amend_tests" and brief.confidence == "high" and brief.checks == ["look at line 137"]
+    assert brief.sides[1].evidence == ["TC-1: return 200"]
