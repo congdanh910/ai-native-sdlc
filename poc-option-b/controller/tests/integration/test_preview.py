@@ -85,6 +85,7 @@ def test_a_preview_waits_for_the_code_its_compose_file_builds(db, sample_repo):
     run_id = start_run(sample_repo, with_preview=True,
                        compose="services:\n  web:\n    build: ./web\n  api:\n    build:\n      context: ./backend\n")
     preview = client.get(f"/api/runs/{run_id}").json()["preview"]
-    assert preview["missing"] == ["web/", "backend/"]
+    assert preview["missing"] == ["web/", "backend/"] and preview["status"] == "unavailable"
+    assert "Available once the code exists: web/, backend/" in preview["detail"]
     refused = client.post(f"/api/runs/{run_id}/preview", json={"action": "start"})
     assert refused.status_code == 409 and "nothing to preview yet: web/, backend/" in refused.text

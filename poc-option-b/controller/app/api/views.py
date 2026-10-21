@@ -97,6 +97,10 @@ def _preview_view(session: Session, run: Run) -> dict | None:
     from controller.app.preview import missing_parts
     state = preview_state(session, run.id) or {"status": "stopped", "detail": "not started"}
     missing = missing_parts(Path(run.worktree_path), policy.preview) if run.worktree_path else ["the run's branch"]
+    if missing and state.get("status") not in ("running", "starting", "stopping"):
+        # an earlier try failed for the same reason: show why it cannot start now, not the old error
+        state = {"status": "unavailable", "detail": f"Available once the code exists: {', '.join(missing)} not in the "
+                                                     "run's branch yet (the run's coding creates them)"}
     return {**state, "accounts": [a.model_dump() for a in policy.preview.accounts], "available": bool(run.worktree_path),
             "missing": missing}
 

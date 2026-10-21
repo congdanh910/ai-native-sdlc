@@ -126,7 +126,7 @@ export interface Doc {
 }
 
 export interface PreviewState {
-  status: "starting" | "running" | "stopping" | "stopped" | "failed";
+  status: "starting" | "running" | "stopping" | "stopped" | "failed" | "unavailable";
   url?: string; port?: number; started_at?: string; expires_at?: string; detail?: string;
   accounts: { role: string; username: string; password: string; note: string }[];
   available: boolean;  // the run has a branch to preview

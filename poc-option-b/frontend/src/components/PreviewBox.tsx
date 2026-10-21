@@ -2,7 +2,7 @@ import { ExternalLink, Play, Square } from "lucide-react";
 import { api, type RunDetail } from "../lib/api";
 import { ActionButton, Badge, Card, Mono } from "./ui";
 
-const TONE = { running: "good", starting: "accent", stopping: "warn", stopped: "neutral", failed: "bad" } as const;
+const TONE = { running: "good", starting: "accent", stopping: "warn", stopped: "neutral", failed: "bad", unavailable: "neutral" } as const;
 
 /** The run's preview: the application of its branch on 127.0.0.1, with the demo accounts, for people to try. */
 export function PreviewBox({ run, onChange }: { run: RunDetail; onChange: () => void }) {
@@ -26,9 +26,7 @@ export function PreviewBox({ run, onChange }: { run: RunDetail; onChange: () => 
           <span className="text-xs text-muted">stops at {new Date(preview.expires_at).toLocaleTimeString()}</span>
         ) : null}
         <span className="ml-auto flex gap-2">
-          {preview.missing?.length && preview.status !== "running" && !busy ? (
-            <span className="text-xs text-muted">Available once the code exists: {preview.missing.join(", ")} not in the run's branch yet</span>
-          ) : preview.status === "running" || busy ? (
+          {preview.status === "unavailable" ? null : preview.status === "running" || busy ? (
             <ActionButton disabled={preview.status === "stopping"} success="Stopping the preview" action={() => act("stop")}>
               <Square className="size-3.5" /> Stop</ActionButton>
           ) : (
