@@ -130,7 +130,8 @@ def schedule_tasks(session: Session, run: Run) -> None:
         if task.status == TaskStatus.PENDING and set(task.payload.get("depends_on", [])) <= passed:
             transition_task(session, task, TaskStatus.READY, actor=COORDINATOR, reason="dependencies passed")
         if task.status == TaskStatus.READY:
-            queue(session, run, "code_task", key=f"{task.external_task_id}:a{task.attempt_count}", task=task)
+            # the plan in the key: a replanned run has a T1 again, and the earlier plan's T1 job must not stand for it
+            queue(session, run, "code_task", key=f"{task.plan_id}:{task.external_task_id}:a{task.attempt_count}", task=task)
 
 
 def to_needs_human(session: Session, run: Run, reason: str, *, actor: str = COORDINATOR) -> None:

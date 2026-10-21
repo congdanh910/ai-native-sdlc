@@ -440,3 +440,17 @@ def test_a_replan_from_a_human_carries_its_reason_and_starts_a_fresh_task_base(d
     approve_plan(run_id)
     with session_scope() as session:
         assert first_base and artifact(session, run_id, "task_base") != first_base  # the new tasks start after it
+
+
+def test_a_replanned_run_codes_its_new_tasks_even_when_their_ids_repeat(db, sample_repo):
+    """Attendance foundation: after a replan T1 sat READY with no job, its key T1:a0 was the earlier plan's."""
+    run_id = _to_coding(sample_repo)
+    drain(FailingValidation())
+    with session_scope() as session:
+        services.resume(session, services.get_run(session, run_id), actor=OPERATOR, decision="replan", reason="again")
+    drain()
+    approve_plan(run_id)
+    drain()
+    with session_scope() as session:
+        tasks = session.scalars(select(Task).where(Task.run_id == run_id, Task.plan_id == latest_plan(session, run_id).id)).all()
+        assert tasks and all(t.status == "PASSED" for t in tasks), [(t.external_task_id, t.status) for t in tasks]
