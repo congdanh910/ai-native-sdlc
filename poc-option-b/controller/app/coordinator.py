@@ -134,6 +134,16 @@ def schedule_tasks(session: Session, run: Run) -> None:
             queue(session, run, "code_task", key=f"{task.plan_id}:{task.external_task_id}:a{task.attempt_count}", task=task)
 
 
+IN_PROGRESS = (TaskStatus.WRITING_TESTS, TaskStatus.RED_CHECK, TaskStatus.CODING, TaskStatus.VALIDATING,
+               TaskStatus.REMEDIATING)
+
+
+def fail_task(session: Session, task: Task | None, reason: str) -> None:
+    """A task whose job broke mid-step is FAILED, so that resuming the run starts it again."""
+    if task is not None and task.status in IN_PROGRESS:
+        transition_task(session, task, TaskStatus.FAILED, actor=COORDINATOR, reason=reason[:500])
+
+
 def to_needs_human(session: Session, run: Run, reason: str, *, actor: str = COORDINATOR) -> None:
     transition_run(session, run, RunStatus.NEEDS_HUMAN, actor=actor, resume_status=run.status, reason=reason)
 

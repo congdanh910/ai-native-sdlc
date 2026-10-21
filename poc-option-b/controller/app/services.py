@@ -422,6 +422,7 @@ def resume(session: Session, run: Run, *, actor: str, decision: str, reason: str
     if target in (RunStatus.CODING, RunStatus.READY):
         transition_run(session, run, RunStatus.CODING, actor=actor, acting_role=TL, reason=reason)
         for task in coordinator.current_tasks(session, run):
+            coordinator.fail_task(session, task, "its job ended mid-step")  # left there by an older worker
             if task.status in (TaskStatus.FAILED, TaskStatus.DISPUTED, TaskStatus.UNKNOWN):
                 transition_task(session, task, TaskStatus.READY, actor=actor, reason=reason)
         coordinator.schedule_tasks(session, run)

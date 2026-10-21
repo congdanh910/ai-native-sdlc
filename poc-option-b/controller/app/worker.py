@@ -20,7 +20,7 @@ from controller.app import coordinator, joblog, jobs
 from controller.app.config import get_settings
 from controller.app.doing import process
 from controller.app.db import session_scope
-from controller.app.models import Execution, Run
+from controller.app.models import Execution, Run, Task
 from controller.app.states import RUN_TRANSITIONS, RunStatus, TeamRole
 from controller.app.team import get_team
 from controller.app.integrations.langflow import InvalidModelOutput
@@ -97,6 +97,8 @@ def _fail(execution_id, exc: Exception) -> None:
             execution.attempts += 1  # postpone does not count capacity waits; failures do count
             return
         jobs.finish(session, execution, "failed", error=message)
+        if execution.kind == "code_task" and execution.task_id:  # the task does not stay in the step that broke
+            coordinator.fail_task(session, session.get(Task, execution.task_id), f"job failed: {message}")
         if execution.kind in ("preview", "preview_stop"):  # a preview failing never stops the run
             coordinator.store_artifact(session, run, "preview", TeamRole.COORDINATOR,
                                        json.dumps({"status": "failed", "detail": message}))

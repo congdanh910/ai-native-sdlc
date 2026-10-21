@@ -454,3 +454,25 @@ def test_a_replanned_run_codes_its_new_tasks_even_when_their_ids_repeat(db, samp
     with session_scope() as session:
         tasks = session.scalars(select(Task).where(Task.run_id == run_id, Task.plan_id == latest_plan(session, run_id).id)).all()
         assert tasks and all(t.status == "PASSED" for t in tasks), [(t.external_task_id, t.status) for t in tasks]
+
+
+class BrokenWriteTests(MockTeam):
+    def write_tests(self, *args, **kwargs):
+        raise KeyError("lock_note")  # a prompt the running code cannot fill
+
+
+def test_a_code_task_whose_job_breaks_is_started_again_on_resume(db, sample_repo):
+    run_id = new_run(add_project(sample_repo))
+    drain()
+    approve_spec(run_id)
+    drain()
+    approve_plan(run_id)
+    drain(BrokenWriteTests())
+    with session_scope() as session:
+        run = session.get(Run, run_id)
+        task = session.scalars(select(Task).where(Task.run_id == run_id)).first()
+        assert run.status == "NEEDS_HUMAN" and task.status == "FAILED"
+        services.resume(session, services.get_run(session, run_id), actor=OPERATOR, decision="resume",
+                        reason="the prompt and the worker match again")
+    drain()
+    assert status(run_id) == RunStatus.WAITING_PR_APPROVAL
