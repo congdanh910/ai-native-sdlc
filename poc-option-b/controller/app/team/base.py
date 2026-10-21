@@ -35,6 +35,7 @@ class RunContext:
     chosen_option: dict | None = None  # SDS: the architecture option the Solution Architect chose, with the reason
     hosting_platforms: list[str] = field(default_factory=list)  # SDS options: the platforms hosting variants may use
     project_config: str = ""  # foundation onboarding: the project's .sdlc/project.yaml as it is
+    task_base: str = ""  # the commit the current plan's tasks started from; earlier commits belong to other plans
 
 
 @dataclass(frozen=True)

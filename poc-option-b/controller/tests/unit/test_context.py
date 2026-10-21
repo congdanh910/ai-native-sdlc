@@ -150,3 +150,19 @@ def test_a_task_may_modify_a_file_a_task_it_depends_on_creates():
     findings = check_plan(PlanPayload(summary="s", tasks=tasks), tests(), CRITERIA, policy(), FILES, SYMBOLS)["findings"]
     assert findings == ["T3 modifies src/main.js, which neither exists at the base commit nor is created by a task "
                         "it depends on"]
+
+
+def test_a_part_needs_its_dependency_manifest_before_its_code():
+    """Attendance foundation: T1 wrote backend tests, backend/pyproject.toml came in T2, every python command failed."""
+    tasks = [
+        {"id": "T1", "title": "Domain rules", "create": ["src/rules.js", "src/store.js"], "acceptance_criteria": ["AC-1"],
+         "validation": ["unit-tests"]},
+        {"id": "T2", "title": "Manifest and config", "create": ["src/package.json", "src/config.js"],
+         "acceptance_criteria": ["AC-2"], "validation": ["unit-tests"]},
+        {"id": "T3", "title": "After the manifest", "depends_on": ["T2"], "create": ["src/api.js"],
+         "acceptance_criteria": ["AC-2"], "validation": ["unit-tests"]},
+    ]
+    strict = policy().model_copy(update={"setup_inputs": ["src/package.json", "src/*.lock"]})
+    findings = check_plan(PlanPayload(summary="s", tasks=tasks), tests(), CRITERIA, strict, FILES, SYMBOLS)["findings"]
+    assert findings == ["T1 builds in src/ before src/package.json exists (T2 creates it later); setup installs that "
+                        "part's tools from it, so create it in this task or depend on the task that does"]

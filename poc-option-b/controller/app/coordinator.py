@@ -474,7 +474,8 @@ def build_context(session: Session, run: Run, *, kind: str = "", feedback: list[
                       chosen_option=json.loads(artifact(session, run.id, "chosen_option") or "null"),
                       hosting_platforms=options_platforms(policy, _deployment_context(session, run))
                       if run.kind == RunKind.SDS else [],
-                      project_config=artifact(session, run.id, "project_config") or "")
+                      project_config=artifact(session, run.id, "project_config") or "",
+                      task_base=artifact(session, run.id, "task_base") or run.base_commit or "")
 
 
 def _story_context(session: Session, run: Run) -> dict | None:

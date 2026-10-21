@@ -124,7 +124,8 @@ class LangflowTeam(MockTeam):
         policy = context.policy
         return {"allowed_paths": policy.allowed_paths, "protected_paths": policy.protected_paths,
                 "test_paths": policy.test_paths, "max_tasks": policy.max_tasks,
-                "validation": [command.name for command in policy.validation]}
+                "validation": [command.name for command in policy.validation],
+                "dependency_manifests": policy.setup_inputs}
 
     # ------------------------------------------------------------ thinking roles
 

@@ -419,3 +419,24 @@ def test_rejection_reasons_reach_the_business_analyst_and_the_tech_lead(db, samp
                              reason="Keep the date rules in src/tasks.js", next_step="redo")
     drain(team)
     assert seen[-1][0] == "plan" and "Tech Lead rejected the plan: Keep the date rules in src/tasks.js" in seen[-1][1]
+
+
+def test_a_replan_from_a_human_carries_its_reason_and_starts_a_fresh_task_base(db, sample_repo):
+    from controller.app.coordinator import artifact
+    run_id = _to_coding(sample_repo)
+    drain(FailingValidation())
+    with session_scope() as session:
+        first_base = artifact(session, run_id, "task_base")
+        services.resume(session, services.get_run(session, run_id), actor=OPERATOR, decision="replan",
+                        reason="Create src/package.json in T1: its tests need it")
+    seen = []
+
+    class Recording(MockTeam):
+        def plan(self, context):
+            seen.append(context.feedback)
+            return super().plan(context)
+    drain(Recording())
+    assert any("Create src/package.json in T1: its tests need it" in f for f in seen[0])
+    approve_plan(run_id)
+    with session_scope() as session:
+        assert first_base and artifact(session, run_id, "task_base") != first_base  # the new tasks start after it

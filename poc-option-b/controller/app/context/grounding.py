@@ -36,6 +36,21 @@ def check_plan(plan: PlanPayload, tests: TestPlan, criteria: list[Criterion], po
             paths |= set(by_id[dependency].create) | created_before(dependency, seen)
         return paths
 
+    # Setup installs a part's tools from its dependency manifest (environment.setup_inputs): a task that builds code
+    # or tests in that part before the manifest exists has nothing to run them with (attendance foundation, T1 had
+    # backend tests while backend/pyproject.toml came in T2: every python command was "not found").
+    manifests = [m for m in policy.setup_inputs if not any(ch in m for ch in "*?[") and "/" in m and m not in files]
+    for task in plan.tasks:
+        have = set(task.create) | created_before(task.id)
+        for manifest in manifests:
+            part = manifest.rsplit("/", 1)[0] + "/"
+            touched = [p for p in task.create + task.modify if p.startswith(part) and p != manifest]
+            if touched and manifest not in have:
+                makers = [t.id for t in plan.tasks if manifest in t.create]
+                findings.append(f"{task.id} builds in {part} before {manifest} exists"
+                                + (f" ({', '.join(makers)} creates it later)" if makers else "")
+                                + "; setup installs that part's tools from it, so create it in this task or "
+                                  "depend on the task that does")
     if len(plan.tasks) > policy.max_tasks:
         findings.append(f"{len(plan.tasks)} tasks exceed the limit of {policy.max_tasks}")
     for task in plan.tasks:

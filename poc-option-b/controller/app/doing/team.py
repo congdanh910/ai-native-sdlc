@@ -79,7 +79,7 @@ class CliDoing:
         worktree = self._worktree(context)
         changes.discard(worktree)  # a crashed earlier session must not leak into this one
         if not feedback and not amend and context.base_commit:
-            existing = changes.find_commit(worktree, context.base_commit, f"test({task.id}):")
+            existing = changes.find_commit(worktree, context.task_base or context.base_commit, f"test({task.id}):")
             if existing:  # a resumed task keeps the tests it already has
                 return StepResult(True, f"tests already committed in {existing[:10]}; reused",
                                   evidence={"commit": existing, "reused": True})
@@ -161,7 +161,8 @@ class CliDoing:
 
     def red_check(self, context: RunContext, task: PlanTask, tests: TestPlan) -> StepResult:
         if context.base_commit:
-            earlier = changes.find_commit(self._worktree(context), context.base_commit, f"feat({task.id}):")
+            earlier = changes.find_commit(self._worktree(context), context.task_base or context.base_commit,
+                                          f"feat({task.id}):")
             if earlier:  # code is only committed after a passing red check, so these tests were red before it
                 return StepResult(True, f"red check passed before the earlier implementation {earlier[:10]}",
                                   evidence={"reused": True})
@@ -199,6 +200,11 @@ class CliDoing:
             return StepResult(False, f"Developer session failed ({result.executor}): {result.message[-300:]}",
                               evidence=self._evidence(result, label))
         staged = changes.stage_changes(worktree)
+        earlier = changes.find_commit(worktree, context.task_base or context.base_commit, f"feat({task.id}):") \
+            if not staged and context.base_commit else None
+        if earlier:  # resumed after a failure outside the code: the earlier implementation stands, validation decides
+            return StepResult(True, f"no change: the implementation committed in {earlier[:10]} stays "
+                                    f"({result.executor}, attempt {attempt})", evidence=self._evidence(result, label))
         problems = changes.check_code(worktree, staged, task, context.policy)
         if problems:
             changes.discard(worktree)

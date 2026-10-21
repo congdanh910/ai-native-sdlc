@@ -287,6 +287,10 @@ def approve_tests(session: Session, run: Run, document_id: uuid.UUID, sha256: st
     for task in PlanPayload.model_validate(plan.payload).tasks:
         session.add(Task(run_id=run.id, plan_id=plan.id, external_task_id=task.id, payload=task.model_dump(),
                          status=TaskStatus.PENDING.value))
+    # commits of an earlier plan's tasks (test(T1): ..., feat(T1): ...) never stand for this plan's tasks of the same id
+    worktree = coordinator.worktree_for(session.get(Project, run.project_id), run)
+    if worktree.path.exists():
+        coordinator.store_artifact(session, run, "task_base", TeamRole.COORDINATOR, worktree.head())
     session.flush()
     transition_run(session, run, RunStatus.READY, actor=actor, acting_role=QC)
     project = session.get(Project, run.project_id)
@@ -397,6 +401,8 @@ def resume(session: Session, run: Run, *, actor: str, decision: str, reason: str
         return
     if decision == "replan":
         _corrected(run)
+        if reason and reason.strip():  # the Tech Lead plans again with this reason, as after a rejected plan
+            _approval(session, run, "plan", "reject", actor, TL, reason=reason)
         coordinator_replan(session, run, actor=actor, reason=reason)
         return
     if decision in ("amend_tests", "keep_tests"):

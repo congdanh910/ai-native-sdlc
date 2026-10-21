@@ -143,6 +143,9 @@ class Worktree:
             _git(*COMMITTER, "commit", "--quiet", "-m", message, "--", relative_path, cwd=self.path)
         return _git("rev-parse", "HEAD", cwd=self.path).strip()
 
+    def head(self) -> str:
+        return _git("rev-parse", "HEAD", cwd=self.path).strip()
+
     def remove(self) -> None:
         if self.path.exists():
             _git("--git-dir", str(self.mirror.path), "worktree", "remove", "--force", str(self.path))
