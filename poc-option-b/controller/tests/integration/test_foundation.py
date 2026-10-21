@@ -155,3 +155,22 @@ def test_a_full_docker_disk_stops_for_a_human_instead_of_the_architect(db, sampl
     state = detail(run["id"])
     assert state["status"] == "NEEDS_HUMAN" and "Docker has no disk space" in state["reason"]
     assert len([d for d in state["documents"] if d["kind"] == "onboarding"]) == 1  # the Architect was not asked again
+
+
+def test_onboarding_answers_in_loose_shapes_are_normalised():
+    from controller.app.foundation import Onboarding
+    from controller.app.team.normalize import onboarding
+    data = onboarding({
+        "agents_md": "# Attendance\n\nPython and React.\n", "validation_image": "python-3.13",
+        "validation": [{"name": "tests", "run": "pytest -q"}], "paths": {"allowed": ["backend/**"], "tests": ["tests/**"]},
+        "environment": {"services": [{"name": "postgres", "image": "postgres:17-alpine", "ready": "pg_isready -U app",
+                                      "env": ["POSTGRES_USER=app", "POSTGRES_PASSWORD=app"]}],
+                        "setup_inputs": "backend/requirements.txt"},
+        "preview": {"service": "web", "port": 8080, "e2e": "npx playwright test", "e2e_paths": "e2e/**",
+                    "accounts": ["HR_ADMIN:hr@example.test:Demo-123"]},
+        "preview_compose": "services: {}\n"})
+    parsed = Onboarding.model_validate(data)
+    assert parsed.environment.services[0].ready == ["sh", "-c", "pg_isready -U app"]
+    assert parsed.environment.services[0].env == {"POSTGRES_USER": "app", "POSTGRES_PASSWORD": "app"}
+    assert parsed.preview.compose == ".sdlc/preview.compose.yml" and parsed.preview.e2e == ["sh", "-c", "npx playwright test"]
+    assert parsed.preview.accounts[0].username == "hr@example.test" and parsed.validation[0].run == ["sh", "-c", "pytest -q"]

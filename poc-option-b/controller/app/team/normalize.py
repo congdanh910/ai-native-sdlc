@@ -302,6 +302,27 @@ def onboarding(data: dict) -> dict:
             command["run"] = ["sh", "-c", command["run"]]
     data["questions"] = [{"question": q, "blocking": False} if isinstance(q, str) else q for q in data.get("questions") or []]
     data["feedback_replies"] = feedback_replies(data.get("feedback_replies"))
+    environment = data.get("environment")
+    if isinstance(environment, dict):
+        for service in environment.get("services") or []:
+            if isinstance(service, dict) and isinstance(service.get("ready"), str):  # "pg_isready -U app"
+                service["ready"] = ["sh", "-c", service["ready"]] if service["ready"].strip() else []
+            if isinstance(service, dict) and isinstance(service.get("env"), list):  # ["KEY=value", ...]
+                service["env"] = dict(str(x).split("=", 1) for x in service["env"] if "=" in str(x))
+        if isinstance(environment.get("setup_inputs"), str):
+            environment["setup_inputs"] = [environment["setup_inputs"]]
+    preview = data.get("preview")
+    if isinstance(preview, dict):
+        from controller.app.foundation import PREVIEW_COMPOSE_PATH
+        preview["compose"] = PREVIEW_COMPOSE_PATH  # the controller stores preview_compose there, whatever the model says
+        if isinstance(preview.get("e2e"), str):
+            preview["e2e"] = ["sh", "-c", preview["e2e"]] if preview["e2e"].strip() else []
+        if isinstance(preview.get("e2e_paths"), str):
+            preview["e2e_paths"] = [preview["e2e_paths"]]
+        preview["accounts"] = [a if isinstance(a, dict) else dict(zip(("role", "username", "password"), str(a).split(":", 2)))
+                               for a in preview.get("accounts") or []]
+    elif preview in ("", None, {}):
+        data["preview"] = None
     return data
 
 
