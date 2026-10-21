@@ -87,13 +87,15 @@ function TasksTab({ run }: { run: RunDetail }) {
 }
 
 function VersionPicker<T extends { version: number; author: string; author_kind: string }>({ items, children }: { items: T[]; children: (item: T) => React.ReactNode }) {
-  const [index, setIndex] = useState(items.length - 1);
+  // null = follow the latest version: a document that appears while the page is open shows at once
+  const [picked, setPicked] = useState<number | null>(null);
   if (!items.length) return <p className="m-0 text-muted">Not produced yet.</p>;
-  const item = items[Math.min(index, items.length - 1)];
+  const index = picked === null ? items.length - 1 : Math.min(picked, items.length - 1);
+  const item = items[index];
   return (
     <div className="flex flex-col gap-3">
       {items.length > 1 ? (
-        <Select aria-label="Version" className="max-w-xs" value={index} onChange={(e) => setIndex(Number(e.target.value))}>
+        <Select aria-label="Version" className="max-w-xs" value={index} onChange={(e) => setPicked(Number(e.target.value))}>
           {items.map((it, i) => <option key={i} value={i}>v{it.version} by {it.author}{it.author_kind === "human" ? " (human)" : ""}</option>)}
         </Select>
       ) : null}
