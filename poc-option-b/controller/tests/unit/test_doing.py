@@ -201,6 +201,16 @@ def test_tests_under_a_manifest_the_task_creates_are_red_by_construction(worktre
     assert not team.red_check(context(worktree, setup_inputs=["web/package.json"]), web, tests).ok
 
 
+def test_the_qa_engineer_writes_acceptance_tests_in_the_e2e_paths(worktree, tmp_path):
+    from controller.app.projects.config import Preview
+    preview = Preview(compose=".sdlc/preview.compose.yml", service="web", port=8000, e2e_paths=["test/**"])
+    qa = FakeExecutor("claude", {"test/due.spec.ts": "test('AC-1 due date', async () => {});\n"})
+    team, _ = doing(tmp_path, qa=qa)
+    result = team.write_acceptance_tests(context(worktree, qa_executor="claude", preview=preview), "- AC-1: due", "Due")
+    assert result.ok and result.changed_files == ["test/due.spec.ts"], result.detail
+    assert qa.sessions[0].writable == ["test/**"]
+
+
 def test_setup_runs_once_with_network(worktree, tmp_path):
     runner = FakeRunner([0, 0, 0])
     gate = ValidationGate(policy(setup=["npm", "ci"]), worktree, tmp_path / "logs", runner=runner)
