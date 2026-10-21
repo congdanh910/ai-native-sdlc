@@ -408,6 +408,9 @@ def resume(session: Session, run: Run, *, actor: str, decision: str, reason: str
     if decision in ("amend_tests", "keep_tests"):
         _rule_on_dispute(session, run, actor=actor, decision=decision, reason=reason)
         return
+    if decision == "already_built":
+        _accept_as_built(session, run, actor=actor, reason=reason)
+        return
     target = RunStatus(run.resume_status or RunStatus.PREFLIGHT)
     kinds = {RunStatus.PREFLIGHT: "preflight", RunStatus.SPECIFYING: "specify", RunStatus.PLANNING: "plan",
              RunStatus.DESIGNING_OPTIONS: "options", RunStatus.DESIGNING_ONBOARDING: "onboarding",
@@ -451,6 +454,26 @@ def _rule_on_dispute(session: Session, run: Run, *, actor: str, decision: str, r
     record_event(session, "dispute.ruled", actor=actor, acting_role=TL, run_id=run.id, payload=ruling)
     transition_run(session, run, RunStatus.CODING, actor=actor, acting_role=TL, reason=reason)
     transition_task(session, task, TaskStatus.READY, actor=actor, reason=f"{decision}: {reason}")
+    coordinator.schedule_tasks(session, run)
+
+
+ALREADY_PASS = "already pass before the implementation"
+
+
+def _accept_as_built(session: Session, run: Run, *, actor: str, reason: str) -> None:
+    """The Tech Lead finds that the code already does what a task's new tests check (a replanned run builds on the
+    code of its earlier plan): the tests stay as regression guards, the Developer is skipped, and the validation
+    decides. Only after a failed red check."""
+    failed = [t for t in coordinator.current_tasks(session, run) if t.status == TaskStatus.FAILED]
+    if not failed or ALREADY_PASS not in (run.status_reason or ""):
+        raise DecisionError("only a task whose new tests already pass before the implementation can be accepted as built")
+    task = failed[0]
+    ruling = {"task": task.external_task_id, "plan": str(task.plan_id), "decision": "already_built", "reason": reason,
+              "actor": actor, "attempt": task.attempt_count + 1, "dispute": run.status_reason}
+    coordinator.store_artifact(session, run, f"ruling:{task.external_task_id}", TeamRole.COORDINATOR, json.dumps(ruling))
+    record_event(session, "red_check.ruled", actor=actor, acting_role=TL, run_id=run.id, payload=ruling)
+    transition_run(session, run, RunStatus.CODING, actor=actor, acting_role=TL, reason=reason)
+    transition_task(session, task, TaskStatus.READY, actor=actor, reason=f"already built: {reason}")
     coordinator.schedule_tasks(session, run)
 
 

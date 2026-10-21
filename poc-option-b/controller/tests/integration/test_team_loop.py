@@ -499,3 +499,43 @@ def test_tests_rejected_by_the_controller_are_written_once_more_with_the_reason(
     drain(team)
     assert team.feedback[:2] == ["", "test changes rejected: changes or removes 1 existing line(s) in test/a.test.js"]
     assert status(run_id) == RunStatus.WAITING_PR_APPROVAL
+
+
+class AlreadyBuilt(MockTeam):
+    """The code already does what the new tests check: the red check finds nothing failing."""
+
+    def __init__(self):
+        self.implemented = self.implemented_other = 0
+
+    def red_check(self, context, task, tests):
+        if task.id != "T1":
+            return super().red_check(context, task, tests)
+        return StepResult(False, "the new tests already pass before the implementation, so they prove nothing: x passed")
+
+    def implement(self, context, task, *args, **kwargs):
+        self.implemented += 1
+        self.implemented_other += task.id != "T1"
+        return super().implement(context, task, *args, **kwargs)
+
+
+def test_tests_that_already_pass_can_be_kept_as_guards_of_code_already_built(db, sample_repo):
+    run_id = new_run(add_project(sample_repo))
+    drain()
+    approve_spec(run_id)
+    drain()
+    approve_plan(run_id)
+    team = AlreadyBuilt()
+    drain(team)
+    assert status(run_id) == RunStatus.NEEDS_HUMAN
+    with session_scope() as session:
+        run = services.get_run(session, run_id)
+        services.resume(session, run, actor=OPERATOR, decision="already_built",
+                        reason="the earlier plan built sign-in; these tests guard it")
+    drain(team)
+    assert status(run_id) == RunStatus.WAITING_PR_APPROVAL
+    assert team.implemented == team.implemented_other  # the Developer worked on every task but T1
+    with session_scope() as session:
+        with pytest.raises(services.DecisionError, match="already pass"):
+            run = session.get(Run, run_id)
+            run.status, run.status_reason = RunStatus.NEEDS_HUMAN, "something else"
+            services.resume(session, run, actor=OPERATOR, decision="already_built", reason="x")

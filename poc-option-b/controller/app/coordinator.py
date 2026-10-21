@@ -29,7 +29,8 @@ from controller.app.documents import (THREAD_DIR, add_document, add_plan, latest
                                       section_changes, sha256_text, thread_path)
 from controller.app.events import record_event
 from controller.app.jobs import COORDINATOR, enqueue, finish
-from controller.app.models import Approval, Artifact, Document, Clarification, Execution, Project, PullRequest, Run, Task
+from controller.app.models import (Approval, Artifact, Document, Clarification, Execution, Plan, Project, PullRequest,
+                                   Run, Task)
 from controller.app.feature_docs import (PHASE_HEADING, FeatureRef, link_once, phase_number, plan_header,
                                          plan_section, requirements_header, requirements_section, resolve_feature,
                                          sdlc_yaml, sds_feature_heading, spec_header, spec_section, srs_feature_heading,
@@ -587,10 +588,23 @@ def load(session: Session, execution: Execution) -> Loaded:
         loaded.task_payload, loaded.task_attempt = task.payload, task.attempt_count
         ruling = artifact(session, run.id, f"ruling:{task.external_task_id}")
         # a ruling of an earlier plan's task of the same id does not apply (rulings before 2026-10-21 name no plan)
-        if ruling and json.loads(ruling)["attempt"] == task.attempt_count \
-                and json.loads(ruling).get("plan", str(task.plan_id)) == str(task.plan_id):
+        if ruling and json.loads(ruling)["attempt"] == task.attempt_count and _ruling_of_plan(session, run, task):
             loaded.extra["ruling"] = json.loads(ruling)
     return loaded
+
+
+def _ruling_of_plan(session: Session, run: Run, task: Task) -> bool:
+    """The task's latest ruling was made for its plan; a ruling stored before 2026-10-21 names no plan, and counts
+    only when it is newer than the plan."""
+    row = session.execute(select(Artifact.content, Artifact.created_at).where(
+        Artifact.run_id == run.id, Artifact.kind == f"ruling:{task.external_task_id}")
+        .order_by(Artifact.created_at.desc()).limit(1)).first()
+    if row is None:
+        return False
+    plan = json.loads(row.content).get("plan")
+    if plan is not None:
+        return plan == str(task.plan_id)
+    return row.created_at > session.get(Plan, task.plan_id).created_at
 
 
 # ---------------------------------------------------------------- compute (no database)
@@ -700,6 +714,13 @@ def _work_task(team: Team, loaded: Loaded) -> list[dict]:
                      team.write_tests(context, task, tests, feedback=steps[-1]["detail"]))
         steps[-1] = {**retry, "evidence": {**retry["evidence"], "earlier": steps[-1]["detail"]}}
     if not steps[-1]["ok"]:
+        return steps
+    if ruling and ruling["decision"] == "already_built":  # the Tech Lead found the behaviour already in the code
+        note = f"the Tech Lead ruled the behaviour already built: {ruling['reason']}"
+        steps.append(step(TaskStatus.RED_CHECK, TeamRole.VALIDATION_GATE,
+                          StepResult(True, f"skipped; the new tests are regression guards ({note})")))
+        steps.append(step(TaskStatus.CODING, TeamRole.DEVELOPER, StepResult(True, f"no code: {note}")))
+        steps.append(step(TaskStatus.VALIDATING, TeamRole.VALIDATION_GATE, team.validate(context, task, attempt=1)))
         return steps
     steps.append(step(TaskStatus.RED_CHECK, TeamRole.VALIDATION_GATE, team.red_check(context, task, tests)))
     if not steps[-1]["ok"]:

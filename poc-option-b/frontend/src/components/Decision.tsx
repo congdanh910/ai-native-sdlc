@@ -348,6 +348,7 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
         <div className="flex flex-wrap gap-2">
           <ActionButton variant={disputed ? "default" : "primary"} action={() => post("resume", { decision: "resume", reason })}>Resume</ActionButton>
           <ActionButton action={() => post("resume", { decision: "replan", reason })}>Replan</ActionButton>
+          {(run.reason ?? "").includes("already pass before the implementation") ? <ActionButton disabled={!reason.trim()} title="The code already does what these tests check (for example the run's earlier plan built it): keep the tests as regression guards, skip the Developer, and let the validation decide" action={() => post("resume", { decision: "already_built", reason })}>Already built: keep tests as guards</ActionButton> : null}
           {run.kind === "foundation" ? <ActionButton disabled={!reason.trim()} title="The onboarding files are the cause (the preview's compose file, a command, a path): the Architect revises them, you approve them again, and the Tech Lead plans again on the approved spec" action={() => post("onboarding/reopen", { reason })}>Back to onboarding</ActionButton> : null}
           <ActionButton variant="danger" action={() => post("resume", { decision: "cancel", reason })}>Cancel run</ActionButton>
         </div>
