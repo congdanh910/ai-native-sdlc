@@ -335,6 +335,7 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
     return (
       <Panel run={run} title="The team stopped">
         <p className="m-0 rounded-lg bg-bad-soft p-3 text-sm text-bad">{run.reason}</p>
+        {run.already_built ? <AlreadyBuilt evidence={run.already_built} /> : null}
         {disputed ? (
           <div className="flex flex-col gap-2 rounded-lg border border-line p-3">
             <p className="m-0 text-sm text-ink-2">The Developer disputes a test. Decide who is right: let the QA Engineer update the tests (existing test lines may change and are listed in the PR), or keep the tests and send the Developer back.</p>
@@ -433,5 +434,41 @@ function OptionsPanel({ run, doc, checklist, checked, post }: { run: RunDetail; 
         <ActionButton variant="danger" disabled={!why.trim()} action={() => post("options/redo", { reason: why })}>Ask for other options</ActionButton>
       </div>
     </Panel>
+  );
+}
+
+
+/** What the Tech Lead checks before ruling a task already built: the earlier commits that changed its files, the
+ * tests the QA Engineer added, and its note. */
+function AlreadyBuilt({ evidence }: { evidence: NonNullable<RunDetail["already_built"]> }) {
+  const mine = new Set(evidence.files);
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-line p-3 text-sm">
+      <p className="m-0 text-ink-2">
+        <b>{evidence.task}</b> {evidence.title}: its new tests pass on the code as it is. Either the code already does
+        this (keep the tests as guards), or the tests check too little (Replan, or ask for stronger tests).
+      </p>
+      <div>
+        <b>Earlier commits of this run that changed the task's files</b>
+        {evidence.earlier_commits.length ? (
+          <ul className="m-0 mt-1 pl-5">
+            {evidence.earlier_commits.map((c) => (
+              <li key={c.sha}><Mono>{c.sha.slice(0, 8)}</Mono> {c.subject}
+                <span className="text-xs text-muted"> ({c.files.filter((f) => mine.has(f)).join(", ")})</span></li>
+            ))}
+          </ul>
+        ) : <p className="m-0 mt-1 text-muted">None: nothing earlier built these files, so suspect the tests.</p>}
+      </div>
+      <div>
+        <b>Tests the QA Engineer added ({evidence.tests.length})</b>
+        <ul className="m-0 mt-1 pl-5">
+          {evidence.tests.map((t) => <li key={`${t.file}:${t.name}`}><Mono>{t.name}</Mono> <span className="text-xs text-muted">{t.file}</span></li>)}
+        </ul>
+      </div>
+      {evidence.qa_note ? (
+        <div><b>QA Engineer's note</b><p className="m-0 mt-1 whitespace-pre-wrap text-ink-2">{evidence.qa_note}</p></div>
+      ) : null}
+      {evidence.red_check ? <p className="m-0 text-xs text-muted">Red check: {evidence.red_check}</p> : null}
+    </div>
   );
 }

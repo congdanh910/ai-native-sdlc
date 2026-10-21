@@ -1,5 +1,7 @@
 """JSON shapes returned to the web control room."""
 
+from pathlib import Path
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -162,8 +164,44 @@ def run_detail(session: Session, run: Run) -> dict:
                         "finished_at": e.finished_at.isoformat() if e.finished_at else None} for e in executions],
         "task_steps": [{"task": task_ids.get(e.task_id), "steps": _steps(e.result)} for e in executions
                        if e.kind == "code_task" and e.result],
+        "already_built": _already_built(session, run, tasks, executions),
     })
     return detail
+
+
+def _already_built(session: Session, run: Run, tasks: list[Task], executions: list[Execution]) -> dict | None:
+    """After a red check found a task's new tests passing before any code: what the Tech Lead needs to tell code
+    already built from tests that check too little. The QA Engineer's last note, the tests it added, the commands
+    that passed, and the earlier commits of this run that changed the task's files."""
+    from controller.app.coordinator import artifact
+    from controller.app.doing import changes
+    from controller.app.projects.repo import GitError
+    from controller.app.services import ALREADY_PASS
+    if run.status != "NEEDS_HUMAN" or ALREADY_PASS not in (run.status_reason or ""):
+        return None
+    task = next((t for t in tasks if t.status == "FAILED"), None)
+    execution = next((e for e in reversed(executions) if task and e.task_id == task.id and e.result), None)
+    if task is None or execution is None:
+        return None
+    steps = execution.result.get("steps", [])
+    written = [s for s in steps if s["state"] == "WRITING_TESTS" and s["ok"]]
+    red = [s for s in steps if s["state"] == "RED_CHECK"]
+    note = (written[-1].get("evidence") or {}).get("message", "") if written else ""
+    commit = (written[-1].get("evidence") or {}).get("commit") if written else None
+    files = task.payload.get("modify", []) + task.payload.get("create", [])
+    worktree = Path(run.worktree_path) if run.worktree_path else None
+    tests, earlier = [], []
+    if worktree and worktree.is_dir():
+        try:
+            tests = [{"file": f, "name": n} for f, n in changes.test_names(worktree, commit)] if commit else []
+            base = artifact(session, run.id, "task_base") or run.base_commit
+            if run.base_commit and base:  # before this plan's coding: what the run's earlier plans built
+                earlier = [c for c in changes.commits_touching(worktree, run.base_commit, base, files)
+                           if c["subject"].startswith(("feat(", "build("))][:8]
+        except GitError:
+            pass
+    return {"task": task.external_task_id, "title": task.payload["title"], "files": files, "qa_note": note[-1500:],
+            "tests": tests[:30], "red_check": red[-1]["detail"][:600] if red else "", "earlier_commits": earlier}
 
 
 def _steps(result: dict) -> list[dict]:

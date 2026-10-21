@@ -237,6 +237,12 @@ export interface RunDetail extends RunSummary {
   executions: { id: string; kind: string; role: string; status: string; attempts: number; engine: string | null; error: string | null;
     task: string | null; started_at: string | null; finished_at: string | null }[];
   task_steps: { task: string | null; steps: Step[] }[];
+  // after a red check found a task's new tests passing before any code: what tells code already built from weak tests
+  already_built?: {
+    task: string; title: string; files: string[]; qa_note: string; red_check: string;
+    tests: { file: string; name: string }[];
+    earlier_commits: { sha: string; subject: string; files: string[] }[];
+  } | null;
 }
 
 export interface RunEvent {

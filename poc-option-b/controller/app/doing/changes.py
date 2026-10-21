@@ -204,6 +204,33 @@ def run_diff(worktree: Path, base: str, test_paths: list[str], budget: int) -> s
     return "".join(parts)
 
 
+TEST_NAME = re.compile(r"^\+\s*(?:async\s+)?def\s+(test\w*)|^\+\s*(?:it|test)\s*\(\s*['\"`]([^'\"`]+)")
+
+
+def test_names(worktree: Path, commit: str) -> list[tuple[str, str]]:
+    """(file, test name) of each test a commit adds: Python def test_..., and it(...) or test(...) titles."""
+    names, path = [], ""
+    for line in _git("show", "--format=", "-U0", commit, cwd=worktree).splitlines():
+        if line.startswith("+++ "):
+            path = line.removeprefix("+++ b/")
+        elif (match := TEST_NAME.match(line)):
+            names.append((path, match[1] or match[2]))
+    return names
+
+
+def commits_touching(worktree: Path, base: str, until: str, paths: list[str]) -> list[dict]:
+    """The commits between base and until that changed any of these paths, newest first, with the paths."""
+    if not paths:
+        return []
+    out = _git("log", "--format=%x00%H%x09%s", "--name-only", f"{base}..{until}", "--", *paths, cwd=worktree)
+    commits = []
+    for block in out.split("\0")[1:]:
+        head, *files = block.strip().splitlines()
+        sha, _, subject = head.partition("\t")
+        commits.append({"sha": sha, "subject": subject, "files": [f for f in files if f]})
+    return commits
+
+
 def changed_since(worktree: Path, base: str) -> list[str]:
     """Paths the commits since base changed."""
     return [line for line in _git("diff", "--name-only", "--no-renames", base, "HEAD", cwd=worktree).splitlines() if line]

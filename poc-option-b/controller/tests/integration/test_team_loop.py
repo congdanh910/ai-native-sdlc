@@ -528,7 +528,11 @@ def test_tests_that_already_pass_can_be_kept_as_guards_of_code_already_built(db,
     drain(team)
     assert status(run_id) == RunStatus.NEEDS_HUMAN
     with session_scope() as session:
+        from controller.app.api.views import run_detail
         run = services.get_run(session, run_id)
+        evidence = run_detail(session, run)["already_built"]
+        assert evidence["task"] == "T1" and "already pass" in evidence["red_check"]
+        assert set(evidence["files"]) and isinstance(evidence["earlier_commits"], list)
         services.resume(session, run, actor=OPERATOR, decision="already_built",
                         reason="the earlier plan built sign-in; these tests guard it")
     drain(team)

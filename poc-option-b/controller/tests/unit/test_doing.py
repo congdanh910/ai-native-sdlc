@@ -663,3 +663,19 @@ def test_without_a_manifest_change_nothing_is_locked(worktree, tmp_path):
     runner = LockRunner({})
     ctx = dataclasses.replace(context(worktree, setup_inputs=["package.json"], lock=["lock"]), base_commit=base)
     assert locking(tmp_path, runner).validate(ctx, TASK).ok and all(c[0] != ["lock"] for c in runner.calls)
+
+
+def test_the_tests_a_commit_adds_and_the_earlier_commits_of_a_file(worktree):
+    base = changes.head(worktree)
+    (worktree / "src" / "tasks.js").write_text("export const due = 1;\n")
+    changes.stage_changes(worktree)
+    built = changes.commit(worktree, "feat(T2): Add due date", "developer")
+    plan_base = changes.head(worktree)
+    (worktree / "test" / "due.test.js").write_text("it('TC-1 keeps the due date', () => {});\n")
+    (worktree / "test" / "test_due.py").write_text("def test_tc2_rejects_a_past_date():\n    pass\n")
+    changes.stage_changes(worktree)
+    tests = changes.commit(worktree, "test(T2): Add due date", "qa_engineer")
+    assert changes.test_names(worktree, tests) == [("test/due.test.js", "TC-1 keeps the due date"),
+                                                   ("test/test_due.py", "test_tc2_rejects_a_past_date")]
+    earlier = changes.commits_touching(worktree, base, plan_base, ["src/tasks.js", "src/other.js"])
+    assert [(c["sha"], c["subject"], c["files"]) for c in earlier] == [(built, "feat(T2): Add due date", ["src/tasks.js"])]
