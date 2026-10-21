@@ -36,6 +36,7 @@ _Cập nhật: 2026-10-21. Mỗi mục ghi vì sao nó nằm đây và lúc nào
 | 3.5 | Giao diện tiếng Việt | Hiện UI tiếng Anh |
 | 3.6 | Giai đoạn B7 | Ghi là "Planned" trong `poc-option-b/README.md`, chưa định nghĩa |
 | 3.7 | **Validation gọi ra ngoài có kiểm soát**: `network: {allow: [host...]}` và `secrets: [TÊN]` theo từng lệnh validation; proxy trong mạng của lần validation chỉ cho đi tới host được phép và ghi log mọi request; secret (token sandbox) lưu trong kho secret của nền tảng, không nằm trong repo, chỉ truyền vào đúng lệnh đó, không đưa cho phiên AI viết code; lệnh có mạng chạy một lần trước khi mở PR (không chạy trong vòng red check/sửa code), kết quả hiện ở cổng PR; Onboarding và cổng Tech Lead thấy rõ các host được mở | Hiện validation không ra Internet (an toàn). Tích hợp thường dùng service giả trong `environment.services` (WireMock, LocalStack, MinIO, Mailpit…), đủ cho attendance; chỉ làm khi có dự án thật sự cần gọi sandbox bên ngoài (21/10) |
+| 3.8 | **Preview và regression của `main`**: một bản "sản phẩm hiện tại" dựng từ `main` (nút Open preview of main ở trang dự án) để PO và khách xem các US đã ghép; chạy toàn bộ bộ E2E trên `main` sau mỗi merge để bắt US mới làm hỏng US cũ; mở preview ra ngoài (tunnel) cần đăng nhập và bảo mật nên tính sau. Deploy staging/production vẫn do người làm | Người dùng chọn làm trước preview theo run, E2E có bằng chứng và cổng QC Acceptance; phần `main` để sau (21/10) |
 
 ## 4. Việc cũ còn treo
 
