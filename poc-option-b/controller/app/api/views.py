@@ -83,6 +83,19 @@ def _discovery(session: Session, run: Run) -> dict:
             "rounds": {"used": counted_rounds(session, run.id), "limit": config.limits.max_rounds}}
 
 
+def _preview_view(session: Session, run: Run) -> dict | None:
+    """The run's preview (status, url, demo accounts), when the project has one; None otherwise."""
+    from controller.app.coordinator import artifact, preview_state
+    from controller.app.projects.config import EffectivePolicy
+    raw = artifact(session, run.id, "effective_policy")
+    policy = EffectivePolicy.model_validate_json(raw) if raw else None
+    if policy is None or policy.preview is None:
+        return None
+    state = preview_state(session, run.id) or {"status": "stopped", "detail": "not started"}
+    return {**state, "accounts": [a.model_dump() for a in policy.preview.accounts],
+            "available": bool(run.worktree_path)}
+
+
 def run_detail(session: Session, run: Run) -> dict:
     project = session.get(Project, run.project_id)
     documents = session.scalars(select(Document).where(Document.run_id == run.id)
@@ -96,6 +109,7 @@ def run_detail(session: Session, run: Run) -> dict:
                                  .order_by(Execution.created_at)).all()
     task_ids = {t.id: t.external_task_id for t in session.scalars(select(Task).where(Task.run_id == run.id))}
     detail = run_summary(run, project.key)
+    detail.update({"preview": _preview_view(session, run)})
     detail.update({
         "base_commit": run.base_commit, "branch": run.branch, "stage_modes": run.stage_modes,
         "commit_artifacts": run.commit_artifacts, "human_corrected": run.human_corrected,

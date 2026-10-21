@@ -104,6 +104,46 @@ class Environment(Strict):
         return self
 
 
+class Account(Strict):
+    """A demo account of the preview: test data only."""
+    role: str = Field(min_length=1, max_length=40)
+    username: str = Field(min_length=1, max_length=120)
+    password: str = Field(min_length=1, max_length=120)
+    note: str = ""
+
+
+class Preview(Strict):
+    """The application started from a run's branch, for people to try and for the acceptance tests."""
+    compose: str  # repository path of a docker compose file: the app, its database, test doubles, seed data
+    service: str = Field(pattern=r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$")  # the service opened on 127.0.0.1
+    port: int = Field(ge=1, le=65535)  # that service's port inside its container
+    path: str = "/"  # what Try it opens
+    health_path: str = "/"  # answered with 200 once the application is up
+    start_timeout_seconds: int = Field(default=600, ge=30, le=3600)
+    accounts: list[Account] = []
+    e2e: list[str] = []  # the acceptance tests: argv run in e2e_image next to the preview
+    e2e_image: str = "mcr.microsoft.com/playwright:v1.49.1-noble"
+    e2e_paths: list[str] = ["e2e/**"]  # where the QA Engineer writes them
+    e2e_timeout_seconds: int = Field(default=900, ge=30, le=3600)
+
+    @field_validator("compose")
+    @classmethod
+    def _compose(cls, value: str) -> str:
+        return _check_pattern(value)
+
+    @field_validator("e2e_paths")
+    @classmethod
+    def _paths(cls, value: list[str]) -> list[str]:
+        return [_check_pattern(pattern) for pattern in value]
+
+    @field_validator("path", "health_path")
+    @classmethod
+    def _url_path(cls, value: str) -> str:
+        if not value.startswith("/"):
+            raise ValueError("preview paths start with /")
+        return value
+
+
 class Testing(Strict):
     red_check: bool = True
     qa_executor: Literal["codex", "claude"] | None = None
@@ -186,6 +226,8 @@ class Stages(Strict):
     coding: Literal["manual", "auto"] = "auto"
     review: Literal["manual", "auto"] = "auto"
     options: Literal["gated", "skip"] = "gated"  # SDS runs: the Architect compares options, the SA picks one
+    # Story runs with a preview: E2E tests on the running application, then the QC's acceptance gate
+    acceptance: Literal["gated", "auto", "skip"] = "gated"
 
 
 class Artifacts(Strict):
@@ -220,6 +262,7 @@ class ProjectConfig(Strict):
     discovery: Discovery = Discovery()
     architecture: Architecture = Architecture()
     environment: Environment = Environment()
+    preview: Preview | None = None
 
     @model_validator(mode="after")
     def _consistent(self) -> "ProjectConfig":
@@ -290,6 +333,7 @@ class EffectivePolicy(Strict):
     env: dict[str, str] = {}
     services: list[Service] = []
     setup_inputs: list[str] = []
+    preview: Preview | None = None
 
 
 def effective_policy(config: ProjectConfig, defaults: PlatformDefaults = PlatformDefaults()) -> EffectivePolicy:
@@ -327,6 +371,7 @@ def effective_policy(config: ProjectConfig, defaults: PlatformDefaults = Platfor
         env=dict(config.environment.env),
         services=list(config.environment.services),
         setup_inputs=list(config.environment.setup_inputs),
+        preview=config.preview,
     )
 
 

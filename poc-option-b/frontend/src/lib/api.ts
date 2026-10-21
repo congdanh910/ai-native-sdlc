@@ -125,6 +125,12 @@ export interface Doc {
   inventory?: Inventory;  // the requirement inventory of a discovery, for kind "inventory"
 }
 
+export interface PreviewState {
+  status: "starting" | "running" | "stopping" | "stopped" | "failed";
+  url?: string; port?: number; started_at?: string; expires_at?: string; detail?: string;
+  accounts: { role: string; username: string; password: string; note: string }[];
+  available: boolean;  // the run has a branch to preview
+}
 export interface OptionChoices {
   recommendation: string;
   hosting_basis: "stated" | "assumed";  // assumed: the brief did not state the deployment environment
@@ -221,6 +227,7 @@ export interface RunDetail extends RunSummary {
   questions?: Question[];
   decisions?: DiscoveryDecision[];
   rounds?: { used: number; limit: number };  // extraction rounds of a discovery and discovery.limits.max_rounds
+  preview?: PreviewState | null;  // null when the project has no preview in .sdlc/project.yaml
   pull_request: {
     url: string | null; number: number | null; head_sha: string | null; ci_status: string; review_status: string;
     merged_sha: string | null; simulated: boolean;

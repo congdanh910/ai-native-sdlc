@@ -3,6 +3,7 @@
 Run with `python -m controller.app.worker`; `sdlc up` starts it in the background.
 """
 
+import json
 import logging
 import os
 import shutil
@@ -20,7 +21,7 @@ from controller.app.config import get_settings
 from controller.app.doing import process
 from controller.app.db import session_scope
 from controller.app.models import Execution, Run
-from controller.app.states import RUN_TRANSITIONS, RunStatus
+from controller.app.states import RUN_TRANSITIONS, RunStatus, TeamRole
 from controller.app.team import get_team
 from controller.app.integrations.langflow import InvalidModelOutput
 from controller.app.team.base import CapacityBusy, Team
@@ -96,6 +97,10 @@ def _fail(execution_id, exc: Exception) -> None:
             execution.attempts += 1  # postpone does not count capacity waits; failures do count
             return
         jobs.finish(session, execution, "failed", error=message)
+        if execution.kind in ("preview", "preview_stop"):  # a preview failing never stops the run
+            coordinator.store_artifact(session, run, "preview", TeamRole.COORDINATOR,
+                                       json.dumps({"status": "failed", "detail": message}))
+            return
         if RunStatus.NEEDS_HUMAN in RUN_TRANSITIONS[RunStatus(run.status)]:
             coordinator.to_needs_human(session, run, f"{execution.kind} failed: {message}")
 
@@ -172,6 +177,7 @@ def run_forever(poll_seconds: float = 1.0) -> None:
                 try:
                     with session_scope() as session:
                         coordinator.poll_pull_requests(session)
+                        coordinator.expire_previews(session)
                 except Exception:
                     log.exception("pull request polling failed")
             stopping.wait(poll_seconds)

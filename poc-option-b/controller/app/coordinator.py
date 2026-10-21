@@ -8,6 +8,7 @@ while a role works:
 3. apply: re-check the run, store the artifact, transition and queue the next job
 """
 
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 import dataclasses
 import json
@@ -45,7 +46,7 @@ from controller.app.projects.repo import Worktree
 from controller.app.schemas import (PlanPayload, PlanTask, Review, Spec, TestPlan, parse_criteria, render_plan,
                                     render_review, render_spec)
 from controller.app.state_machine import transition_run, transition_task
-from controller.app.states import RunKind, RunStatus, TaskStatus, TeamRole
+from controller.app.states import TERMINAL, RunKind, RunStatus, TaskStatus, TeamRole
 from controller.app.team.base import ReleaseResult, RunContext, StepResult, Team
 from controller.app.team.tidy import tidy_plan, tidy_spec, tidy_tests
 
@@ -65,6 +66,9 @@ KINDS: dict[str, tuple[TeamRole, bool, RunStatus]] = {
     "options": (TeamRole.ARCHITECT, False, RunStatus.DESIGNING_OPTIONS),
     "onboarding": (TeamRole.ARCHITECT, False, RunStatus.DESIGNING_ONBOARDING),
     "environment": (TeamRole.VALIDATION_GATE, False, RunStatus.PREPARING_ENVIRONMENT),
+    # Previews belong to no stage: they start and stop whatever the run is doing.
+    "preview": (TeamRole.COORDINATOR, False, None),
+    "preview_stop": (TeamRole.COORDINATOR, False, None),
 }
 
 
@@ -489,6 +493,8 @@ def load(session: Session, execution: Execution) -> Loaded:
     loaded = Loaded(execution.id, execution.kind, run.id, run.version)
     if execution.kind in ("preflight", "ground", "release"):
         return loaded
+    if execution.kind in ("preview", "preview_stop"):
+        return _load_preview(session, run, loaded, start=execution.kind == "preview")
     if execution.kind == "environment":
         document = latest_document(session, run.id, "onboarding")
         loaded.extra.update(files=(document.data or {}).get("files", {}), worktree=run.worktree_path or "",
@@ -575,6 +581,8 @@ def compute(team: Team, loaded: Loaded) -> dict:
         return _extract(team, loaded)
     if loaded.kind == "environment":
         return _try_environment(loaded)
+    if loaded.kind in ("preview", "preview_stop"):
+        return _run_preview(loaded)
     if loaded.kind == "onboarding":
         joblog.note("Architect writes the onboarding files from the SDS")
         result = {"onboarding": team.write_onboarding(context).model_dump()}
@@ -679,7 +687,7 @@ def apply(session: Session, loaded: Loaded, result: dict, team: Team) -> None:
     execution = session.get(Execution, loaded.execution_id, with_for_update=True)
     run = session.get(Run, loaded.run_id, with_for_update=True)
     expected = KINDS[loaded.kind][2]
-    if run.status != expected or (loaded.kind != "code_task" and run.version != loaded.run_version):
+    if expected is not None and (run.status != expected or (loaded.kind != "code_task" and run.version != loaded.run_version)):
         finish(session, execution, "discarded", error=f"run moved to {run.status} v{run.version} meanwhile")
         record_event(session, "job.discarded", actor=COORDINATOR, run_id=run.id,
                      payload={"kind": loaded.kind, "execution": str(execution.id)})
@@ -691,7 +699,8 @@ def apply(session: Session, loaded: Loaded, result: dict, team: Team) -> None:
     handler = {"preflight": _apply_preflight, "specify": _apply_specify, "plan": _apply_plan,
                "ground": _apply_ground, "design_tests": _apply_design_tests, "code_task": _apply_code_task, "review": _apply_review,
                "release": _apply_release, "extract": _apply_extract, "options": _apply_options,
-               "onboarding": _apply_onboarding, "environment": _apply_environment}[loaded.kind]
+               "onboarding": _apply_onboarding, "environment": _apply_environment,
+               "preview": _apply_preview, "preview_stop": _apply_preview}[loaded.kind]
     handler(session, run, execution, result, team)
     if execution.status == "running":
         finish(session, execution, "succeeded", result=result)
@@ -895,6 +904,86 @@ def _apply_environment(session: Session, run: Run, execution: Execution, result:
     record_event(session, "environment.ready", actor=COORDINATOR, run_id=run.id,
                  payload={"detail": result["detail"], "commit": head})
     enter_stage(session, run, "spec")
+
+
+# ---------------------------------------------------------------- previews
+
+def preview_state(session: Session, run_id: uuid.UUID) -> dict:
+    raw = artifact(session, run_id, "preview")
+    return json.loads(raw) if raw else {}
+
+
+def _running_previews(session: Session) -> list[tuple[uuid.UUID, dict]]:
+    run_ids = session.scalars(select(Artifact.run_id).where(Artifact.kind == "preview").distinct()).all()
+    states = [(run_id, preview_state(session, run_id)) for run_id in run_ids]
+    return sorted([(r, s) for r, s in states if s.get("status") in ("running", "starting")],
+                  key=lambda item: item[1].get("started_at") or "")
+
+
+def queue_preview(session: Session, run: Run, *, start: bool, reason: str = "") -> Execution:
+    kind = "preview" if start else "preview_stop"
+    if start:
+        store_artifact(session, run, "preview", TeamRole.COORDINATOR, json.dumps({"status": "starting", "detail": reason}))
+    return queue(session, run, kind, key=f"{kind}:{datetime.now(timezone.utc).isoformat()}")
+
+
+def _load_preview(session: Session, run: Run, loaded: Loaded, *, start: bool) -> Loaded:
+    """What the preview needs: the project's preview, the worktree, a free port, and the previews to stop first."""
+    policy = EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy"))
+    running = [(r, s) for r, s in _running_previews(session) if r != run.id]
+    evict = [str(r) for r, _ in running[:max(0, len(running) - get_settings().sdlc_preview_max_running + 1)]] if start else []
+    taken = {s.get("port") for r, s in running if str(r) not in evict}
+    loaded.extra.update(start=start, run_id=str(run.id), worktree=run.worktree_path or "", evict=evict,
+                        preview=policy.preview.model_dump() if policy.preview else None, taken=sorted(p for p in taken if p))
+    return loaded
+
+
+def _run_preview(loaded: Loaded) -> dict:
+    from controller.app import preview
+    from controller.app.projects.config import Preview
+    extra = loaded.extra
+    for other in extra["evict"]:
+        joblog.note(f"stopping the preview of run {other[:8]} to make room")
+        preview.stop(other)
+    if not extra["start"]:
+        return {"preview": preview.stop(extra["run_id"]), "stopped": extra["evict"]}
+    if extra["preview"] is None:
+        return {"preview": {"status": "failed", "detail": "the project has no preview in .sdlc/project.yaml"}}
+    if get_settings().coding_is_mocked:
+        return {"preview": {"status": "failed", "detail": "not started: SDLC_DOING_MODE is mock"}}
+    port = preview.free_port(set(extra["taken"]))
+    if port is None:
+        return {"preview": {"status": "failed", "detail": f"no free port in {get_settings().sdlc_preview_ports}"}}
+    joblog.note(f"starting the preview on 127.0.0.1:{port}")
+    state = preview.start(extra["run_id"], Path(extra["worktree"]), Preview.model_validate(extra["preview"]), port,
+                          DATA_DIR / "logs" / extra["run_id"] / "preview")
+    joblog.note(state.get("detail", "")[:500])
+    return {"preview": state, "stopped": extra["evict"]}
+
+
+def _apply_preview(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    store_artifact(session, run, "preview", TeamRole.COORDINATOR, json.dumps(result["preview"]))
+    for other in result.get("stopped", []):
+        other_run = session.get(Run, uuid.UUID(other))
+        if other_run is not None:
+            store_artifact(session, other_run, "preview", TeamRole.COORDINATOR,
+                           json.dumps({"status": "stopped", "detail": f"stopped for the preview of {str(run.id)[:8]}"}))
+    record_event(session, f"preview.{result['preview']['status']}", actor=COORDINATOR, run_id=run.id,
+                 payload={k: result["preview"].get(k) for k in ("url", "port", "detail")})
+
+
+def expire_previews(session: Session) -> int:
+    """Stop the previews past their time and those of runs that ended; called by the worker's poll."""
+    from controller.app.preview import expired
+    count = 0
+    for run_id, state in _running_previews(session):
+        run = session.get(Run, run_id)
+        if run is not None and (expired(state) or RunStatus(run.status) in TERMINAL):
+            store_artifact(session, run, "preview", TeamRole.COORDINATOR,
+                           json.dumps({**state, "status": "stopping", "detail": "time is up" if expired(state) else "the run ended"}))
+            queue(session, run, "preview_stop", key=f"expire:{state.get('started_at')}")
+            count += 1
+    return count
 
 
 # Project documents written before feature runs: document kind, file at the repository root, the AI role.

@@ -575,6 +575,18 @@ def approve_onboarding(session: Session, run: Run, document_id: uuid.UUID, *, ac
     coordinator.queue(session, run, "environment")
 
 
+def preview(session: Session, run: Run, *, actor: str, start: bool) -> None:
+    """Start or stop the run's preview: the application of its branch for people to try (127.0.0.1)."""
+    from controller.app.projects.config import EffectivePolicy
+    raw = coordinator.artifact(session, run.id, "effective_policy")
+    if raw is None or EffectivePolicy.model_validate_json(raw).preview is None:
+        raise DecisionError("the project has no preview in .sdlc/project.yaml; the foundation run sets it up")
+    if start and not run.worktree_path:
+        raise DecisionError("the run has no branch to preview yet")
+    record_event(session, f"preview.{'requested' if start else 'stop_requested'}", actor=actor, run_id=run.id, payload={})
+    coordinator.queue_preview(session, run, start=start, reason=f"requested by {actor}")
+
+
 def redo_onboarding(session: Session, run: Run, *, actor: str, reason: str) -> None:
     _require(run, RunStatus.WAITING_ONBOARDING_APPROVAL)
     if not reason.strip():

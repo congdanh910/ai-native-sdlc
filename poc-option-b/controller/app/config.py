@@ -89,6 +89,10 @@ class Settings(BaseSettings):
     pdftotext_path: str = "pdftotext"
     pdftotext_timeout_seconds: int = Field(default=120, ge=5)
     langflow_max_response_bytes: int = Field(default=2_000_000, ge=100_000)
+    # Previews: the application of a run started for people to try and for the acceptance tests (127.0.0.1 only).
+    sdlc_preview_ports: str = "9100-9199"  # host ports a preview may take
+    sdlc_preview_max_running: int = Field(default=2, ge=1, le=20)  # more stops the oldest
+    sdlc_preview_ttl_minutes: int = Field(default=60, ge=5)  # a preview stops this long after it started
 
     @field_validator("sdlc_db_port", "langflow_port", "sdlc_api_port", "ollama_tunnel_port",
                      "ollama_remote_port", "gx10_ssh_port")

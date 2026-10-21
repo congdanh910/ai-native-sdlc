@@ -280,6 +280,37 @@ def test_a_project_environment_builds_its_image_and_reaches_its_services(tmp_pat
     subprocess.run(["docker", "rmi", "-f", image], capture_output=True)  # the test leaves no image behind
 
 
+@pytest.mark.skipif(shutil.which("docker") is None or subprocess.run(["docker", "info"], capture_output=True).returncode
+                    or subprocess.run(["docker", "image", "inspect", "python:3.12-slim"], capture_output=True).returncode,
+                    reason="docker or the python:3.12-slim image is not available")
+def test_a_preview_starts_on_the_loopback_and_stops(tmp_path, monkeypatch):
+    import urllib.request
+    from controller.app import preview
+    from controller.app.projects.config import Preview
+    repo = tmp_path / "repo"
+    (repo / ".sdlc").mkdir(parents=True)
+    (repo / "site").mkdir()
+    (repo / "site" / "health").write_text("ok")
+    (repo / ".sdlc" / "preview.compose.yml").write_text(
+        "services:\n  web:\n    image: python:3.12-slim\n    working_dir: /site\n    volumes: [./site:/site:ro]\n"
+        "    command: [python, -m, http.server, '8000']\n")
+    config = Preview(compose=".sdlc/preview.compose.yml", service="web", port=8000, health_path="/health",
+                     start_timeout_seconds=60, accounts=[{"role": "ADMIN", "username": "a@example.test", "password": "x"}])
+    run_id = "testprev" + "0" * 28
+    port = preview.free_port(set())
+    try:
+        state = preview.start(run_id, repo, config, port, tmp_path / "logs")
+        assert state["status"] == "running", state["detail"]
+        assert state["url"] == f"http://127.0.0.1:{port}/" and state["expires_at"] > state["started_at"]
+        assert urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=5).read() == b"ok"
+        published = subprocess.run(["docker", "compose", "-p", preview.project_name(run_id), "port", "web", "8000"],
+                                   capture_output=True, text=True).stdout.strip()
+        assert published == f"127.0.0.1:{port}"  # never on the machine's other interfaces
+    finally:
+        assert preview.stop(run_id)["status"] == "stopped"
+    assert preview.free_port(set()) == port  # the port is free again
+
+
 # ------------------------------------------------------------------ GitHub
 
 from controller.app.doing import github  # noqa: E402

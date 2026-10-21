@@ -5,6 +5,7 @@ import { AlertTriangle, Check, ChevronDown, ChevronRight, ChevronsDownUp, Chevro
 import { api, projectDoc, type Doc, type PlanVersion, type RunDetail, type RunEvent, type Step } from "../lib/api";
 import { ACTIVE_WORK, TERMINAL, ago, cn, duration, role, short, when, parseCriteria } from "../lib/utils";
 import { Pipeline } from "../components/Pipeline";
+import { PreviewBox } from "../components/PreviewBox";
 import { DecisionPanel } from "../components/Decision";
 import { CoverageMatrix, GroundingSummary } from "../components/Coverage";
 import { JobLog } from "../components/JobLog";
@@ -398,6 +399,7 @@ export function RunView({ id }: { id: string }) {
         ) : null}
       />
       <Card className="p-3"><Pipeline run={r} /></Card>
+      <PreviewBox run={r} onChange={() => run.refetch()} />
       {r.reason && !r.waiting ? (
         <div className="flex items-start gap-2 rounded-xl border border-line bg-panel p-3 text-sm text-ink-2">
           {r.status === "COMPLETED" ? <Check className="mt-0.5 size-4 text-good" aria-hidden /> : TERMINAL.includes(r.status) ? <X className="mt-0.5 size-4 text-bad" aria-hidden /> : <AlertTriangle className="mt-0.5 size-4 text-muted" aria-hidden />}

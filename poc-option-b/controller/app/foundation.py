@@ -12,12 +12,13 @@ import re
 from pydantic import BaseModel, ConfigDict, Field
 import yaml
 
-from controller.app.projects.config import (Context, Environment, Paths, ValidationCommand, effective_policy,
-                                            parse_project_config)
+from controller.app.projects.config import (Context, Environment, Paths, Preview, ValidationCommand,
+                                            effective_policy, parse_project_config)
 from controller.app.schemas import FeedbackReply, Question
 
 CONFIG_PATH = ".sdlc/project.yaml"
 DOCKERFILE_PATH = ".sdlc/validation.Dockerfile"
+PREVIEW_COMPOSE_PATH = ".sdlc/preview.compose.yml"
 CI_PATH = ".github/workflows/ci.yml"
 # The parts of the SDS the foundation builds on: stack, structure, principles, API standards, security, conventions.
 FOUNDATION_SECTIONS = ("4.3.1", "4.3.2", "4.3.3", "4.3.5", "4.7", "6.1", "6.6", "7.1", "7.2", "7.5", "12.1", "12.2",
@@ -63,6 +64,8 @@ class Onboarding(Contract):
     environment: Environment = Environment()
     limits: OnboardingLimits = OnboardingLimits()
     test_doubles: list[TestDouble] = []
+    preview: Preview | None = None  # how the application starts for people to try and for the acceptance tests
+    preview_compose: str = ""  # the docker compose file of the preview
     notes: str = ""  # what the reviewer should know: choices, what the skeleton must create first
     questions: list[Question] = []
     feedback_replies: list[FeedbackReply] = []
@@ -99,6 +102,8 @@ def foundation_intent(request: FoundationRequest, sds: str) -> str:
         "Every external system of SDS section 13 is reached through an adapter in the integrations layer, at an "
         "address from configuration, and the tests run against its test double (the services of .sdlc/project.yaml "
         "with their scenarios in the repository), never against the real system.",
+        "The preview of .sdlc/project.yaml starts: its docker compose file builds and runs the application with its "
+        "database and test doubles, loads seed data with the demo accounts, and answers on its health path.",
     ]
     return "\n".join([
         f"# Intent: {request.title}", "",
@@ -153,11 +158,15 @@ def onboarding_files(onboarding: Onboarding, current_config: str) -> dict[str, s
     config["limits"] = {**(config.get("limits") or {}), **onboarding.limits.model_dump()}
     if environment:
         config["environment"] = environment
+    if onboarding.preview is not None:
+        config["preview"] = {**onboarding.preview.model_dump(exclude_defaults=True), "compose": PREVIEW_COMPOSE_PATH,
+                             "service": onboarding.preview.service, "port": onboarding.preview.port}
     text = yaml.safe_dump(config, sort_keys=False, allow_unicode=True, width=120)
     effective_policy(parse_project_config(text))  # raises with the reason when the configuration is not valid
     files = {"AGENTS.md": onboarding.agents_md.rstrip() + "\n", CONFIG_PATH: text}
     for path, content in (("REVIEW.md", onboarding.review_md), (".gitignore", onboarding.gitignore),
-                          (CI_PATH, onboarding.ci_workflow), (DOCKERFILE_PATH, onboarding.dockerfile)):
+                          (CI_PATH, onboarding.ci_workflow), (DOCKERFILE_PATH, onboarding.dockerfile),
+                          (PREVIEW_COMPOSE_PATH, onboarding.preview_compose if onboarding.preview else "")):
         if content.strip():
             files[path] = content.rstrip() + "\n"
     return files
