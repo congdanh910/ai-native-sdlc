@@ -1,6 +1,6 @@
 # Việc cần đánh giá và làm sau
 
-_Cập nhật: 2026-10-17. Mỗi mục ghi vì sao nó nằm đây và lúc nào nên làm. Việc đang làm nằm ở `PROGRESS.md`._
+_Cập nhật: 2026-10-21. Mỗi mục ghi vì sao nó nằm đây và lúc nào nên làm. Việc đang làm nằm ở `PROGRESS.md`._
 
 ## 1. Cần bàn với người dùng trước
 
@@ -35,6 +35,7 @@ _Cập nhật: 2026-10-17. Mỗi mục ghi vì sao nó nằm đây và lúc nào
 | 3.4 | Chia nhỏ bundle frontend (643 KB) | Cảnh báo của Vite |
 | 3.5 | Giao diện tiếng Việt | Hiện UI tiếng Anh |
 | 3.6 | Giai đoạn B7 | Ghi là "Planned" trong `poc-option-b/README.md`, chưa định nghĩa |
+| 3.7 | **Validation gọi ra ngoài có kiểm soát**: `network: {allow: [host...]}` và `secrets: [TÊN]` theo từng lệnh validation; proxy trong mạng của lần validation chỉ cho đi tới host được phép và ghi log mọi request; secret (token sandbox) lưu trong kho secret của nền tảng, không nằm trong repo, chỉ truyền vào đúng lệnh đó, không đưa cho phiên AI viết code; lệnh có mạng chạy một lần trước khi mở PR (không chạy trong vòng red check/sửa code), kết quả hiện ở cổng PR; Onboarding và cổng Tech Lead thấy rõ các host được mở | Hiện validation không ra Internet (an toàn). Tích hợp thường dùng service giả trong `environment.services` (WireMock, LocalStack, MinIO, Mailpit…), đủ cho attendance; chỉ làm khi có dự án thật sự cần gọi sandbox bên ngoài (21/10) |
 
 ## 4. Việc cũ còn treo
 
