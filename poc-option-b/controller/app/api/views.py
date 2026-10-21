@@ -109,8 +109,9 @@ def _preview_view(session: Session, run: Run) -> dict | None:
         if failed_at and head_time(Path(run.worktree_path)) > failed_at:
             state = {"status": "stopped", "detail": "The last start failed on earlier code; the branch changed since, "
                                                      f"start it again. Earlier error: {state.get('detail', '')[:300]}"}
+    from controller.app.services import preview_locked
     return {**state, "accounts": [a.model_dump() for a in policy.preview.accounts], "available": bool(run.worktree_path),
-            "missing": missing}
+            "missing": missing, "locked": preview_locked(run, start=state.get("status") not in ("running", "starting"))}
 
 
 def run_detail(session: Session, run: Run) -> dict:

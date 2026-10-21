@@ -20,7 +20,7 @@ from controller.app.projects.registry import mirror_for
 from controller.app.schemas import Intent, PlanPayload, TestPlan, parse_criteria, render_intent
 from controller.app.state_machine import transition_run, transition_task
 from controller.app.config import get_settings
-from controller.app.states import TASK_TRANSITIONS, TERMINAL, HumanRole, RunKind, RunStatus, TaskStatus, TeamRole
+from controller.app.states import TASK_TRANSITIONS, TERMINAL, WAITING_FOR, HumanRole, RunKind, RunStatus, TaskStatus, TeamRole
 
 PO, TL, CO = HumanRole.PRODUCT_OWNER.value, HumanRole.TECH_LEAD.value, HumanRole.CODE_OWNER.value
 QC = HumanRole.QC.value
@@ -614,8 +614,21 @@ def decide_acceptance(session: Session, run: Run, *, actor: str, decision: str, 
         raise DecisionError(f"unknown acceptance decision {decision!r}")
 
 
+def preview_locked(run: Run, *, start: bool) -> str | None:
+    """Why people cannot start or stop the preview now, or None. It starts while the run waits for a person, when
+    its branch holds still; the acceptance tests start their own and use it, so it is never stopped under them."""
+    if RunStatus(run.status) == RunStatus.ACCEPTANCE_TESTING:
+        return "The acceptance tests start the preview and run on it; it stays running for the QC's gate."
+    if start and RunStatus(run.status) not in WAITING_FOR:
+        return "Available when the run waits for a person (a gate, or needs a human): the team is changing the code."
+    return None
+
+
 def preview(session: Session, run: Run, *, actor: str, start: bool) -> None:
     """Start or stop the run's preview: the application of its branch for people to try (127.0.0.1)."""
+    locked = preview_locked(run, start=start)
+    if locked:
+        raise DecisionError(locked)
     from controller.app.projects.config import EffectivePolicy
     raw = coordinator.artifact(session, run.id, "effective_policy")
     if raw is None or EffectivePolicy.model_validate_json(raw).preview is None:

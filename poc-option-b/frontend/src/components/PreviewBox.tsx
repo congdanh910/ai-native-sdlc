@@ -26,7 +26,7 @@ export function PreviewBox({ run, onChange }: { run: RunDetail; onChange: () => 
           <span className="text-xs text-muted">stops at {new Date(preview.expires_at).toLocaleTimeString()}</span>
         ) : null}
         <span className="ml-auto flex gap-2">
-          {preview.status === "unavailable" ? null : preview.status === "running" || busy ? (
+          {preview.status === "unavailable" || preview.locked ? null : preview.status === "running" || busy ? (
             <ActionButton disabled={preview.status === "stopping"} success="Stopping the preview" action={() => act("stop")}>
               <Square className="size-3.5" /> Stop</ActionButton>
           ) : (
@@ -35,6 +35,7 @@ export function PreviewBox({ run, onChange }: { run: RunDetail; onChange: () => 
           )}
         </span>
       </div>
+      {preview.locked && preview.status !== "unavailable" ? <p className="m-0 text-xs text-muted">{preview.locked}</p> : null}
       {preview.status !== "running" && preview.detail ? (
         <p className={`m-0 whitespace-pre-wrap text-xs ${preview.status === "failed" ? "text-bad" : "text-muted"}`}>{preview.detail.slice(0, 1200)}</p>
       ) : null}

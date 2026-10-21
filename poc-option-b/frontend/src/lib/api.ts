@@ -131,6 +131,7 @@ export interface PreviewState {
   accounts: { role: string; username: string; password: string; note: string }[];
   available: boolean;  // the run has a branch to preview
   missing?: string[];  // build folders of the compose file the branch does not have yet
+  locked?: string | null;  // why people cannot start or stop it now (the team is changing the code, acceptance runs on it)
 }
 export interface OptionChoices {
   recommendation: string;

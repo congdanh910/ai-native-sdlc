@@ -104,3 +104,20 @@ def test_a_preview_waits_for_the_code_its_compose_file_builds(db, sample_repo):
     assert "Available once the code exists: web/, backend/" in preview["detail"]
     refused = client.post(f"/api/runs/{run_id}/preview", json={"action": "start"})
     assert refused.status_code == 409 and "nothing to preview yet: web/, backend/" in refused.text
+
+
+def test_the_preview_waits_while_the_team_changes_the_code_and_is_left_to_the_acceptance_tests(db, sample_repo):
+    from controller.app.models import Run
+    from controller.app.states import RunStatus
+    run_id = start_run(sample_repo, with_preview=True)
+    for status, action, message in ((RunStatus.CODING, "start", "the team is changing the code"),
+                                    (RunStatus.ACCEPTANCE_TESTING, "start", "acceptance tests start the preview"),
+                                    (RunStatus.ACCEPTANCE_TESTING, "stop", "acceptance tests start the preview")):
+        with session_scope() as session:
+            session.get(Run, uuid.UUID(run_id)).status = status
+        refused = client.post(f"/api/runs/{run_id}/preview", json={"action": action})
+        assert refused.status_code == 409 and message in refused.text
+        assert message in client.get(f"/api/runs/{run_id}").json()["preview"]["locked"]
+    with session_scope() as session:
+        session.get(Run, uuid.UUID(run_id)).status = RunStatus.CODING
+    assert client.post(f"/api/runs/{run_id}/preview", json={"action": "stop"}).status_code < 400  # stopping is fine
