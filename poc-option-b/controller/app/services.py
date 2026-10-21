@@ -575,6 +575,38 @@ def approve_onboarding(session: Session, run: Run, document_id: uuid.UUID, *, ac
     coordinator.queue(session, run, "environment")
 
 
+def decide_acceptance(session: Session, run: Run, *, actor: str, decision: str, reason: str = "",
+                      document_id: uuid.UUID | None = None, checked: list[str] | None = None) -> None:
+    """The QC's acceptance gate. accept: every criterion passed on the preview, the PR opens. reject: defects go to
+    the Developer (every task again with the QC's notes), then review and acceptance again. retest: run the tests
+    again, rewritten by the QA Engineer when the reason says what is wrong with them."""
+    _require(run, RunStatus.WAITING_ACCEPTANCE_APPROVAL)
+    if decision == "accept":
+        document = latest_document(session, run.id, "acceptance")
+        if document is None or document.id != document_id:
+            raise DecisionError("the acceptance report changed; reload the page")
+        _approval(session, run, "acceptance", "approve", actor, QC, document_id=document.id,
+                  checklist=_checklist(session, run, checked))
+        transition_run(session, run, RunStatus.PR_OPEN, actor=actor, acting_role=QC, reason="the QC accepted the story")
+        coordinator.queue(session, run, "release")
+    elif decision == "reject":
+        if not reason.strip():
+            raise DecisionError("describe the defects: what you did, what you saw, what you expected")
+        _corrected(run)
+        _approval(session, run, "acceptance", "reject", actor, QC, reason=reason)
+        transition_run(session, run, RunStatus.CODING, actor=actor, acting_role=QC, reason=reason)
+        for task in coordinator.current_tasks(session, run):
+            transition_task(session, task, TaskStatus.READY, actor=actor, reason=f"defects found in acceptance: {reason}")
+        coordinator.schedule_tasks(session, run)
+    elif decision == "retest":
+        _approval(session, run, "acceptance", "retest", actor, QC, reason=reason or None)
+        transition_run(session, run, RunStatus.ACCEPTANCE_TESTING, actor=actor, acting_role=QC,
+                       reason=reason or "the QC asked to run the acceptance tests again")
+        coordinator.queue(session, run, "acceptance", key=f"retest:v{run.version}")
+    else:
+        raise DecisionError(f"unknown acceptance decision {decision!r}")
+
+
 def preview(session: Session, run: Run, *, actor: str, start: bool) -> None:
     """Start or stop the run's preview: the application of its branch for people to try (127.0.0.1)."""
     from controller.app.projects.config import EffectivePolicy

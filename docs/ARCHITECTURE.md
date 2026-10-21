@@ -10,7 +10,8 @@ Full design: `AI_Native_SDLC_Option_B.md`. This page is the map an agent needs t
   macOS `caffeinate -i` assertion while jobs are queued/running, polls PRs.
 - **Coordinator** (`coordinator.py`): each job is load (DB, short) → compute (calls a team role, no DB) → apply
   (re-check run version, store artifacts, transition, queue next). Job kinds in `KINDS`: preflight, specify, plan,
-  ground, design_tests, code_task, review, release, extract, options, onboarding, environment.
+  ground, design_tests, code_task, review, release, extract, options, onboarding, environment, acceptance, preview,
+  preview_stop (the two preview jobs belong to no stage: `KINDS` status None, failures never stop the run).
 - **Run kinds** (`RunKind`): discovery (raw sources → baseline), srs, sds (Options step with hosting variants, then
   four SDS passes), foundation (onboarding files from the SDS, then the walking skeleton), feature (one SRS story).
 - **State machine**: `states.py` (RunStatus, RunKind, transitions, who a waiting run waits for) and
@@ -37,6 +38,20 @@ Full design: `AI_Native_SDLC_Option_B.md`. This page is the map an agent needs t
   at worker start (`doing/process.py`).
 - External systems are never called from validation: each one of SDS §13 has a test double among the services
   (WireMock, LocalStack, MinIO, Mailpit, MediaMTX …). Controlled outbound calls: BACKLOG 3.7.
+
+## Preview and acceptance (`preview.py`, `acceptance.py`, design `poc-option-b/docs/acceptance-design.md`)
+
+- `preview.start`: `docker compose -p sdlc-preview-<run8>` with the project's `preview.compose` and a platform override
+  publishing `service:port` on `127.0.0.1:<port>`; waits for `health_path`; artifact `preview` (status, url, port,
+  expires_at). Ports from `SDLC_PREVIEW_PORTS`, cap `SDLC_PREVIEW_MAX_RUNNING` (oldest stopped), TTL
+  `SDLC_PREVIEW_TTL_MINUTES`; `expire_previews` runs with the worker's PR poll. API `POST /runs/{id}/preview`.
+- After the review (`acceptance_enabled`: story or foundation run, `preview.e2e`, `stages.acceptance` not skip) the
+  `acceptance` job: QA Engineer writes Playwright tests (`write_acceptance_tests`, prompt
+  `doing/prompts/acceptance-tests.md`, commit `test(acceptance):`), the preview starts, `run_e2e` runs them in
+  `e2e_image` on the preview network, `parse_report` maps tests to AC/EC ids, evidence under
+  `.data/evidence/<run>/<attempt>/` (`GET /runs/{id}/evidence/{path}`), document `acceptance`.
+- Gate `acceptance` (QC): accept → PR; reject → every task READY with the QC's notes (code_task gets
+  `changes` since the last review, also for PR request_changes), review and acceptance again; retest.
 
 ## Foundation run (`foundation.py`, design `poc-option-b/docs/foundation-design.md`)
 

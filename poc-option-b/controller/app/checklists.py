@@ -58,6 +58,11 @@ HUMAN_ITEMS = {
         Item("deferrals", "The items out of scope and the deferred questions are acceptable"),
         Item("actors", "The actors and their permissions are complete"),
     ],
+    "acceptance": [
+        Item("tried", "I tried each acceptance criterion on the preview with the demo account of its role"),
+        Item("evidence", "The screenshots and videos show what each criterion asks"),
+        Item("no-blocker", "No defect outside the criteria blocks this story"),
+    ],
     "onboarding": [
         Item("stack", "AGENTS.md states the stack, commands, structure and rules of the SDS"),
         Item("paths", "The paths the coding roles may change and the test paths fit the structure"),

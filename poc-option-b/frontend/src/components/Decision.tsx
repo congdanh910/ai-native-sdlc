@@ -7,6 +7,8 @@ import { CoverageMatrix, GroundingSummary } from "./Coverage";
 import { GateChecklist } from "./GateChecklist";
 import { PlanSummary } from "./PlanSummary";
 import { RevisionSummary } from "./Revision";
+import { PreviewBox } from "./PreviewBox";
+import { AcceptanceReport } from "./AcceptanceReport";
 import { ActionButton, Badge, Button, Card, Field, Markdown, Mono, Select, StatusBadge, Textarea } from "./ui";
 
 function Panel({ run, title, children }: { run: RunDetail; title: string; children: ReactNode }) {
@@ -112,6 +114,25 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
             </div>
           </details>
         ) : null}
+      </Panel>
+    );
+  }
+
+  if (need.action === "waiting_acceptance_approval") {
+    const report = [...run.documents].reverse().find((d) => d.kind === "acceptance");
+    if (!report) return null;
+    return (
+      <Panel run={run} title={`Acceptance ${report.version > 1 ? `v${report.version}` : ""}`.trim()}>
+        <p className="m-0 text-sm text-muted">The QA Engineer's end-to-end tests ran against the story's preview. Try the story yourself with the demo accounts, check the evidence of every criterion, then accept it (the pull request opens) or send the defects back to the Developer.</p>
+        <PreviewBox run={run} onChange={onDone} />
+        <AcceptanceReport run={run} doc={report} />
+        {checklist}
+        <Reason value={reason} onChange={setReason} placeholder="Defects: what you did, what you saw, what you expected. Or what is wrong with the tests, to have them written again" />
+        <div className="flex flex-wrap gap-2">
+          <ActionButton variant="primary" success="Accepted; opening the PR" action={() => post("acceptance", { decision: "accept", document_id: report.id, checked })}>Accept the story</ActionButton>
+          <ActionButton variant="danger" disabled={!reason.trim()} action={() => post("acceptance", { decision: "reject", reason })}>Send defects to the Developer</ActionButton>
+          <ActionButton action={() => post("acceptance", { decision: "retest", reason })}>Run the tests again</ActionButton>
+        </div>
       </Panel>
     );
   }

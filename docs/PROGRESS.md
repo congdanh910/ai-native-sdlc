@@ -192,6 +192,19 @@ Thiết kế: `poc-option-b/docs/foundation-design.md`.
   Foundation có kết quả "adapter + test double cho mọi hệ thống §13". BACKLOG 3.7: gọi ra ngoài qua allowlist.
 - Test: 239 pass.
 
+## Thêm ngày 21/10: preview và Acceptance
+
+Thiết kế: `poc-option-b/docs/acceptance-design.md`.
+- P1 (d30806d): `preview:` trong project.yaml (`Preview`, `Account`), `controller/app/preview.py`, job `preview`/
+  `preview_stop`, API `POST /runs/{id}/preview`, `expire_previews` trong worker, khung Preview trên trang run;
+  Onboarding viết `preview` và `.sdlc/preview.compose.yml`; spec Foundation đòi preview chạy được. Test compose thật
+  (python:3.12-slim) pass: mở đúng 127.0.0.1.
+- P2: trạng thái ACCEPTANCE_TESTING / WAITING_ACCEPTANCE_APPROVAL, `stages.acceptance`, `controller/app/acceptance.py`,
+  `write_acceptance_tests` (QA Engineer, Playwright), cổng QC (accept/reject/retest), bằng chứng
+  `.data/evidence/`, ghi chú của QC và của Code Owner (request_changes) tới Developer. Chưa chạy thật test Playwright
+  (image Playwright chưa tải; ổ Docker còn ít chỗ).
+- Test: 247 pass.
+
 ## Bước tiếp theo
 
 Attendance: SRS và SDS (PR #9) đã merge. Chạy **Foundation** trên attendance (Codex), duyệt Onboarding, rồi các story

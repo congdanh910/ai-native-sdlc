@@ -57,6 +57,9 @@ class CompositeTeam:
     def red_check(self, *args, **kwargs):
         return self.doing.red_check(*args, **kwargs)
 
+    def write_acceptance_tests(self, *args, **kwargs):
+        return self.doing.write_acceptance_tests(*args, **kwargs)
+
     def implement(self, *args, **kwargs):
         return self.doing.implement(*args, **kwargs)
 

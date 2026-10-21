@@ -32,6 +32,7 @@ export const ACTION_LABEL: Record<string, string> = {
   waiting_baseline_approval: "Approve the baseline",
   waiting_options_approval: "Choose the architecture option",
   waiting_onboarding_approval: "Approve the onboarding files",
+  waiting_acceptance_approval: "Accept the story on its preview",
   waiting_spec_approval: "Review spec.md",
   waiting_plan_approval: "Review the plan",
   waiting_test_approval: "Review the test cases",
@@ -41,7 +42,7 @@ export const ACTION_LABEL: Record<string, string> = {
   classify: "Classify what went wrong",
 };
 
-export const ACTIVE_WORK = ["RECEIVED", "PREFLIGHT", "EXTRACTING", "DESIGNING_OPTIONS", "DESIGNING_ONBOARDING", "PREPARING_ENVIRONMENT", "SPECIFYING", "PLANNING", "GROUNDING", "DESIGNING_TESTS", "READY", "CODING",
+export const ACTIVE_WORK = ["RECEIVED", "PREFLIGHT", "EXTRACTING", "DESIGNING_OPTIONS", "DESIGNING_ONBOARDING", "PREPARING_ENVIRONMENT", "ACCEPTANCE_TESTING", "SPECIFYING", "PLANNING", "GROUNDING", "DESIGNING_TESTS", "READY", "CODING",
   "REVIEWING", "PR_OPEN"];
 export const TERMINAL = ["COMPLETED", "CANCELLED", "FAILED", "CLOSED_UNMERGED"];
 
@@ -92,6 +93,7 @@ export function humanStatus(status: string) {
   const map: Record<string, string> = {
     WAITING_SPEC_APPROVAL: "Waiting for spec approval",
     WAITING_ONBOARDING_APPROVAL: "Waiting for onboarding approval",
+    WAITING_ACCEPTANCE_APPROVAL: "Waiting for acceptance",
     WAITING_PLAN_APPROVAL: "Waiting for plan approval",
     WAITING_TEST_APPROVAL: "Waiting for test approval",
     WAITING_PR_APPROVAL: "Waiting for merge",

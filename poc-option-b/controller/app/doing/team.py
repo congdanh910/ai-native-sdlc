@@ -122,6 +122,43 @@ class CliDoing:
         return StepResult(True, detail, changed_files=files,
                           evidence=self._evidence(result, label, commit=sha, amended=amended))
 
+    def write_acceptance_tests(self, context: RunContext, criteria: str, story: str, feedback: str = "") -> StepResult:
+        """The QA Engineer's end-to-end tests of the story's criteria, for the preview; reused once committed."""
+        worktree = self._worktree(context)
+        changes.discard(worktree)
+        preview = context.policy.preview
+        if not feedback and context.base_commit:
+            existing = changes.find_commit(worktree, context.base_commit, "test(acceptance):")
+            if existing:
+                return StepResult(True, f"acceptance tests already committed in {existing[:10]}; reused",
+                                  evidence={"commit": existing, "reused": True})
+        if feedback:
+            changes.drop_commit(worktree, "test(acceptance):")
+        accounts = "\n".join(f"  - {a.role}: {a.username} / {a.password}" + (f" ({a.note})" if a.note else "")
+                             for a in preview.accounts) or "  - none: ask in your answer"
+        prompt = _prompt("acceptance-tests", agents_md=context.agents_md, story=story, criteria=criteria,
+                         e2e_paths=", ".join(preview.e2e_paths), accounts=accounts, e2e_command=" ".join(preview.e2e),
+                         feedback=f"\n# Previous attempt\n\n{feedback}\n" if feedback else "")
+        task = PlanTask(id="ACC", title="Acceptance tests", acceptance_criteria=["all"])
+        label = f"acceptance-tests-{2 if feedback else 1}"
+        result = self._session(context.policy.qa_executor, "qa_engineer", prompt, context, task,
+                               list(preview.e2e_paths), label)
+        if not result.ok:
+            changes.discard(worktree)
+            return StepResult(False, f"QA Engineer session failed ({result.executor}): {result.message[-300:]}",
+                              evidence=self._evidence(result, label))
+        staged = changes.stage_changes(worktree)
+        e2e_policy = context.policy.model_copy(update={"test_paths": list(preview.e2e_paths)})
+        problems = changes.check_tests(worktree, staged, e2e_policy) if staged else ["no acceptance test was written"]
+        if problems:
+            changes.discard(worktree)
+            return StepResult(False, "acceptance tests rejected: " + "; ".join(problems),
+                              evidence=self._evidence(result, label, problems=problems))
+        sha = changes.commit(worktree, "test(acceptance): end-to-end tests of the story's criteria", "qa_engineer")
+        files = [c.path for c in staged]
+        return StepResult(True, f"acceptance tests written in {', '.join(files)} ({result.executor})",
+                          changed_files=files, evidence=self._evidence(result, label, commit=sha))
+
     def red_check(self, context: RunContext, task: PlanTask, tests: TestPlan) -> StepResult:
         if context.base_commit:
             earlier = changes.find_commit(self._worktree(context), context.base_commit, f"feat({task.id}):")

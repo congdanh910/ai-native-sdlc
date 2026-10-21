@@ -66,6 +66,7 @@ KINDS: dict[str, tuple[TeamRole, bool, RunStatus]] = {
     "options": (TeamRole.ARCHITECT, False, RunStatus.DESIGNING_OPTIONS),
     "onboarding": (TeamRole.ARCHITECT, False, RunStatus.DESIGNING_ONBOARDING),
     "environment": (TeamRole.VALIDATION_GATE, False, RunStatus.PREPARING_ENVIRONMENT),
+    "acceptance": (TeamRole.QA_ENGINEER, True, RunStatus.ACCEPTANCE_TESTING),
     # Previews belong to no stage: they start and stop whatever the run is doing.
     "preview": (TeamRole.COORDINATOR, False, None),
     "preview_stop": (TeamRole.COORDINATOR, False, None),
@@ -85,7 +86,7 @@ def queue(session: Session, run: Run, kind: str, *, key: str | None = None, task
 # ---------------------------------------------------------------- stages
 
 def stage_mode(run: Run, stage: str) -> str:
-    return run.stage_modes.get(stage, "gated" if stage in ("spec", "plan") else "auto")
+    return run.stage_modes.get(stage, "gated" if stage in ("spec", "plan", "acceptance") else "auto")
 
 
 def enter_stage(session: Session, run: Run, stage: str, *, actor: str = COORDINATOR,
@@ -247,7 +248,8 @@ def tick_tasks(session: Session, run: Run) -> None:
 # ---------------------------------------------------------------- gate checklists
 
 GATE_OF_STATUS = {RunStatus.WAITING_BASELINE_APPROVAL: "baseline", RunStatus.WAITING_OPTIONS_APPROVAL: "options",
-                  RunStatus.WAITING_ONBOARDING_APPROVAL: "onboarding", RunStatus.WAITING_PLAN_APPROVAL: "plan", RunStatus.WAITING_TEST_APPROVAL: "tests",
+                  RunStatus.WAITING_ONBOARDING_APPROVAL: "onboarding",
+                  RunStatus.WAITING_ACCEPTANCE_APPROVAL: "acceptance", RunStatus.WAITING_PLAN_APPROVAL: "plan", RunStatus.WAITING_TEST_APPROVAL: "tests",
                   RunStatus.WAITING_PR_APPROVAL: "pr"}
 
 
@@ -269,6 +271,10 @@ def evaluate_gate(session: Session, run: Run, gate: str | None = None) -> dict |
     spec = latest_document(session, run.id, "spec")
     if gate == "baseline":
         controller, ai = baseline_checks(session, run)
+    elif gate == "acceptance":
+        data = latest_document(session, run.id, "acceptance").data or {}
+        controller = [checklists._result("criteria", "Every acceptance criterion and edge case has an end-to-end test "
+                                         "and all of them passed on the preview", data.get("problems", []))]
     elif gate == "onboarding":
         from controller.app.foundation import CONFIG_PATH, Onboarding, check_test_doubles
         data = latest_document(session, run.id, "onboarding").data or {}
@@ -545,6 +551,25 @@ def load(session: Session, execution: Execution) -> Loaded:
         loaded.extra["diff"] = changes.run_diff(Path(run.worktree_path), run.base_commit, loaded.context.policy.test_paths,
                                                 get_settings().context_char_budget // 2)  # spec, plan and test plan need room too
         loaded.extra["validation"] = validation_summary(session, run)
+    if execution.kind == "acceptance":
+        _load_preview(session, run, loaded, start=True)
+        retest = session.scalar(select(Approval).where(Approval.run_id == run.id, Approval.stage == "acceptance")
+                                .order_by(Approval.created_at.desc()).limit(1))
+        if retest is not None and retest.decision == "retest" and retest.reason:  # the QC says the tests are wrong
+            loaded.extra["feedback"] = f"The QC asked for the acceptance tests again: {retest.reason}"
+        loaded.extra.update(attempt=session.scalar(select(func.count()).select_from(Document).where(
+            Document.run_id == run.id, Document.kind == "acceptance")) + 1)
+    if execution.kind == "code_task":
+        # what the QC (acceptance) or the Code Owner (pull request) asked since the last review: the Developer's notes
+        last_review = latest_document(session, run.id, "review")
+        asked = select(Approval.stage, Approval.reason).where(
+            Approval.run_id == run.id, Approval.reason.is_not(None),
+            ((Approval.stage == "acceptance") & (Approval.decision == "reject"))
+            | ((Approval.stage == "pr") & (Approval.decision == "request_changes")))
+        if last_review is not None:
+            asked = asked.where(Approval.created_at >= last_review.created_at)
+        loaded.extra["changes"] = [f"{'QC (acceptance)' if stage == 'acceptance' else 'Code Owner (pull request)'}: "
+                                   f"{reason}" for stage, reason in session.execute(asked.order_by(Approval.created_at))]
     if execution.task_id:
         task = session.get(Task, execution.task_id)
         loaded.task_payload, loaded.task_attempt = task.payload, task.attempt_count
@@ -583,6 +608,8 @@ def compute(team: Team, loaded: Loaded) -> dict:
         return _try_environment(loaded)
     if loaded.kind in ("preview", "preview_stop"):
         return _run_preview(loaded)
+    if loaded.kind == "acceptance":
+        return _accept(team, loaded)
     if loaded.kind == "onboarding":
         joblog.note("Architect writes the onboarding files from the SDS")
         result = {"onboarding": team.write_onboarding(context).model_dump()}
@@ -666,6 +693,9 @@ def _work_task(team: Team, loaded: Loaded) -> list[dict]:
             return steps
     upheld = (f"You disputed a test earlier: {ruling['dispute']}\nThe Tech Lead kept the tests: {ruling['reason']}\n"
               f"Make the code pass them.") if ruling and ruling["decision"] == "keep_tests" else ""
+    if loaded.extra.get("changes"):  # sent back from the acceptance gate or the pull request
+        upheld = "\n".join(["Changes asked after the review; make them where they concern this task:",
+                             *loaded.extra["changes"], upheld]).strip()
     steps.append(step(TaskStatus.CODING, TeamRole.DEVELOPER, team.implement(context, task, 1, tests, feedback=upheld)))
     max_remediations = context.policy.max_remediations
     for remediation in range(max_remediations + 1):
@@ -700,7 +730,8 @@ def apply(session: Session, loaded: Loaded, result: dict, team: Team) -> None:
                "ground": _apply_ground, "design_tests": _apply_design_tests, "code_task": _apply_code_task, "review": _apply_review,
                "release": _apply_release, "extract": _apply_extract, "options": _apply_options,
                "onboarding": _apply_onboarding, "environment": _apply_environment,
-               "preview": _apply_preview, "preview_stop": _apply_preview}[loaded.kind]
+               "preview": _apply_preview, "preview_stop": _apply_preview,
+               "acceptance": _apply_acceptance}[loaded.kind]
     handler(session, run, execution, result, team)
     if execution.status == "running":
         finish(session, execution, "succeeded", result=result)
@@ -972,6 +1003,71 @@ def _apply_preview(session: Session, run: Run, execution: Execution, result: dic
                  payload={k: result["preview"].get(k) for k in ("url", "port", "detail")})
 
 
+def _accept(team: Team, loaded: Loaded) -> dict:
+    """The QA Engineer writes the E2E tests, the preview starts, the tests run next to it; evidence per criterion."""
+    from controller.app import acceptance, preview
+    from controller.app.projects.config import Preview
+    context, extra = loaded.context, loaded.extra
+    criteria = {c.id: c.full for c in parse_criteria(context.spec_md or "")}
+    story = context.intent_md if not context.story else f"{context.story.get('story_id')}: {context.story.get('statement')}"
+    written = team.write_acceptance_tests(context, "\n".join(f"- {cid}: {text}" for cid, text in criteria.items()),
+                                          story or context.title, feedback=extra.get("feedback", ""))
+    joblog.note(f"acceptance tests: {written.detail[:300]}")
+    result = {"tests": {"ok": written.ok, "detail": written.detail, "evidence": written.evidence},
+              "criteria": criteria, "attempt": extra["attempt"], "cases": [], "preview": None, "stopped": []}
+    if not written.ok:
+        return {**result, "ok": False, "detail": written.detail}
+    if get_settings().coding_is_mocked:
+        cases = [{"title": f"{cid} (mock)", "criteria": [cid], "status": "passed", "error": "", "attachments": []}
+                 for cid in criteria]
+        return {**result, "ok": True, "cases": cases, "detail": "mock: acceptance tests not run"}
+    run_id = extra["run_id"]
+    for other in extra["evict"]:
+        preview.stop(other)
+    port = preview.free_port(set(extra["taken"]))
+    if port is None:
+        return {**result, "ok": False, "detail": f"no free port in {get_settings().sdlc_preview_ports}"}
+    config = Preview.model_validate(extra["preview"])
+    state = preview.start(run_id, Path(extra["worktree"]), config, port, DATA_DIR / "logs" / run_id / "preview")
+    result.update(preview=state, stopped=extra["evict"])
+    if state["status"] != "running":
+        return {**result, "ok": False, "detail": f"the preview did not start: {state['detail'][:1500]}"}
+    evidence = DATA_DIR / "evidence" / run_id / str(extra["attempt"])
+    joblog.note(f"running the acceptance tests against {state['url']}")
+    ran = acceptance.run_e2e(run_id, Path(extra["worktree"]), config, evidence, context.policy.container_memory_mb)
+    if not ran["ok"]:
+        return {**result, "ok": False, "detail": ran["detail"]}
+    cases = acceptance.parse_report(ran["report"], evidence)
+    joblog.note(f"{sum(c['status'] == 'passed' for c in cases)}/{len(cases)} acceptance test(s) passed")
+    return {**result, "ok": True, "cases": cases, "detail": ran["detail"]}
+
+
+def _apply_acceptance(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    """The acceptance report, then the QC's gate (or straight to the PR in auto mode when every criterion passed)."""
+    from controller.app.acceptance import coverage, render_acceptance
+    if result.get("preview"):
+        store_artifact(session, run, "preview", TeamRole.COORDINATOR, json.dumps(result["preview"]))
+    if not result["ok"]:
+        to_needs_human(session, run, f"acceptance tests could not run: {result['detail'][:600]}")
+        return
+    url = (result.get("preview") or {}).get("url", "")
+    content = render_acceptance(run.title, result["criteria"], result["cases"], url,
+                                f"/api/runs/{run.id}/evidence/{result['attempt']}")
+    problems = coverage(list(result["criteria"]), result["cases"])
+    document = add_document(session, run.id, "acceptance", content, author_kind="ai", author=TeamRole.QA_ENGINEER.value,
+                            data={"cases": result["cases"], "criteria": result["criteria"], "attempt": result["attempt"],
+                                  "url": url, "problems": problems, "tests": result["tests"]})
+    document.commit_sha = commit_thread(session, run, "acceptance", content, "sdlc: acceptance report")
+    if stage_mode(run, "acceptance") == "auto" and not problems:
+        transition_run(session, run, RunStatus.PR_OPEN, actor=TeamRole.QA_ENGINEER.value,
+                       reason=f"every criterion passed on the preview ({len(result['cases'])} test(s))")
+        queue(session, run, "release")
+        return
+    transition_run(session, run, RunStatus.WAITING_ACCEPTANCE_APPROVAL, actor=TeamRole.QA_ENGINEER.value,
+                   reason=f"{len(result['cases'])} acceptance test(s); " + ("all criteria passed" if not problems
+                                                                          else f"{len(problems)} problem(s)"))
+
+
 def expire_previews(session: Session) -> int:
     """Stop the previews past their time and those of runs that ended; called by the worker's poll."""
     from controller.app.preview import expired
@@ -1206,9 +1302,22 @@ def _apply_review(session: Session, run: Run, execution: Execution, result: dict
     document = add_document(session, run.id, "review", markdown, author_kind="ai",
                             author=TeamRole.CODE_REVIEWER.value, data=review)
     document.commit_sha = commit_thread(session, run, "review", document.content, "sdlc: review")
+    if acceptance_enabled(session, run):
+        transition_run(session, run, RunStatus.ACCEPTANCE_TESTING, actor=TeamRole.CODE_REVIEWER.value,
+                       reason=f"review verdict: {review['verdict']}; the story is tried on its preview")
+        queue(session, run, "acceptance")
+        return
     transition_run(session, run, RunStatus.PR_OPEN, actor=TeamRole.CODE_REVIEWER.value,
                    reason=f"review verdict: {review['verdict']}")
     queue(session, run, "release")
+
+
+def acceptance_enabled(session: Session, run: Run) -> bool:
+    """Story and foundation runs of a project with a preview and its E2E command, unless stages.acceptance is skip."""
+    if run.kind not in (RunKind.FEATURE, RunKind.FOUNDATION) or stage_mode(run, "acceptance") == "skip":
+        return False
+    policy = EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy"))
+    return bool(policy.preview and policy.preview.e2e)
 
 
 def execution_report(session: Session, run: Run) -> str:

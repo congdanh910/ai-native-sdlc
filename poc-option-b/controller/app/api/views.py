@@ -12,7 +12,7 @@ from controller.app.services import needs_classification
 from controller.app.states import ACTIVE, STAGE_STARTER, WAITING_FOR, HumanRole
 
 
-WAITING_GATES = ("WAITING_BASELINE_APPROVAL", "WAITING_ONBOARDING_APPROVAL", "WAITING_OPTIONS_APPROVAL", "WAITING_SPEC_APPROVAL", "WAITING_PLAN_APPROVAL", "WAITING_TEST_APPROVAL", "WAITING_PR_APPROVAL")
+WAITING_GATES = ("WAITING_BASELINE_APPROVAL", "WAITING_ONBOARDING_APPROVAL", "WAITING_ACCEPTANCE_APPROVAL", "WAITING_OPTIONS_APPROVAL", "WAITING_SPEC_APPROVAL", "WAITING_PLAN_APPROVAL", "WAITING_TEST_APPROVAL", "WAITING_PR_APPROVAL")
 
 
 def project_view(project: Project) -> dict:
@@ -49,6 +49,8 @@ def _document(document: Document) -> dict:
             "findings": (document.data or {}).get("sync_findings", []),
             "revision": (document.data or {}).get("revision"),
             **({"choices": _option_choices(document.data)} if document.kind == "options" and document.data else {}),
+            **({"acceptance": {k: (document.data or {}).get(k) for k in ("cases", "criteria", "attempt", "url", "problems")}}
+               if document.kind == "acceptance" else {}),
             # the per-source chunks are kept for the next round only; the page needs the merged inventory
             **({"inventory": {k: v for k, v in (document.data or {}).items() if k != "chunks"}}
                if document.kind == "inventory" else {}),

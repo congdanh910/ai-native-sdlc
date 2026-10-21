@@ -29,6 +29,7 @@ export function stages(run: RunDetail): Stage[] {
     approved("tests") || run.tasks.length > 0,
     run.tasks.length > 0 && passed === run.tasks.length,
     !!review,
+    ...(run.preview ? [approved("acceptance") || !!pr] : []),
     !!pr && (pr.merged_sha !== null || run.status === "COMPLETED"),
   ];
   const list: Omit<Stage, "state">[] = [
@@ -44,6 +45,7 @@ export function stages(run: RunDetail): Stage[] {
     { key: "quality", label: "Quality", detail: approved("tests") ? "test cases approved" : "QC reviews test cases", gate: true },
     { key: "coding", label: "Coding", detail: run.tasks.length ? `${passed}/${run.tasks.length} tasks passed` : "after the Quality gate" },
     { key: "review", label: "Review", detail: review ? `verdict ${verdict ?? "?"}` : "after coding" },
+    ...(run.preview ? [{ key: "acceptance", label: "Acceptance", detail: approved("acceptance") ? "QC accepted" : has("acceptance") ? "QC tries the preview" : "E2E on the preview", gate: true }] : []),
     { key: "gate3", label: "Gate 3", detail: pr?.merged_sha ? "merged" : pr ? (pr.simulated ? "simulated PR" : `PR #${pr.number}`) : "merge PR", gate: true },
   ];
   return withState(run, list, done);

@@ -300,7 +300,9 @@ Kịch bản của bản giả (thành công, lỗi 4xx/5xx, chậm/timeout, d�
 3. **Cổng Plan (Tech Lead):** task, file sửa, ma trận tiêu chí × task × test case, kết quả grounding (plan không được nhắc tới file hay hàm không tồn tại). **Approve plan**.
 4. **Cổng Quality (QC):** `test_cases.md` và phân tích chéo. **Approve** thì bắt đầu viết code.
 5. **Code (tự động):** với mỗi task, QA Engineer viết test, red check (test phải trượt), Developer viết code, validation trong container (phải pass). Theo dõi ở tab **Tasks** và **Diff**.
-6. **Cổng PR (Code Owner):** `review.md` của Code Reviewer chỉ để tham khảo. Tick checklist, mở PR trên GitHub, merge. Run thành `COMPLETED`.
+6. **Acceptance** (khi dự án có `preview` với lệnh `e2e`, và `stages.acceptance` khác `skip`): QA Engineer viết test **Playwright** cho từng AC/EC (tên test bắt đầu bằng mã tiêu chí), nền tảng bật **preview** của nhánh run và chạy test ngay cạnh nó; mỗi tiêu chí có kết quả, ảnh chụp, video.
+7. **Cổng QC Acceptance** (`stages.acceptance: gated`, mặc định): khung Preview có **Try it** và tài khoản demo theo vai để QC tự bấm thử; bảng tiêu chí → test → kết quả → ảnh/video (bấm ảnh để phóng to); controller kiểm mọi tiêu chí có test và đều đạt. **Accept the story** → mở PR. **Send defects to the Developer** (ghi đã làm gì, thấy gì, mong đợi gì) → mọi task chạy lại với ghi chú của QC, rồi Review và Acceptance lại. **Run the tests again** (ghi lý do nếu test viết sai, QA viết lại). `auto`: đạt hết thì tự mở PR, có tiêu chí trượt thì dừng ở cổng QC. `skip`: như trước.
+8. **Cổng PR (Code Owner):** `review.md` của Code Reviewer chỉ để tham khảo. Tick checklist, mở PR trên GitHub, merge. Run thành `COMPLETED`.
 
 Developer báo test sai (`DISPUTE`), hoặc một bước lỗi, thì run dừng ở `NEEDS_HUMAN`: chọn **Let QA update the tests**, **Keep the tests**, **Resume**, **Replan** hoặc **Cancel run**, kèm lý do.
 
@@ -320,9 +322,30 @@ Với spec, SRS và SDS, bản viết lại có khung **Changes since vN** ngay 
 | Spec (feature) | **Edit** | **Reject: rewrite** | BA, kèm spec trước |
 | Plan | **Edit** (JSON) | **Reject: replan** | Tech Lead |
 | Test cases (Quality) | **Edit JSON** | **Reject: redesign tests**, hoặc **Reject: replan** | QA Analyst, hoặc Tech Lead |
-| PR (feature) | Sửa trên GitHub | **Request changes** (đội sửa code tiếp) hoặc **Review again** | Developer, Code Reviewer |
+| Acceptance (QC) | Bấm thử trên preview | **Send defects to the Developer**, hoặc **Run the tests again** (kèm lý do nếu test sai) | Developer, hoặc QA Engineer |
+| PR (feature) | Sửa trên GitHub | **Request changes** (đội sửa code tiếp; ghi chú tới Developer) hoặc **Review again** | Developer, Code Reviewer |
 
 **Viết góp ý thế nào cho hiệu quả:** nêu *cái gì sai*, *ở đâu* và *muốn thành thế nào*. Ví dụ: *"Tách story Check-in và Check-out thành 2 story; bỏ yêu cầu xuất Excel khỏi §3 vì REQ-045 đã ngoài phạm vi"* hiệu quả hơn nhiều so với *"chưa đúng"*. Mỗi ý một dòng; dẫn REQ id, AC id hay số mục SRS khi có thể. Góp ý của mọi lần làm lại trước vẫn được gửi kèm, nên không cần nhắc lại.
+
+### Preview: chạy thử ứng dụng của một run
+
+Dự án có khối `preview` trong `.sdlc/project.yaml` (bước Onboarding của run Foundation viết, kèm `.sdlc/preview.compose.yml`) thì trang run có khung **Preview**: **Start preview** dựng ứng dụng từ nhánh của run bằng docker compose (app, database, bản giả, dữ liệu mẫu), mở **chỉ trên 127.0.0.1** ở một cổng trong `SDLC_PREVIEW_PORTS` (mặc định 9100–9199), rồi hiện **Try it** và bảng tài khoản demo. Preview tự tắt sau `SDLC_PREVIEW_TTL_MINUTES` (mặc định 60), khi run kết thúc, hoặc khi quá `SDLC_PREVIEW_MAX_RUNNING` (mặc định 2) thì bản cũ nhất tắt. Preview lỗi không làm dừng run. Preview có mạng như khi lập trình viên chạy app trên máy; chỉ dùng dữ liệu và mật khẩu test.
+
+```yaml
+preview:
+  compose: .sdlc/preview.compose.yml
+  service: web            # service mở ra 127.0.0.1
+  port: 8080              # cổng trong container của service đó
+  path: /                 # trang Try it mở
+  health_path: /health    # chờ trả 200
+  accounts:
+    - {role: HR_ADMIN, username: hr@example.test, password: Demo-123}
+  e2e: [npx, playwright, test, --config, e2e/playwright.config.ts]
+  e2e_image: mcr.microsoft.com/playwright:v1.49.1-noble
+  e2e_paths: [e2e/**]
+```
+
+Test E2E chạy trong `e2e_image`, cùng mạng với preview, `BASE_URL` trỏ tới service, repo chỉ đọc, `/evidence` ghi được (báo cáo JSON `/evidence/results.json`, ảnh, video). Preview của `main` và regression trên `main`: BACKLOG 3.8.
 
 ## 9. Các trang của control room
 

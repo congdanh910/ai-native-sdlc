@@ -407,6 +407,31 @@ def choose_option(run_id: uuid.UUID, body: OptionChoice) -> dict:
                                                                hosting_reason=body.hosting_reason))
 
 
+class AcceptanceDecision(Body):
+    decision: Literal["accept", "reject", "retest"]
+    reason: str = ""
+    document_id: uuid.UUID | None = None
+    checked: list[str] = []
+
+
+@router.post("/runs/{run_id}/acceptance")
+def acceptance(run_id: uuid.UUID, body: AcceptanceDecision) -> dict:
+    return _decide(run_id, lambda s, r: services.decide_acceptance(s, r, actor=operator(), decision=body.decision,
+                                                                   reason=body.reason, document_id=body.document_id,
+                                                                   checked=body.checked))
+
+
+@router.get("/runs/{run_id}/evidence/{path:path}")
+def evidence(run_id: uuid.UUID, path: str) -> FileResponse:
+    """A screenshot, video or trace the acceptance tests kept, from .data/evidence/<run>/."""
+    from controller.app.config import DATA_DIR
+    root = (DATA_DIR / "evidence" / str(run_id)).resolve()
+    target = (root / path).resolve()
+    if root not in target.parents or not target.is_file():
+        raise HTTPException(404, "no such evidence")
+    return FileResponse(target)
+
+
 class PreviewAction(Body):
     action: Literal["start", "stop"]
 

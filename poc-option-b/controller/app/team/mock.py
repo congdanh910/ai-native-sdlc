@@ -220,6 +220,9 @@ class MockTeam:
         count = sum(1 for case in tests.cases if case.task_id == task.id)
         return StepResult(True, f"mock: {count} test cases noted, no files written")
 
+    def write_acceptance_tests(self, context, criteria, story, feedback="") -> StepResult:
+        return StepResult(True, "mock: acceptance tests noted, no files written")
+
     def red_check(self, context, task, tests) -> StepResult:
         return StepResult(True, "mock: red check skipped (no tests were written)")
 
