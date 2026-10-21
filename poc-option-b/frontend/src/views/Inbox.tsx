@@ -7,9 +7,9 @@ import { Badge, Button, Card, Empty, ErrorBox, Loading, Mono, PageHeader } from 
 import { api, type InboxItem, type RunDetail } from "../lib/api";
 import { ACTION_LABEL, ago, parseCriteria, role, statusTone, type Tone } from "../lib/utils";
 
-const ROLE_TONE: Record<string, Tone> = { code_owner: "accent", tech_lead: "warn", product_owner: "violet", platform_admin: "neutral",
+const ROLE_TONE: Record<string, Tone> = { code_owner: "accent", qc: "good", tech_lead: "warn", product_owner: "violet", platform_admin: "neutral",
   solution_architect: "flag" };
-const ROLE_ORDER = ["code_owner", "tech_lead", "solution_architect", "product_owner", "platform_admin"];
+const ROLE_ORDER = ["code_owner", "qc", "tech_lead", "solution_architect", "product_owner", "platform_admin"];
 
 function Highlights({ id }: { id: string }) {
   const run = useQuery({ queryKey: ["run", id], queryFn: () => api<RunDetail>(`/api/runs/${id}`), staleTime: 5000 });
@@ -77,7 +77,9 @@ export function InboxView() {
   if (inbox.isLoading) return <Loading />;
   if (inbox.error) return <ErrorBox error={inbox.error} />;
   const items = inbox.data ?? [];
-  const byRole = ROLE_ORDER.map((r) => [r, items.filter((i) => i.role === r)] as const).filter(([, list]) => list.length);
+  // known roles in their order, then any other role (a project's discovery roles): an item is never left out
+  const roles = [...ROLE_ORDER, ...[...new Set(items.map((i) => i.role))].filter((r) => !ROLE_ORDER.includes(r))];
+  const byRole = roles.map((r) => [r, items.filter((i) => i.role === r)] as const).filter(([, list]) => list.length);
   const canNotify = "Notification" in window && Notification.permission === "default";
   return (
     <>
