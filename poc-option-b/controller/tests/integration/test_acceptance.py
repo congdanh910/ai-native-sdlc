@@ -109,3 +109,29 @@ def test_a_playwright_report_gives_evidence_per_criterion(tmp_path):
                              "http://127.0.0.1:9100/", "/api/runs/r/evidence/1")
     assert "| AC-01: creates | AC-01 HR admin creates an employee | passed | [screenshot](/api/runs/r/evidence/1/shots/a.png) |" in text
     assert "| AC-02: lists | — | missing | — |" in text and "## Failures" in text
+
+
+class BrokenAcceptance(MockTeam):
+    def write_acceptance_tests(self, *args, **kwargs):
+        raise RuntimeError("the acceptance session could not start")
+
+
+def test_a_failed_acceptance_job_is_resumed_at_acceptance(db, sample_repo):
+    with_preview(sample_repo)
+    run_id = new_run(add_project(sample_repo))
+    drain()
+    approve_spec(run_id)
+    drain()
+    approve_plan(run_id)
+    for _ in range(4):  # the job is retried, then given up
+        drain(BrokenAcceptance())
+        with session_scope() as session:
+            from controller.app.models import Execution
+            for execution in session.query(Execution).filter(Execution.status == "queued"):
+                execution.available_at = None
+    assert status(run_id) == RunStatus.NEEDS_HUMAN
+    with session_scope() as session:
+        services.resume(session, services.get_run(session, run_id), actor=OPERATOR, decision="resume",
+                        reason="the acceptance session is fixed")
+    drain()
+    assert status(run_id) == RunStatus.WAITING_ACCEPTANCE_APPROVAL

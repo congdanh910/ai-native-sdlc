@@ -412,7 +412,7 @@ def resume(session: Session, run: Run, *, actor: str, decision: str, reason: str
     kinds = {RunStatus.PREFLIGHT: "preflight", RunStatus.SPECIFYING: "specify", RunStatus.PLANNING: "plan",
              RunStatus.DESIGNING_OPTIONS: "options", RunStatus.DESIGNING_ONBOARDING: "onboarding",
              RunStatus.PREPARING_ENVIRONMENT: "environment",
-             RunStatus.DESIGNING_TESTS: "design_tests",
+             RunStatus.DESIGNING_TESTS: "design_tests", RunStatus.ACCEPTANCE_TESTING: "acceptance",
              RunStatus.REVIEWING: "review", RunStatus.PR_OPEN: "release", RunStatus.EXTRACTING: "extract"}
     if target == RunStatus.INGESTING:  # a discovery waiting for sources has no job to queue
         transition_run(session, run, target, actor=actor, acting_role=TL, reason=reason)
@@ -429,7 +429,8 @@ def resume(session: Session, run: Run, *, actor: str, decision: str, reason: str
     if target not in kinds:
         raise DecisionError(f"cannot resume at {target}; replan or cancel instead")
     transition_run(session, run, target, actor=actor, acting_role=TL, reason=reason)
-    coordinator.queue(session, run, kinds[target])
+    # a key of its own: the job that failed holds the stage's usual key, and would stand for this one
+    coordinator.queue(session, run, kinds[target], key=f"resume:{datetime.now(timezone.utc).isoformat()}")
 
 
 def _rule_on_dispute(session: Session, run: Run, *, actor: str, decision: str, reason: str) -> None:
