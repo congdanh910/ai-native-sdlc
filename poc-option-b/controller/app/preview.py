@@ -57,9 +57,9 @@ def missing_parts(worktree: Path, preview: Preview) -> list[str]:
         build = service.get("build") if isinstance(service, dict) else None
         context = build.get("context") if isinstance(build, dict) else build
         if isinstance(context, str) and not context.startswith(("http://", "https://", "git@")):
-            path = (worktree / context).resolve()
-            if not path.is_dir() and context not in missing:
-                missing.append(context.removeprefix("./").rstrip("/") + "/")
+            name = context.removeprefix("./").rstrip("/") + "/"
+            if not (worktree / context).resolve().is_dir() and name not in missing:
+                missing.append(name)
     return missing
 
 
