@@ -276,6 +276,8 @@ environment:
       ready: [pg_isready, -U, app, -h, 127.0.0.1]
 ```
 
+**Lệnh lint** (`validation[].kind`): `lint` cho linter/formatter (ruff, eslint), `check` cho test và typecheck; mặc định `auto` (tên có chữ `lint` thì là lint). Ở red check, lệnh lint fail không tính là "test đỏ"; nếu lỗi lint nằm trong file test QA vừa viết thì trả về QA sửa ngay, trước khi Developer code.
+
 **Lockfile** (`environment.lock`): Developer làm việc không có mạng nên không tự sinh được lockfile đúng. Khai báo một lệnh (argv) sinh lockfile từ manifest, ví dụ `[sh, -ec, "npm --prefix web install --package-lock-only --ignore-scripts && uv lock --directory backend"]`. Khi một task đổi file trong `setup_inputs`, trước validation nền tảng chạy lệnh này trong image validation **có mạng**, rồi commit `build(Tn): lock dependencies`. Lệnh chỉ được đổi file nằm trong `setup_inputs`; lệnh lỗi thì lỗi về Developer như một lần validation hỏng.
 
 **Phạm vi đọc của AI**: lệnh mà Codex chạy (Developer, QA, các vai suy nghĩ) chỉ đọc được worktree của run, thư mục cài các công cụ trên PATH, repo git của worktree và `SDLC_EXECUTOR_READ_PATHS` (mặc định `/Library/Developer/CommandLineTools,/System/Library/OpenSSL`); dự án khác, `~/.ssh`, `.env` của nền tảng thì không. Phiên Claude bị hook chặn Read/Glob/Grep ngoài worktree. Không có mạng. Công cụ cài ở chỗ khác mà lệnh cần thì thêm thư mục đó vào `SDLC_EXECUTOR_READ_PATHS`.

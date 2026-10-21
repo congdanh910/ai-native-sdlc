@@ -32,6 +32,14 @@ class ValidationCommand(Strict):
     # reference such as eclipse-temurin:21-jdk) and the setup that installs its dependencies in that image
     image: str = ""
     setup: list[str] = []
+    # lint: rules on how code is written (ruff, eslint) that hold whether or not the task's code exists yet; a lint
+    # failure in new tests goes back to the QA Engineer and never counts as the red of TDD. check: everything else
+    # (tests, type checks). auto: lint when the name says lint.
+    kind: Literal["auto", "lint", "check"] = "auto"
+
+    @property
+    def is_lint(self) -> bool:
+        return self.kind == "lint" or (self.kind == "auto" and "lint" in self.name)
 
     @field_validator("image")
     @classmethod

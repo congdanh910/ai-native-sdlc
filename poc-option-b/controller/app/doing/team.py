@@ -189,7 +189,12 @@ class CliDoing:
         expect_pass = bool(cases) and all(case["expected_pass"] for case in cases)
         # Every command, not only the task's: a task may list just a syntax check, and the new tests must run.
         names = [c.name for c in context.policy.validation]
-        ok, detail, reports = red_check(self._gate(context), names, expect_pass, f"{task.id}-red")
+        lint = frozenset(c.name for c in context.policy.validation if c.is_lint)
+        ok, detail, reports = red_check(self._gate(context), names, expect_pass, f"{task.id}-red", lint)
+        unclean = self._lint_in_tests(context, task, reports, lint)
+        if unclean:  # the QA Engineer's own lines break the project's lint: back to it, before any code is written
+            return StepResult(False, "the new tests fail the project's lint (fix the test files, not the rules): "
+                                     + "; ".join(unclean), evidence={"reports": reports})
         runners = self._runners_this_task_creates(context, task, cases)
         if not ok and not expect_pass and runners:
             # The commands skip a part whose manifest is missing, so its new tests cannot fail before the task
@@ -197,6 +202,21 @@ class CliDoing:
             return StepResult(True, f"red by construction: the tests need {', '.join(runners)}, which this task "
                                     "creates; the validation after the code runs them", evidence={"reports": reports})
         return StepResult(ok, detail, evidence={"reports": reports})
+
+    def _lint_in_tests(self, context: RunContext, task: PlanTask, reports: list[dict], lint: frozenset[str]) -> list[str]:
+        """Lint failures that name a test file the QA Engineer committed for this task, with the lines saying so."""
+        worktree = self._worktree(context)
+        commit = changes.find_commit(worktree, context.task_base or context.base_commit, f"test({task.id}):") \
+            if context.base_commit else None
+        files = changes.files_of(worktree, commit) if commit else []
+        found = []
+        for report in reports:
+            if report["name"] in lint and not report["ok"]:
+                text = Path(report["log_path"]).read_text() if Path(report["log_path"]).is_file() else report["tail"]
+                lines = [line.strip() for line in text.splitlines() if any(f in line for f in files)]
+                if lines:
+                    found.append(f"{report['name']}: " + " | ".join(lines[:6]))
+        return found
 
     def _runners_this_task_creates(self, context: RunContext, task: PlanTask, cases: list[dict]) -> list[str]:
         """The dependency manifests (environment.setup_inputs) this task creates that the new tests live under."""

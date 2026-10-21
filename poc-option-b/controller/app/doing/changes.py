@@ -231,6 +231,11 @@ def commits_touching(worktree: Path, base: str, until: str, paths: list[str]) ->
     return commits
 
 
+def files_of(worktree: Path, commit: str) -> list[str]:
+    """The paths a commit changed."""
+    return [line for line in _git("show", "--format=", "--name-only", commit, cwd=worktree).splitlines() if line]
+
+
 def changed_since(worktree: Path, base: str) -> list[str]:
     """Paths the commits since base changed."""
     return [line for line in _git("diff", "--name-only", "--no-renames", base, "HEAD", cwd=worktree).splitlines() if line]

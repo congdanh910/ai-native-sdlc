@@ -229,8 +229,10 @@ def failures(reports: list[CommandReport]) -> str:
     return "\n\n".join(f"## {r.name} (exit {r.exit_code})\n{r.tail}" for r in reports if not r.ok)
 
 
-def red_check(gate: ValidationGate, names: list[str], expect_pass: bool, label: str) -> tuple[bool, str, list[dict]]:
-    """New tests must fail before the implementation, unless every case of the task is a regression guard."""
+def red_check(gate: ValidationGate, names: list[str], expect_pass: bool, label: str,
+              lint: frozenset[str] = frozenset()) -> tuple[bool, str, list[dict]]:
+    """New tests must fail before the implementation, unless every case of the task is a regression guard. A lint
+    command failing is not that failure: it says how the code is written, not what it does."""
     if not gate.policy.red_check:
         return True, "red check disabled in .sdlc/project.yaml", []
     reports = gate.run(names, label)
@@ -238,10 +240,10 @@ def red_check(gate: ValidationGate, names: list[str], expect_pass: bool, label: 
     if any(r.timed_out for r in reports) or any(r.name.startswith("setup") and not r.ok for r in reports):
         return False, f"red check could not run: {summary(reports)}", data
     if expect_pass:
-        ok = all(r.ok for r in reports)
+        ok = all(r.ok for r in reports if r.name not in lint)
         return ok, ("regression guards pass as expected" if ok else
                     f"every case of this task is a regression guard (expected_pass), but the tests fail on the "
                     f"current code: {summary(reports)}"), data
-    ok = any(not r.ok for r in reports)
+    ok = any(not r.ok for r in reports if r.name not in lint)
     return ok, (f"red: {summary(reports)}" if ok else
                 f"the new tests already pass before the implementation, so they prove nothing: {summary(reports)}"), data

@@ -705,3 +705,33 @@ def test_a_brief_from_a_model_is_repaired_into_the_contract():
         "sides": ["the code returns 201", {"party": "TC-1", "claim": "200", "evidence": "TC-1: return 200"}]}))
     assert brief.recommendation == "amend_tests" and brief.confidence == "high" and brief.checks == ["look at line 137"]
     assert brief.sides[1].evidence == ["TC-1: return 200"]
+
+
+class LintRunner:
+    """unit-tests fail (red); the lint command fails naming the given file."""
+
+    def __init__(self, lint_file: str, tests_exit: int = 1):
+        self.lint_file, self.tests_exit = lint_file, tests_exit
+
+    def __call__(self, image, worktree, argv, timeout, network=False, writable=False):
+        if argv[:1] == ["ruff"]:
+            return ProcessResult(["docker", *argv], 1, f"{self.lint_file}:45:9: F402 Import `secret` shadowed", 0.1)
+        return ProcessResult(["docker", *argv], self.tests_exit, "exit", 0.1)
+
+
+def test_lint_failures_in_the_new_tests_go_back_to_the_qa_engineer(worktree, tmp_path):
+    base = changes.head(worktree)
+    (worktree / "test" / "due.test.js").write_text("test('due', () => {});\n")
+    changes.stage_changes(worktree)
+    changes.commit(worktree, "test(T1): Add due date", "qa_engineer")
+    commands = [ValidationCommand(name="unit-tests", run=["npm", "test"]), ValidationCommand(name="python-lint", run=["ruff", "check"])]
+    ctx = dataclasses.replace(context(worktree, validation=commands), base_commit=base)
+
+    def team(runner):
+        return CliDoing({"codex": FakeExecutor("codex"), "claude": FakeExecutor("claude")},
+                        gate_factory=lambda p, w, l: ValidationGate(p, w, l, runner=runner), log_root=tmp_path / "logs")
+    result = team(LintRunner("test/due.test.js")).red_check(ctx, TASK, TESTS)
+    assert not result.ok and "fail the project's lint" in result.detail and "F402" in result.detail
+    assert team(LintRunner("src/tasks.js")).red_check(ctx, TASK, TESTS).ok  # lint of other files: not the QA's
+    only_lint = team(LintRunner("src/tasks.js", tests_exit=0)).red_check(ctx, TASK, TESTS)
+    assert not only_lint.ok and "already pass" in only_lint.detail  # a lint failure is never the red of TDD
