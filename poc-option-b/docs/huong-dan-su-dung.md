@@ -422,6 +422,7 @@ Không có giới hạn nào cố định trong code. Giới hạn theo dự án
 | Giao diện không đổi sau khi cập nhật | Tải lại trang (Cmd+R) |
 | "Something went wrong · Internal Server Error", doctor báo postgres "recovery mode" | Ổ đĩa ảo của Docker Desktop đầy (log PostgreSQL: `No space left on device`). Giải phóng: `docker builder prune -f`, xoá image không dùng; hoặc Docker Desktop → Settings → Resources → tăng Disk usage limit. PostgreSQL tự khôi phục khi có chỗ |
 | Run Foundation dừng: "Docker has no disk space left" | Như trên, rồi **Resume** để build lại môi trường |
+| Sau khi đổi cài đặt hay khởi động lại Docker Desktop, doctor báo postgres "Connection refused" | Docker dừng các container khi khởi động lại: chạy `./sdlc up` (dữ liệu vẫn nằm trong volume) |
 
 ## 14. Dữ liệu ở đâu
 
