@@ -854,3 +854,13 @@ def test_tests_failing_in_their_own_code_go_back_to_the_qa_engineer_once(worktre
     result = coordinator._accept(qa, loaded)
     assert [c["status"] for c in result["cases"]] == ["passed"] and len(qa.feedback) == 2
     assert "strict mode violation" in qa.feedback[1] and result["tests"]["retry"]["ok"]
+
+
+def test_a_criterion_the_coding_tests_prove_needs_no_browser_test():
+    from controller.app.acceptance import coverage, render_acceptance
+    cases = [{"title": "AC-1 signs in", "criteria": ["AC-1"], "status": "passed", "attachments": [], "error": ""}]
+    proven = {"AC-2": ["TC-4", "TC-5"]}
+    assert coverage(["AC-1", "AC-2", "AC-3"], cases, proven) == [
+        "AC-3 has no acceptance test and no passing test of the coding"]
+    report = render_acceptance("t", {"AC-1": "a", "AC-2": "b", "AC-3": "c"}, cases, "", "/e", proven)
+    assert "proven by the coding's tests TC-4, TC-5" in report

@@ -239,7 +239,8 @@ class MockTeam:
                       reason=f"mock: {decision}", sides=[{"party": "the platform", "claim": "no model was asked"}])
 
     def check_defects(self, context, notes) -> DefectCheck:
-        verdict = "conflict" if "CONTRADICTS-SDS" in notes else "consistent"  # tests choose the outcome
+        # tests choose the outcome
+        verdict = "conflict" if "CONTRADICTS-SDS" in notes else "not_actionable" if "NO-CODE-CHANGE" in notes else "consistent"
         return DefectCheck(points=[{"point": notes[:200], "verdict": verdict, "evidence": ["SDS.md (mock)"]}],
                            summary=f"mock: {verdict}")
 

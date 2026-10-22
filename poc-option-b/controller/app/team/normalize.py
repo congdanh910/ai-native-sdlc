@@ -526,7 +526,8 @@ def defect_check(data: dict) -> dict:
         verdict = str(point.get("verdict", "")).strip().lower().replace(" ", "_").replace("-", "_")
         evidence = point.get("evidence") or []
         points.append({**point, "verdict": {"conflicts": "conflict", "inconsistent": "conflict",
-                                            "not_in_sds": "not_covered", "unknown": "not_covered"}.get(verdict, verdict),
+                                            "not_in_sds": "not_covered", "unknown": "not_covered",
+                                            "not_a_defect": "not_actionable", "out_of_scope": "not_actionable"}.get(verdict, verdict),
                        "evidence": [evidence] if isinstance(evidence, str) else evidence})
     data["points"] = points
     return data

@@ -109,7 +109,7 @@ def test_a_playwright_report_gives_evidence_per_criterion(tmp_path):
     assert cases[0]["attachments"] == [{"name": "screenshot", "type": "image/png", "path": "shots/a.png"}]
     assert cases[1]["error"] == "expected 409"
     assert coverage(["AC-01", "EC-01", "AC-02"], cases) == ["EC-01 failed: EC-01 duplicate code is refused",
-                                                            "AC-02 has no acceptance test"]
+                                                            "AC-02 has no acceptance test and no passing test of the coding"]
     text = render_acceptance("Employees", {"AC-01": "creates", "EC-01": "duplicate", "AC-02": "lists"}, cases,
                              "http://127.0.0.1:9100/", "/api/runs/r/evidence/1")
     assert "| AC-01: creates | AC-01 HR admin creates an employee | passed | [screenshot](/api/runs/r/evidence/1/shots/a.png) |" in text
@@ -205,3 +205,14 @@ def test_defect_notes_can_be_sent_as_written_against_the_sds(db, sample_repo):
                         reason="the SDS is out of date here; 422 is agreed with the customer")
     drain()
     assert _fix_tasks(run_id) == ["QC (acceptance): AC-1: 422 CONTRADICTS-SDS"]
+
+
+def test_notes_no_code_change_can_satisfy_go_back_to_the_person(db, sample_repo):
+    run_id = _at_the_qc_gate(sample_repo)
+    with session_scope() as session:
+        services.decide_acceptance(session, services.get_run(session, run_id), actor=OPERATOR, decision="reject",
+                                   reason="AC-2 has no acceptance test NO-CODE-CHANGE")
+    drain()
+    assert status(run_id) == RunStatus.NEEDS_HUMAN and _fix_tasks(run_id) == []
+    with session_scope() as session:
+        assert "no code change can do" in services.get_run(session, run_id).status_reason

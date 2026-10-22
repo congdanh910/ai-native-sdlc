@@ -240,7 +240,7 @@ export interface RunDetail extends RunSummary {
   // a person's defect notes checked against the SDS, while the run waits on a conflict the check found
   defect_check?: {
     defects: { who: string; reason: string };
-    check: { summary: string; points: { point: string; verdict: "consistent" | "conflict" | "not_covered"; evidence: string[]; note: string }[] };
+    check: { summary: string; points: { point: string; verdict: "consistent" | "conflict" | "not_covered" | "not_actionable"; evidence: string[]; note: string }[] };
     engine?: string | null;
   } | null;
   // the Code Reviewer's brief on the stop the run waits on (null when the run is not stopped)

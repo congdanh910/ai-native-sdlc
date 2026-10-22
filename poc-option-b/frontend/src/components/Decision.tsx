@@ -534,7 +534,7 @@ function AdviceCard({ run, onUse }: { run: RunDetail; onUse: (reason: string) =>
 }
 
 
-const VERDICT_TONE = { consistent: "good", conflict: "bad", not_covered: "neutral" } as const;
+const VERDICT_TONE = { consistent: "good", conflict: "bad", not_covered: "neutral", not_actionable: "warn" } as const;
 
 /** The SDS check of the QC's or Code Owner's defect notes: each point with its verdict and evidence. The person sends
  * the notes as written (their call) or revised (checked again). */

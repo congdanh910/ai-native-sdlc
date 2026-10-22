@@ -342,7 +342,8 @@ class Advice(Contract):
 
 class DefectPoint(Contract):
     point: str = Field(min_length=1)  # one defect or change of the notes, in a few words
-    verdict: Literal["consistent", "conflict", "not_covered"]  # against the SDS, the SRS and the spec
+    # against the SDS, the SRS and the spec; not_actionable: no change of the code or its tests can do it
+    verdict: Literal["consistent", "conflict", "not_covered", "not_actionable"]
     evidence: list[str] = []  # the section and the quoted line that settle it
     note: str = ""  # for a conflict: what the documents say instead
 

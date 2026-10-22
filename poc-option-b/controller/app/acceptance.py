@@ -107,26 +107,31 @@ def authoring_errors(cases: list[dict]) -> list[str]:
             for c in cases if c["status"] != "passed" and AUTHORING.search(c.get("error") or "")]
 
 
-def coverage(criteria: list[str], cases: list[dict]) -> list[str]:
-    """Each criterion of the story has a test, and every test of it passed."""
+def coverage(criteria: list[str], cases: list[dict], proven: dict[str, list[str]] | None = None) -> list[str]:
+    """Each criterion of the story has a test, and every test of it passed. A criterion a browser cannot show (a
+    restart, a clock, a test double's failure) needs no browser test when passing tests of the coding prove it."""
     problems = []
     for criterion in criteria:
         mine = [c for c in cases if criterion in c["criteria"]]
-        if not mine:
-            problems.append(f"{criterion} has no acceptance test")
+        if not mine and not (proven or {}).get(criterion):
+            problems.append(f"{criterion} has no acceptance test and no passing test of the coding")
         elif any(c["status"] != "passed" for c in mine):
             problems.append(f"{criterion} failed: " + "; ".join(c["title"] for c in mine if c["status"] != "passed"))
     return problems
 
 
-def render_acceptance(title: str, criteria: dict[str, str], cases: list[dict], url: str, evidence_base: str) -> str:
+def render_acceptance(title: str, criteria: dict[str, str], cases: list[dict], url: str, evidence_base: str,
+                      proven: dict[str, list[str]] | None = None) -> str:
     """The acceptance report: one row per criterion with its tests, outcome and evidence links."""
     def cell(text: str) -> str:
         return " ".join(str(text).split()).replace("|", "\\|")
     out = [f"# Acceptance: {title}", "", f"Preview: {url or 'not running'}", "",
            "| Criterion | Test | Result | Evidence |", "|---|---|---|---|"]
     for cid, text in criteria.items():
-        mine = [c for c in cases if cid in c["criteria"]] or [{"title": "—", "status": "missing", "attachments": []}]
+        elsewhere = (proven or {}).get(cid)
+        missing = {"title": f"— (proven by the coding's tests {', '.join(elsewhere)})" if elsewhere else "—",
+                   "status": "proven by tests" if elsewhere else "missing", "attachments": []}
+        mine = [c for c in cases if cid in c["criteria"]] or [missing]
         for case in mine:
             links = ", ".join(f"[{a['name'] or Path(a['path']).name}]({evidence_base}/{a['path']})" for a in case["attachments"])
             out.append(f"| {cid}: {cell(text)[:120]} | {cell(case['title'])} | {case['status']} | {links or '—'} |")

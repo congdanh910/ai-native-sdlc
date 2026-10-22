@@ -78,7 +78,7 @@ KINDS: dict[str, tuple[TeamRole, bool, RunStatus]] = {
     "check_defects": (TeamRole.CODE_REVIEWER, False, None),
 }
 
-DEFECTS_CONFLICT = "the defect notes conflict with the SDS"
+DEFECTS_CONFLICT = "the defect notes conflict with the SDS or ask for what no code change can do"
 
 
 class JobAborted(Exception):
@@ -131,7 +131,8 @@ def schedule_tasks(session: Session, run: Run) -> None:
     """Queue every task whose dependencies passed; enter review when all passed."""
     tasks = current_tasks(session, run)
     passed = {task.external_task_id for task in tasks if task.status == TaskStatus.PASSED}
-    if tasks and len(passed) == len(tasks):
+    done = passed | {task.external_task_id for task in tasks if task.status == TaskStatus.CANCELLED}
+    if tasks and len(done) == len(tasks):
         enter_stage(session, run, "review")
         return
     for task in tasks:
@@ -882,7 +883,7 @@ def _apply_check_defects(session: Session, run: Run, execution: Execution, resul
                    json.dumps({"defects": defects, "check": check, "engine": result.get("_engine")}))
     if run.status != RunStatus.CODING:
         return
-    conflicts = [p for p in check["points"] if p["verdict"] == "conflict"]
+    conflicts = [p for p in check["points"] if p["verdict"] in ("conflict", "not_actionable")]
     if conflicts:
         to_needs_human(session, run, f"{DEFECTS_CONFLICT}: " + "; ".join(
             f"{p['point']} ({p['note']})" for p in conflicts)[:900])
@@ -1251,6 +1252,17 @@ def _accept(team: Team, loaded: Loaded) -> dict:
     return {**result, "ok": True, "cases": cases, "detail": ran["detail"]}
 
 
+def proven_by_tests(session: Session, run: Run) -> dict[str, list[str]]:
+    """Criterion -> the approved test cases of tasks that passed (the coding's tests, run by the validation)."""
+    plan = latest_plan(session, run.id)
+    passed = {t.external_task_id for t in current_tasks(session, run) if t.status == TaskStatus.PASSED}
+    proven: dict[str, list[str]] = {}
+    for case in (plan.test_plan or {}).get("cases", []) if plan else []:
+        if case.get("task_id") in passed and case.get("criterion"):
+            proven.setdefault(case["criterion"], []).append(case["id"])
+    return proven
+
+
 def _apply_acceptance(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
     """The acceptance report, then the QC's gate (or straight to the PR in auto mode when every criterion passed)."""
     from controller.app.acceptance import coverage, render_acceptance
@@ -1260,12 +1272,13 @@ def _apply_acceptance(session: Session, run: Run, execution: Execution, result: 
         to_needs_human(session, run, f"acceptance tests could not run: {result['detail'][:600]}")
         return
     url = (result.get("preview") or {}).get("url", "")
+    proven = proven_by_tests(session, run)
     content = render_acceptance(run.title, result["criteria"], result["cases"], url,
-                                f"/api/runs/{run.id}/evidence/{result['attempt']}")
-    problems = coverage(list(result["criteria"]), result["cases"])
+                                f"/api/runs/{run.id}/evidence/{result['attempt']}", proven)
+    problems = coverage(list(result["criteria"]), result["cases"], proven)
     document = add_document(session, run.id, "acceptance", content, author_kind="ai", author=TeamRole.QA_ENGINEER.value,
                             data={"cases": result["cases"], "criteria": result["criteria"], "attempt": result["attempt"],
-                                  "url": url, "problems": problems, "tests": result["tests"]})
+                                  "url": url, "problems": problems, "tests": result["tests"], "proven": proven})
     document.commit_sha = commit_thread(session, run, "acceptance", content, "sdlc: acceptance report")
     if stage_mode(run, "acceptance") == "auto" and not problems:
         transition_run(session, run, RunStatus.PR_OPEN, actor=TeamRole.QA_ENGINEER.value,
