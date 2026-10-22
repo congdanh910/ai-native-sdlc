@@ -337,7 +337,7 @@ def evaluate_gate(session: Session, run: Run, gate: str | None = None) -> dict |
                                          [f"{p} is missing" for p in ("AGENTS.md", CONFIG_PATH) if p not in files])]
         # a warning, not a block: the Tech Lead may accept an integration without a double for now
         sds = mirror_for(session.get(Project, run.project_id)).read_file(run.base_commit, SDS_PATH) or ""
-        onboarding = Onboarding.model_validate({k: v for k, v in data.items() if k not in ("files", "revision")})
+        onboarding = Onboarding.model_validate({k: v for k, v in data.items() if k not in ("files", "revision", "edited_from")})
         missing = check_test_doubles(onboarding, sds)
         ai = [{"id": "test-doubles", "text": "Every external system of SDS section 13 has a test double, or a reason "
                "for none", "status": "warning" if missing else "pass", "note": "; ".join(missing[:8])}]

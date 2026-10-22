@@ -354,6 +354,7 @@ Với spec, SRS và SDS, bản viết lại có khung **Changes since vN** ngay 
 | Baseline (Discovery) | Ghi quyết định ở tab Decisions, rồi Extract again | **Back to clarifying** | BA, qua quyết định |
 | SRS / SDS | **Edit** → Save as new version | **Reject: rewrite**; sau khi đã mở PR: **Request changes** | BA / Architect, kèm bản nháp mới nhất |
 | Options (SDS) | Chọn phương án và ghi lý do | **Ask for other options** | Architect |
+| Onboarding (Foundation) | `POST /api/runs/{id}/onboarding/edit` với các file đã sửa, lý do và `from_version` (ví dụ bản đã duyệt trước): thành phiên bản mới của người, vẫn qua cổng duyệt. Dùng khi chỉ cần đổi vài dòng mà Architect cứ viết lại thứ khác | **Redo** kèm lý do (Architect nhận các file của bản trước, chỉ được đổi đúng chỗ được yêu cầu) | Architect |
 | Spec (feature) | **Edit** | **Reject: rewrite** | BA, kèm spec trước |
 | Plan | **Edit** (JSON) | **Reject: replan** | Tech Lead |
 | Test cases (Quality) | **Edit JSON** | **Reject: redesign tests**, hoặc **Reject: replan** | QA Analyst, hoặc Tech Lead |

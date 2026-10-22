@@ -279,3 +279,29 @@ def test_a_revised_onboarding_starts_from_the_version_it_revises(db, sample_repo
     (first_feedback, first_previous), (feedback, previous) = architect.seen[:2]
     assert first_previous == {} and ".sdlc/project.yaml" in previous
     assert any("SESSION_COOKIE_SECURE" in f for f in feedback)
+
+
+def test_the_tech_lead_edits_the_onboarding_files_from_an_earlier_version(db, sample_repo):
+    with_sds(sample_repo, with_srs(sample_repo))
+    post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
+    run = post("/api/runs", {"project": "task-board", "idempotency_key": str(uuid.uuid4()),
+                             "foundation": {"title": "Attendance"}}, status=201)
+    drain()
+    post(f"/api/runs/{run['id']}/onboarding/redo", {"reason": "something"})
+    drain()
+    v1 = [d for d in detail(run["id"])["documents"] if d["kind"] == "onboarding"][0]
+    with session_scope() as session:
+        from controller.app.documents import latest_document
+        files = latest_document(session, uuid.UUID(run["id"]), "onboarding").data["files"]
+    config = files[".sdlc/project.yaml"] + "\n# edited\n"
+    refused = client.post(f"/api/runs/{run['id']}/onboarding/edit",
+                          json={"files": {".sdlc/project.yaml": "validation: [broken"}, "reason": "x"})
+    assert refused.status_code == 409 and "do not load" in refused.text
+    post(f"/api/runs/{run['id']}/onboarding/edit",
+         {"files": {".sdlc/project.yaml": config}, "reason": "one line only", "from_version": v1["version"]})
+    state = detail(run["id"])
+    latest = [d for d in state["documents"] if d["kind"] == "onboarding"][-1]
+    assert state["status"] == "WAITING_ONBOARDING_APPROVAL" and latest["version"] == 3 and latest["author_kind"] == "human"
+    post(f"/api/runs/{run['id']}/onboarding/approve", {"document_id": latest["id"], "checked": TICKS})
+    drain()
+    assert detail(run["id"])["status"] in ("WAITING_SPEC_APPROVAL", "SPECIFYING")

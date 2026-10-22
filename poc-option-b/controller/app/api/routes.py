@@ -458,6 +458,18 @@ def reopen_onboarding(run_id: uuid.UUID, body: Reason) -> dict:
     return _decide(run_id, lambda s, r: services.reopen_onboarding(s, r, actor=operator(), reason=body.reason))
 
 
+class OnboardingEdit(Body):
+    files: dict[str, str]
+    reason: str = ""
+    from_version: int | None = None
+
+
+@router.post("/runs/{run_id}/onboarding/edit")
+def edit_onboarding(run_id: uuid.UUID, body: OnboardingEdit) -> dict:
+    return _decide(run_id, lambda s, r: services.edit_onboarding(s, r, actor=operator(), files=body.files,
+                                                                 reason=body.reason, from_version=body.from_version))
+
+
 @router.post("/runs/{run_id}/onboarding/redo")
 def redo_onboarding(run_id: uuid.UUID, body: Reason) -> dict:
     return _decide(run_id, lambda s, r: services.redo_onboarding(s, r, actor=operator(), reason=body.reason))

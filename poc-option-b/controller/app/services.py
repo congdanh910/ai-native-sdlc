@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from controller.app import coordinator
 from controller.app.documents import add_document, add_plan, latest_document, latest_plan
 from controller.app.events import record_event
-from controller.app.models import Approval, Clarification, Plan, Project, PullRequest, Run, Task
+from controller.app.models import Approval, Clarification, Document, Plan, Project, PullRequest, Run, Task
 from controller.app.discovery.service import DiscoveryRequest, render_request
 from controller.app.foundation import FoundationRequest, foundation_intent
 from controller.app.project_docs import (SDS_PATH, SRS_PATH, ArchitectureBrief, ProjectBrief, check_sds_markdown,
@@ -750,6 +750,40 @@ def reopen_onboarding(session: Session, run: Run, *, actor: str, reason: str) ->
                                json.dumps({"to": back_to, "stop": run.status_reason or ""}) if back_to else "")
     transition_run(session, run, RunStatus.DESIGNING_ONBOARDING, actor=actor, acting_role=TL, reason=reason)
     coordinator.queue(session, run, "onboarding", key=f"reopen:v{run.version}")
+
+
+def edit_onboarding(session: Session, run: Run, *, actor: str, files: dict[str, str], reason: str,
+                    from_version: int | None = None) -> None:
+    """The Tech Lead writes the change himself, like Edit at the spec gate: the given files replace those of the
+    latest version (or of from_version, such as the last approved one) and the result is a new version, checked like
+    the Architect's, waiting at the same gate. For a precise change the Architect keeps rewriting around."""
+    from controller.app.foundation import CONFIG_PATH, PREVIEW_COMPOSE_PATH, Onboarding, check_compose, render_onboarding
+    from controller.app.projects.config import parse_project_config
+    import yaml
+    _require(run, RunStatus.WAITING_ONBOARDING_APPROVAL)
+    if not reason.strip() or not files:
+        raise DecisionError("give the changed files and say why")
+    documents = {d.version: d for d in session.scalars(select(Document).where(
+        Document.run_id == run.id, Document.kind == "onboarding"))}
+    base = documents.get(from_version) if from_version else documents[max(documents)]
+    if base is None:
+        raise DecisionError(f"there is no onboarding v{from_version}")
+    merged = {**base.data["files"], **files}
+    try:
+        config = parse_project_config(merged[CONFIG_PATH])
+        if config.preview and PREVIEW_COMPOSE_PATH in merged:
+            check_compose(merged[PREVIEW_COMPOSE_PATH], config.preview.service)
+    except (ValueError, KeyError, yaml.YAMLError) as exc:
+        raise DecisionError(f"the edited files do not load: {str(exc).splitlines()[0][:400]}") from exc
+    fields = {k: v for k, v in base.data.items() if k not in ("files", "revision", "edited_from")}
+    onboarding = Onboarding.model_validate({**fields, "notes": f"Edited by {actor} from v{base.version}: {reason}"})
+    mirror = mirror_for(session.get(Project, run.project_id))
+    content = render_onboarding(run.title.removeprefix("Foundation: "), onboarding, merged,
+                                {path: mirror.read_file(run.base_commit, path) for path in merged})
+    document = add_document(session, run.id, "onboarding", content, author_kind="human", author=actor,
+                            data={**onboarding.model_dump(), "files": merged, "edited_from": base.version})
+    record_event(session, "onboarding.edited", actor=actor, acting_role=TL, run_id=run.id,
+                 payload={"from": base.version, "version": document.version, "files": sorted(files), "reason": reason})
 
 
 def redo_onboarding(session: Session, run: Run, *, actor: str, reason: str) -> None:
