@@ -237,6 +237,12 @@ export interface RunDetail extends RunSummary {
   executions: { id: string; kind: string; role: string; status: string; attempts: number; engine: string | null; error: string | null;
     task: string | null; started_at: string | null; finished_at: string | null }[];
   task_steps: { task: string | null; steps: Step[] }[];
+  // a person's defect notes checked against the SDS, while the run waits on a conflict the check found
+  defect_check?: {
+    defects: { who: string; reason: string };
+    check: { summary: string; points: { point: string; verdict: "consistent" | "conflict" | "not_covered"; evidence: string[]; note: string }[] };
+    engine?: string | null;
+  } | null;
   // the Code Reviewer's brief on the stop the run waits on (null when the run is not stopped)
   advice?: {
     pending: boolean; engine?: string | null; error?: string | null;

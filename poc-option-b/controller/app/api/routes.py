@@ -108,7 +108,8 @@ class StageStart(Body):
 
 
 class Resume(Body):
-    decision: Literal["resume", "replan", "cancel", "amend_tests", "keep_tests", "already_built"]
+    decision: Literal["resume", "replan", "cancel", "amend_tests", "keep_tests", "already_built",
+                      "defects_as_written", "defects_revised"]
     reason: str
 
 

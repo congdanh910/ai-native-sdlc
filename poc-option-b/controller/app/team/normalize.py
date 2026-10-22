@@ -514,3 +514,19 @@ def advice(data: dict) -> dict:
     if isinstance(data.get("checks"), str):
         data["checks"] = [data["checks"]]
     return data
+
+
+def defect_check(data: dict) -> dict:
+    """Verdicts in loose spelling, evidence as one string."""
+    data = dict(data)
+    points = []
+    for point in data.get("points") or []:
+        if not isinstance(point, dict):
+            continue
+        verdict = str(point.get("verdict", "")).strip().lower().replace(" ", "_").replace("-", "_")
+        evidence = point.get("evidence") or []
+        points.append({**point, "verdict": {"conflicts": "conflict", "inconsistent": "conflict",
+                                            "not_in_sds": "not_covered", "unknown": "not_covered"}.get(verdict, verdict),
+                       "evidence": [evidence] if isinstance(evidence, str) else evidence})
+    data["points"] = points
+    return data

@@ -87,7 +87,11 @@ Full design: `AI_Native_SDLC_Option_B.md`. This page is the map an agent needs t
 - Preview failures name each exited service with the end of its logs and remove the containers; image builds have
   `preview.build_timeout_seconds`. People start or stop a preview only while the run waits for a person
   (`services.preview_locked`); never during ACCEPTANCE_TESTING.
-- Gate `acceptance` (QC): accept → PR; reject → `_add_fix_task`: one new task Tn+1 of the plan over every file of
+- Gate `acceptance` (QC): accept → PR; reject → `_send_defects`: with an SDS in the worktree and
+  `SDLC_DEFECT_CHECK_ENABLED`, the `check_defects` job (Code Reviewer's engine, prompt `defect-check.md`, schema
+  `DefectCheck`) rates each note consistent / conflict / not_covered against SDS, SRS and spec; a conflict stops the
+  run (`DEFECTS_CONFLICT`, run page `defect_check`) for `defects_revised` (checked again) or `defects_as_written`;
+  otherwise `_add_fix_task`: one new task Tn+1 of the plan over every file of
   its tasks, payload `defects`; its QA Engineer writes or updates the tests of the defects (amend), then the Developer
   fixes; review and acceptance again, the acceptance QA gets the QC's notes. PR request_changes does the same. retest
   rewrites the tests with the reason.

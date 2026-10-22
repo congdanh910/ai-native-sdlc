@@ -167,8 +167,18 @@ def run_detail(session: Session, run: Run) -> dict:
                        if e.kind == "code_task" and e.result],
         "already_built": _already_built(session, run, tasks, executions),
         "advice": _advice(session, run, executions),
+        "defect_check": _defect_check(session, run),
     })
     return detail
+
+
+def _defect_check(session: Session, run: Run) -> dict | None:
+    """The SDS check of a person's defect notes, while the run waits on a conflict it found."""
+    from controller.app.coordinator import DEFECTS_CONFLICT, artifact
+    if run.status != "NEEDS_HUMAN" or DEFECTS_CONFLICT not in (run.status_reason or ""):
+        return None
+    raw = artifact(session, run.id, "defect_check")
+    return json.loads(raw) if raw else None
 
 
 def _advice(session: Session, run: Run, executions: list[Execution]) -> dict | None:

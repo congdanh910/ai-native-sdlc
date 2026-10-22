@@ -340,6 +340,20 @@ class Advice(Contract):
     checks: list[str] = []  # what the Tech Lead verifies before deciding
 
 
+class DefectPoint(Contract):
+    point: str = Field(min_length=1)  # one defect or change of the notes, in a few words
+    verdict: Literal["consistent", "conflict", "not_covered"]  # against the SDS, the SRS and the spec
+    evidence: list[str] = []  # the section and the quoted line that settle it
+    note: str = ""  # for a conflict: what the documents say instead
+
+
+class DefectCheck(Contract):
+    """The QC's or Code Owner's notes checked against the SDS before the team acts on them: a note that contradicts
+    the design goes back to the person first."""
+    points: list[DefectPoint] = Field(min_length=1)
+    summary: str = ""
+
+
 def render_review(title: str, review: Review, engine: str) -> str:
     rows = "\n".join(f"| {criterion} | {', '.join(cases) or 'none'} |" for criterion, cases in review.coverage.items())
     findings = "\n".join(f"- {f.severity.capitalize()}: {f.text}" + (f" (`{f.file}`)" if f.file else "")

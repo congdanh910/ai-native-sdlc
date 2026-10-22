@@ -39,6 +39,9 @@ class CompositeTeam:
     def advise(self, *args, **kwargs):
         return self.thinking.advise(*args, **kwargs)
 
+    def check_defects(self, *args, **kwargs):
+        return self.thinking.check_defects(*args, **kwargs)
+
     def extract_part(self, *args, **kwargs):
         return self.thinking.extract_part(*args, **kwargs)
 

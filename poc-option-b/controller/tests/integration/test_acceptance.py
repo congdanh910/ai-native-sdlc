@@ -140,3 +140,68 @@ def test_a_failed_acceptance_job_is_resumed_at_acceptance(db, sample_repo):
                         reason="the acceptance session is fixed")
     drain()
     assert status(run_id) == RunStatus.WAITING_ACCEPTANCE_APPROVAL
+
+
+def _at_the_qc_gate(sample_repo) -> str:
+    with_preview(sample_repo)
+    (sample_repo / "SDS.md").write_text("# SDS\n\n## 6. API Design\n\nUse 400 for invalid field format.\n")
+    git(sample_repo, "-c", "user.name=t", "-c", "user.email=t@t", "add", ".")
+    git(sample_repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "-m", "sds")
+    run_id = new_run(add_project(sample_repo))
+    drain()
+    approve_spec(run_id)
+    drain()
+    approve_plan(run_id)
+    drain()
+    assert status(run_id) == RunStatus.WAITING_ACCEPTANCE_APPROVAL
+    return run_id
+
+
+def _fix_tasks(run_id) -> list:
+    from sqlalchemy import select
+    from controller.app.models import Task
+    with session_scope() as session:
+        return [t.payload["defects"] for t in session.scalars(select(Task).where(Task.run_id == run_id))
+                if t.payload.get("defects")]
+
+
+def test_defect_notes_that_agree_with_the_sds_go_to_the_fix_task(db, sample_repo):
+    run_id = _at_the_qc_gate(sample_repo)
+    with session_scope() as session:
+        services.decide_acceptance(session, services.get_run(session, run_id), actor=OPERATOR, decision="reject",
+                                   reason="AC-1: missing fields must return 400 (SDS 6)")
+    drain()
+    assert _fix_tasks(run_id) == ["QC (acceptance): AC-1: missing fields must return 400 (SDS 6)"]
+    assert status(run_id) == RunStatus.WAITING_ACCEPTANCE_APPROVAL  # fixed, reviewed, tested again
+
+
+def test_defect_notes_that_contradict_the_sds_go_back_to_the_person_first(db, sample_repo):
+    from controller.app.api.views import run_detail
+    run_id = _at_the_qc_gate(sample_repo)
+    with session_scope() as session:
+        services.decide_acceptance(session, services.get_run(session, run_id), actor=OPERATOR, decision="reject",
+                                   reason="AC-1: missing fields must return 422 CONTRADICTS-SDS")
+    drain()
+    assert status(run_id) == RunStatus.NEEDS_HUMAN and _fix_tasks(run_id) == []
+    with session_scope() as session:
+        run = services.get_run(session, run_id)
+        assert "conflict with the SDS" in run.status_reason
+        assert run_detail(session, run)["defect_check"]["check"]["points"][0]["verdict"] == "conflict"
+        services.resume(session, run, actor=OPERATOR, decision="defects_revised",
+                        reason="AC-1: missing fields must return 400 (SDS 6)")
+    drain()
+    assert _fix_tasks(run_id) == ["QC (acceptance): AC-1: missing fields must return 400 (SDS 6)"]
+    assert status(run_id) == RunStatus.WAITING_ACCEPTANCE_APPROVAL
+
+
+def test_defect_notes_can_be_sent_as_written_against_the_sds(db, sample_repo):
+    run_id = _at_the_qc_gate(sample_repo)
+    with session_scope() as session:
+        services.decide_acceptance(session, services.get_run(session, run_id), actor=OPERATOR, decision="reject",
+                                   reason="AC-1: 422 CONTRADICTS-SDS")
+    drain()
+    with session_scope() as session:
+        services.resume(session, services.get_run(session, run_id), actor=OPERATOR, decision="defects_as_written",
+                        reason="the SDS is out of date here; 422 is agreed with the customer")
+    drain()
+    assert _fix_tasks(run_id) == ["QC (acceptance): AC-1: 422 CONTRADICTS-SDS"]

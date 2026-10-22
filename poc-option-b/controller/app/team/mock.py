@@ -10,7 +10,7 @@ import re
 
 from controller.app.project_docs import Sds, Srs, srs_features, srs_flows, srs_state_entities
 from controller.app.projects.config import matches_any
-from controller.app.schemas import (Advice, Criterion, Intent, PlanPayload, PlanTask, Question, Review, Spec, TestCase,
+from controller.app.schemas import (Advice, Criterion, DefectCheck, Intent, PlanPayload, PlanTask, Question, Review, Spec, TestCase,
                                     TestPlan, parse_criteria)
 from controller.app.team.base import ReleaseResult, RunContext, StepResult
 
@@ -237,6 +237,11 @@ class MockTeam:
         decision = next(iter(stop.get("decisions") or {"resume": ""}))
         return Advice(situation=f"Mock advice: {stop.get('stop', '')[:200]}", recommendation=decision, confidence="low",
                       reason=f"mock: {decision}", sides=[{"party": "the platform", "claim": "no model was asked"}])
+
+    def check_defects(self, context, notes) -> DefectCheck:
+        verdict = "conflict" if "CONTRADICTS-SDS" in notes else "consistent"  # tests choose the outcome
+        return DefectCheck(points=[{"point": notes[:200], "verdict": verdict, "evidence": ["SDS.md (mock)"]}],
+                           summary=f"mock: {verdict}")
 
     def review(self, context, plan, tests, diff="", validation="") -> Review:
         coverage = {c.id: [case.id for case in tests.cases if case.criterion == c.id]

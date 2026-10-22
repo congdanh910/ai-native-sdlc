@@ -335,6 +335,7 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
     return (
       <Panel run={run} title="The team stopped">
         <p className="m-0 rounded-lg bg-bad-soft p-3 text-sm text-bad">{run.reason}</p>
+        {run.defect_check ? <DefectCheckCard run={run} reason={reason} onUse={setReason} post={post} /> : null}
         {run.advice ? <AdviceCard run={run} onUse={setReason} /> : null}
         {run.already_built ? <AlreadyBuilt evidence={run.already_built} /> : null}
         {disputed ? (
@@ -527,6 +528,35 @@ function AdviceCard({ run, onUse }: { run: RunDetail; onUse: (reason: string) =>
           <Button onClick={() => onUse(a.reason)}>Use this reason</Button>
           <ActionButton success="Asked the Code Reviewer for a new brief" action={ask}>Ask again</ActionButton>
         </div>
+      </div>
+    </div>
+  );
+}
+
+
+const VERDICT_TONE = { consistent: "good", conflict: "bad", not_covered: "neutral" } as const;
+
+/** The SDS check of the QC's or Code Owner's defect notes: each point with its verdict and evidence. The person sends
+ * the notes as written (their call) or revised (checked again). */
+function DefectCheckCard({ run, reason, onUse, post }: {
+  run: RunDetail; reason: string; onUse: (r: string) => void; post: (path: string, body: object) => Promise<void>;
+}) {
+  const { defects, check } = run.defect_check!;
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-line p-3 text-sm">
+      <div><b>Your notes against the SDS</b> <span className="text-xs text-muted">Code Reviewer; the team follows your notes over the approved test cases, so a conflict would be built as written</span></div>
+      <p className="m-0">{check.summary}</p>
+      {check.points.map((p, i) => (
+        <div key={i} className="rounded border border-line bg-panel p-2">
+          <div className="flex flex-wrap items-center gap-2"><Badge tone={VERDICT_TONE[p.verdict] ?? "neutral"}>{p.verdict.replace("_", " ")}</Badge> {p.point}</div>
+          {p.note ? <p className="m-0 mt-1 text-ink-2">{p.note}</p> : null}
+          {p.evidence.length ? <ul className="m-0 mt-1 pl-5 text-xs text-ink-2">{p.evidence.map((e, j) => <li key={j}><Mono>{e}</Mono></li>)}</ul> : null}
+        </div>
+      ))}
+      <div className="flex flex-wrap gap-2">
+        <Button onClick={() => onUse(defects.reason)}>Edit my notes</Button>
+        <ActionButton disabled={!reason.trim()} title="Check the revised notes in the box against the SDS again, then give them to the fix task" action={() => post("resume", { decision: "defects_revised", reason })}>Send revised notes</ActionButton>
+        <ActionButton disabled={!reason.trim()} title="Give the notes as first written to the fix task; the reason box records why the design does not apply" action={() => post("resume", { decision: "defects_as_written", reason })}>Send as written</ActionButton>
       </div>
     </div>
   );

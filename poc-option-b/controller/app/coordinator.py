@@ -74,7 +74,11 @@ KINDS: dict[str, tuple[TeamRole, bool, RunStatus]] = {
     "preview_stop": (TeamRole.COORDINATOR, False, None),
     # The brief for the Tech Lead when a task stops; it belongs to no stage and changes nothing.
     "advise": (TeamRole.CODE_REVIEWER, False, None),
+    # A person's defect notes checked against the SDS before the fix task gets them.
+    "check_defects": (TeamRole.CODE_REVIEWER, False, None),
 }
+
+DEFECTS_CONFLICT = "the defect notes conflict with the SDS"
 
 
 class JobAborted(Exception):
@@ -613,6 +617,8 @@ def load(session: Session, execution: Execution) -> Loaded:
             Document.run_id == run.id, Document.kind == "acceptance")) + 1)
     if execution.kind == "advise":
         _load_advice(session, run, loaded, session.get(Task, execution.task_id))
+    if execution.kind == "check_defects":
+        loaded.extra["defects"] = json.loads(artifact(session, run.id, "pending_defects"))
     if execution.kind == "code_task":
         # what the QC (acceptance) or the Code Owner (pull request) asked since the last review: the Developer's notes
         last_review = latest_document(session, run.id, "review")
@@ -745,6 +751,11 @@ def compute(team: Team, loaded: Loaded) -> dict:
         steps = _work_task(team, loaded)
         executors = sorted({s["evidence"]["executor"] for s in steps if s["evidence"].get("executor")})
         result = {"steps": steps, "_engine": ",".join(executors) or None}
+    elif loaded.kind == "check_defects":
+        joblog.note("Code Reviewer checks the defect notes against the SDS")
+        check = team.check_defects(context, loaded.extra["defects"]["reason"])
+        result = {"check": check.model_dump(), "defects": loaded.extra["defects"]}
+        record()
     elif loaded.kind == "advise":
         joblog.note("Code Reviewer prepares the Tech Lead's brief on the stopped task")
         result = {"advice": team.advise(context, loaded.extra["stop"]).model_dump(), "for": loaded.extra["stop"]["stop"]}
@@ -855,10 +866,28 @@ def apply(session: Session, loaded: Loaded, result: dict, team: Team) -> None:
                "release": _apply_release, "extract": _apply_extract, "options": _apply_options,
                "onboarding": _apply_onboarding, "environment": _apply_environment,
                "preview": _apply_preview, "preview_stop": _apply_preview,
-               "acceptance": _apply_acceptance, "advise": _apply_advice}[loaded.kind]
+               "acceptance": _apply_acceptance, "advise": _apply_advice,
+               "check_defects": _apply_check_defects}[loaded.kind]
     handler(session, run, execution, result, team)
     if execution.status == "running":
         finish(session, execution, "succeeded", result=result)
+
+
+def _apply_check_defects(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    """Notes that agree with the design (or that it does not settle) go to the fix task; a conflict goes back to the
+    person, who sends the notes as written or revised."""
+    from controller.app.services import _add_fix_task
+    defects, check = result["defects"], result["check"]
+    store_artifact(session, run, "defect_check", TeamRole.CODE_REVIEWER,
+                   json.dumps({"defects": defects, "check": check, "engine": result.get("_engine")}))
+    if run.status != RunStatus.CODING:
+        return
+    conflicts = [p for p in check["points"] if p["verdict"] == "conflict"]
+    if conflicts:
+        to_needs_human(session, run, f"{DEFECTS_CONFLICT}: " + "; ".join(
+            f"{p['point']} ({p['note']})" for p in conflicts)[:900])
+        return
+    _add_fix_task(session, run, actor=defects["actor"], who=defects["who"], reason=defects["reason"])
 
 
 def _apply_advice(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:

@@ -411,6 +411,9 @@ def resume(session: Session, run: Run, *, actor: str, decision: str, reason: str
     if decision == "already_built":
         _accept_as_built(session, run, actor=actor, reason=reason)
         return
+    if decision in ("defects_as_written", "defects_revised"):
+        _decide_defects(session, run, actor=actor, decision=decision, reason=reason)
+        return
     target = RunStatus(run.resume_status or RunStatus.PREFLIGHT)
     kinds = {RunStatus.PREFLIGHT: "preflight", RunStatus.SPECIFYING: "specify", RunStatus.PLANNING: "plan",
              RunStatus.DESIGNING_OPTIONS: "options", RunStatus.DESIGNING_ONBOARDING: "onboarding",
@@ -539,7 +542,7 @@ def pr_decision(session: Session, run: Run, *, actor: str, decision: str, reason
             transition_run(session, run, RunStatus.CLARIFYING, actor=actor, acting_role=CO, reason=reason)
             return
         transition_run(session, run, RunStatus.CODING, actor=actor, acting_role=CO, reason=reason)
-        _add_fix_task(session, run, actor=actor, who="Code Owner (pull request)", reason=reason)
+        _send_defects(session, run, actor=actor, who="Code Owner (pull request)", reason=reason)
     elif decision == "rereview":
         # The code is unchanged; the Code Reviewer writes a new review.md and the PR body is refreshed.
         transition_run(session, run, RunStatus.REVIEWING, actor=actor, acting_role=CO,
@@ -636,7 +639,7 @@ def decide_acceptance(session: Session, run: Run, *, actor: str, decision: str, 
         _corrected(run)
         _approval(session, run, "acceptance", "reject", actor, QC, reason=reason)
         transition_run(session, run, RunStatus.CODING, actor=actor, acting_role=QC, reason=reason)
-        _add_fix_task(session, run, actor=actor, who="QC (acceptance)", reason=reason)
+        _send_defects(session, run, actor=actor, who="QC (acceptance)", reason=reason)
     elif decision == "retest":
         _approval(session, run, "acceptance", "retest", actor, QC, reason=reason or None)
         transition_run(session, run, RunStatus.ACCEPTANCE_TESTING, actor=actor, acting_role=QC,
@@ -644,6 +647,32 @@ def decide_acceptance(session: Session, run: Run, *, actor: str, decision: str, 
         coordinator.queue(session, run, "acceptance", key=f"retest:v{run.version}")
     else:
         raise DecisionError(f"unknown acceptance decision {decision!r}")
+
+
+def _send_defects(session: Session, run: Run, *, actor: str, who: str, reason: str) -> None:
+    """A person's defect notes: checked against the SDS first (SDLC_DEFECT_CHECK_ENABLED, when the project has an
+    SDS), then given to one fix task. The team follows a person's notes over the approved test cases, so a note that
+    contradicts the design would be built as written."""
+    from pathlib import Path
+    defects = {"who": who, "reason": reason, "actor": actor}
+    coordinator.store_artifact(session, run, "pending_defects", TeamRole.COORDINATOR, json.dumps(defects))
+    has_sds = bool(run.worktree_path) and (Path(run.worktree_path) / SDS_PATH).is_file()
+    if get_settings().sdlc_defect_check_enabled and has_sds:
+        coordinator.queue(session, run, "check_defects", key=f"defects:{datetime.now(timezone.utc).isoformat()}")
+        return
+    _add_fix_task(session, run, actor=actor, who=who, reason=reason)
+
+
+def _decide_defects(session: Session, run: Run, *, actor: str, decision: str, reason: str) -> None:
+    """After the SDS check found a conflict: send the notes as they were written (the person's call), or revised."""
+    if coordinator.DEFECTS_CONFLICT not in (run.status_reason or ""):
+        raise DecisionError("no defect notes wait for a decision")
+    defects = json.loads(coordinator.artifact(session, run.id, "pending_defects"))
+    transition_run(session, run, RunStatus.CODING, actor=actor, acting_role=TL, reason=reason)
+    if decision == "defects_as_written":
+        _add_fix_task(session, run, actor=actor, who=defects["who"], reason=defects["reason"])
+    else:
+        _send_defects(session, run, actor=actor, who=defects["who"], reason=reason)
 
 
 def _add_fix_task(session: Session, run: Run, *, actor: str, who: str, reason: str) -> None:
