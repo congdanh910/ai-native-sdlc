@@ -52,7 +52,7 @@ def _document(document: Document) -> dict:
             "findings": (document.data or {}).get("sync_findings", []),
             "revision": (document.data or {}).get("revision"),
             **({"choices": _option_choices(document.data)} if document.kind == "options" and document.data else {}),
-            **({"acceptance": {k: (document.data or {}).get(k) for k in ("cases", "criteria", "attempt", "url", "problems")}}
+            **({"acceptance": {k: (document.data or {}).get(k) for k in ("cases", "criteria", "attempt", "url", "problems", "proven")}}
                if document.kind == "acceptance" else {}),
             **({"ui": _ui_concepts(document.data)} if document.kind == "ui_concepts" and document.data else {}),
             # the per-source chunks are kept for the next round only; the page needs the merged inventory

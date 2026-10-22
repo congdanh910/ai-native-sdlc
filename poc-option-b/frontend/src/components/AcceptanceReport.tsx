@@ -7,7 +7,7 @@ interface Case { title: string; criteria: string[]; status: string; error: strin
 
 /** Each criterion of the story with its end-to-end tests, their outcome and their screenshots and videos. */
 export function AcceptanceReport({ run, doc }: { run: RunDetail; doc: Doc }) {
-  const data = (doc as Doc & { acceptance?: { cases: Case[]; criteria: Record<string, string>; attempt: number } }).acceptance;
+  const data = (doc as Doc & { acceptance?: { cases: Case[]; criteria: Record<string, string>; attempt: number; proven?: Record<string, string[]> | null } }).acceptance;
   const [open, setOpen] = useState<string | null>(null);
   if (!data) return null;
   const base = `/api/runs/${run.id}/evidence/${data.attempt}`;
@@ -16,12 +16,16 @@ export function AcceptanceReport({ run, doc }: { run: RunDetail; doc: Doc }) {
       {Object.entries(data.criteria).map(([id, text]) => {
         const cases = data.cases.filter((c) => c.criteria.includes(id));
         const passed = cases.length > 0 && cases.every((c) => c.status === "passed");
+        const proven = !cases.length ? data.proven?.[id] ?? [] : [];
         return (
           <div key={id} className="rounded-lg border border-line p-3 text-sm">
             <div className="flex flex-wrap items-start gap-2">
-              <Badge tone={passed ? "good" : cases.length ? "bad" : "warn"} dot>{passed ? "passed" : cases.length ? "failed" : "no test"}</Badge>
+              <Badge tone={passed || proven.length ? "good" : cases.length ? "bad" : "warn"} dot>{passed ? "passed" : cases.length ? "failed" : proven.length ? "proven by tests" : "no test"}</Badge>
               <b>{id}</b><span className="text-ink-2">{text}</span>
             </div>
+            {proven.length ? (
+              <p className="m-0 mt-1 text-xs text-muted">No browser test (the preview cannot show it); the coding's test cases {proven.join(", ")} passed for it in the validation.</p>
+            ) : null}
             {cases.map((c) => (
               <div key={c.title} className="mt-2 border-t border-line pt-2">
                 <div className="text-xs text-muted">{c.title} · {c.status}</div>
