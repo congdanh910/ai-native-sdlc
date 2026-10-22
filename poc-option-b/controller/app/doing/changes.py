@@ -107,10 +107,12 @@ def _common(worktree: Path, change: Change, policy: EffectivePolicy) -> list[str
     return problems
 
 
-def check_tests(worktree: Path, changes: list[Change], policy: EffectivePolicy, *, allow_edits: bool = False) -> list[str]:
+def check_tests(worktree: Path, changes: list[Change], policy: EffectivePolicy, *, allow_edits: bool = False,
+                allow_deletes: bool = False) -> list[str]:
     """QA Engineer: only add test files or add cases; never change sources or weaken existing tests.
 
     allow_edits: a human ruled on a test dispute, so existing lines may change (still no deletions or skips).
+    allow_deletes: an acceptance suite written for an earlier preview is replaced, so its files may go.
     """
     problems = []
     for change in changes:
@@ -118,7 +120,7 @@ def check_tests(worktree: Path, changes: list[Change], policy: EffectivePolicy, 
         if not matches_any(change.path, policy.test_paths):
             problems.append(f"changes {change.path}, outside the test paths {policy.test_paths}")
             continue
-        if change.status == "D":
+        if change.status == "D" and not allow_deletes:
             problems.append(f"deletes test file {change.path}")
         elif change.deleted and not allow_edits and not _widened_imports(worktree, change.path):
             shown = "; ".join(repr(line.strip()[:120]) for line in _removed_lines(worktree, change.path)[:3])

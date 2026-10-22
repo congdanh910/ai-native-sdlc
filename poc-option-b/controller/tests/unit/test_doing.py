@@ -747,6 +747,14 @@ def test_the_acceptance_run_installs_playwright_at_the_image_version_on_a_copy()
     assert "@playwright/test@1.56.1" in argv[2] and "npm ci --prefix e2e" in argv[2] and "/tmp/work" in argv[2]
 
 
+class DeletingQA(FakeExecutor):
+    """Rewrites the suite and removes an obsolete file of it."""
+
+    def run(self, session):
+        (session.worktree / "test" / "tasks.test.js").unlink(missing_ok=True)
+        return super().run(session)
+
+
 def test_acceptance_tests_written_for_an_earlier_preview_are_written_again(worktree, tmp_path):
     from controller.app.projects.config import Preview
     preview = Preview(compose=".sdlc/preview.compose.yml", service="web", port=8000, e2e_paths=["test/**"])
@@ -758,7 +766,7 @@ def test_acceptance_tests_written_for_an_earlier_preview_are_written_again(workt
     changes.stage_changes(worktree)
     changes.commit(worktree, "test(acceptance): end-to-end tests of the story's criteria", "qa_engineer")
     ctx = dataclasses.replace(context(worktree, qa_executor="claude", preview=preview), base_commit=base)
-    qa = FakeExecutor("claude", {"test/due.spec.ts": "test('AC-1 due date shows', async () => {});\n"})
+    qa = DeletingQA("claude", {"test/due.spec.ts": "test('AC-1 due date shows', async () => {});\n"})
     team, _ = doing(tmp_path, qa=qa)
     assert team.write_acceptance_tests(ctx, "- AC-1: due", "Due").evidence.get("reused")  # same preview: reused
     (worktree / ".sdlc" / "preview.compose.yml").write_text("services:\n  web:\n    build: ./web\n")
