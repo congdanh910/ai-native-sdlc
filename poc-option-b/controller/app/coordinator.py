@@ -1045,6 +1045,12 @@ def _apply_environment(session: Session, run: Run, execution: Execution, result:
         store_artifact(session, run, "review_md", TeamRole.COORDINATOR, snapshot.review_md)
     record_event(session, "environment.ready", actor=COORDINATOR, run_id=run.id,
                  payload={"detail": result["detail"], "commit": head})
+    if artifact(session, run.id, "onboarding_return") == "acceptance":  # reopened when the acceptance tests could not run
+        store_artifact(session, run, "onboarding_return", TeamRole.COORDINATOR, "")
+        transition_run(session, run, RunStatus.ACCEPTANCE_TESTING, actor=COORDINATOR,
+                       reason="the onboarding files are fixed; the acceptance tests run again on the same code")
+        queue(session, run, "acceptance", key=f"onboarding:v{run.version}")
+        return
     spec_approved = session.scalar(select(func.count()).select_from(Approval).where(
         Approval.run_id == run.id, Approval.stage == "spec", Approval.decision == "approve"))
     # reopened after the spec gate: the approved spec stands, the Tech Lead plans again with the revised files
