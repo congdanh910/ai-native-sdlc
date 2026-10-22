@@ -296,6 +296,8 @@ of its own.
   empty, loading and error states); a new visual pattern becomes a component first.
 - Colors, sizes, radii and fonts come from the tokens; no inline style and no literal color in screens.
 - Every screen has its empty, loading and error states.
+- Tables mark their header cells for assistive technology (`<th scope="col">`, or `scope="row"` for row headers);
+  forms label every field; buttons and links say what they do.
 - Accessibility: {brand.accessibility.upper()}: text contrast as checked at the gate, labels on every field, visible
   focus, the whole flow works with the keyboard.
 - Devices: {', '.join(brand.devices)}.{f"{chr(10)}- Interface language: {brand.language}." if brand.language else ""}{f"{chr(10)}- Tone: {brand.tone}." if brand.tone else ""}
