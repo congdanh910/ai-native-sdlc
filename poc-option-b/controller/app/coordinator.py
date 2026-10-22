@@ -15,6 +15,7 @@ import json
 import logging
 import re
 from pathlib import Path
+import shutil
 import uuid
 
 from sqlalchemy import func, select
@@ -1176,12 +1177,30 @@ def _accept(team: Team, loaded: Loaded) -> dict:
     if state["status"] != "running":
         return {**result, "ok": False, "detail": f"the preview did not start: {state['detail'][:1500]}"}
     evidence = DATA_DIR / "evidence" / run_id / str(extra["attempt"])
-    joblog.note(f"running the acceptance tests against {state['url']}")
-    ran = acceptance.run_e2e(run_id, Path(extra["worktree"]), config, evidence, context.policy.container_memory_mb)
+
+    def run_tests() -> tuple[dict, list[dict]]:
+        shutil.rmtree(evidence, ignore_errors=True)
+        joblog.note(f"running the acceptance tests against {state['url']}")
+        ran = acceptance.run_e2e(run_id, Path(extra["worktree"]), config, evidence, context.policy.container_memory_mb)
+        cases = acceptance.parse_report(ran["report"], evidence) if ran["ok"] else []
+        joblog.note(f"{sum(c['status'] == 'passed' for c in cases)}/{len(cases)} acceptance test(s) passed")
+        return ran, cases
+
+    ran, cases = run_tests()
+    # errors in the test code (an ambiguous locator, a spec that does not load) go back to the QA Engineer once,
+    # with the errors, before the QC sees them; the application's failures stay for the QC
+    faults = acceptance.authoring_errors(cases) if ran["ok"] else [f"the suite did not run: {ran['detail'][:1500]}"]
+    if faults:
+        joblog.note(f"{len(faults)} test(s) fail in their own code; the QA Engineer fixes them once")
+        fixed = team.write_acceptance_tests(
+            context, "\n".join(f"- {cid}: {text}" for cid, text in criteria.items()), story or context.title,
+            feedback="These tests failed in their own code, not in the application; fix the test code and keep "
+                     "what each test checks:\n" + "\n".join(f"- {f}" for f in faults))
+        result["tests"]["retry"] = {"faults": faults, "ok": fixed.ok, "detail": fixed.detail}
+        if fixed.ok:
+            ran, cases = run_tests()
     if not ran["ok"]:
         return {**result, "ok": False, "detail": ran["detail"]}
-    cases = acceptance.parse_report(ran["report"], evidence)
-    joblog.note(f"{sum(c['status'] == 'passed' for c in cases)}/{len(cases)} acceptance test(s) passed")
     return {**result, "ok": True, "cases": cases, "detail": ran["detail"]}
 
 

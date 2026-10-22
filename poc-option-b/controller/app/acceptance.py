@@ -96,6 +96,17 @@ def parse_report(report: dict, evidence: Path) -> list[dict]:
     return cases
 
 
+# Failures of the test code itself, not of the application: an ambiguous locator, code that does not load.
+AUTHORING = re.compile(r"strict mode violation|SyntaxError|ReferenceError|Cannot find module|is not defined|"
+                       r"is not a function|Unexpected token|TS\d{4}:")
+
+
+def authoring_errors(cases: list[dict]) -> list[str]:
+    """The failed tests whose error is in the test code, each with the first lines of its error."""
+    return [f"{c['title']}: " + " ".join(c["error"].split())[:400]
+            for c in cases if c["status"] != "passed" and AUTHORING.search(c.get("error") or "")]
+
+
 def coverage(criteria: list[str], cases: list[dict]) -> list[str]:
     """Each criterion of the story has a test, and every test of it passed."""
     problems = []

@@ -812,3 +812,45 @@ def test_a_preview_build_that_times_out_is_not_the_architects_fault(tmp_path, mo
     monkeypatch.setattr(preview, "start", lambda *a, **k: {"status": "failed", "detail": "did not finish", "timed_out": True})
     monkeypatch.setattr(preview, "stop", lambda *a, **k: None)
     assert coordinator._try_preview(policy, loaded)["timed_out"]
+
+
+def test_errors_in_the_test_code_are_told_apart_from_failures_of_the_application():
+    from controller.app.acceptance import authoring_errors
+    cases = [{"title": "AC-01 signs in", "status": "failed", "error": "Error: strict mode violation: getByRole(...)"},
+             {"title": "AC-24 envelope", "status": "failed", "error": "Expected: 400\nReceived: 422"},
+             {"title": "AC-05 loads", "status": "passed", "error": ""}]
+    assert authoring_errors(cases) == ["AC-01 signs in: Error: strict mode violation: getByRole(...)"]
+
+
+def test_tests_failing_in_their_own_code_go_back_to_the_qa_engineer_once(worktree, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from controller.app import acceptance, coordinator, preview
+    from controller.app.coordinator import Loaded
+    from controller.app.projects.config import Preview
+    from controller.app.team.base import StepResult
+    monkeypatch.setattr(coordinator, "get_settings", lambda: SimpleNamespace(coding_is_mocked=False,
+                                                                            sdlc_preview_ports="9100-9199"))
+    monkeypatch.setattr(coordinator, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(preview, "free_port", lambda taken: 9100)
+    monkeypatch.setattr(preview, "start", lambda *a, **k: {"status": "running", "url": "http://127.0.0.1:9100/"})
+    monkeypatch.setattr(acceptance, "run_e2e", lambda *a, **k: {"ok": True, "report": {}, "detail": "e2e exit 1"})
+    runs = iter([[{"title": "AC-1 due", "criteria": ["AC-1"], "status": "failed", "attachments": [],
+                   "error": "strict mode violation: getByRole('heading') resolved to 2 elements"}],
+                 [{"title": "AC-1 due", "criteria": ["AC-1"], "status": "passed", "attachments": [], "error": ""}]])
+    monkeypatch.setattr(acceptance, "parse_report", lambda report, evidence: next(runs))
+
+    class QA:
+        feedback = []
+
+        def write_acceptance_tests(self, context, criteria, story, feedback=""):
+            self.feedback.append(feedback)
+            return StepResult(True, "written")
+    preview_config = Preview(compose=".sdlc/preview.compose.yml", service="web", port=80)
+    loaded = Loaded(None, "acceptance", None, 1)
+    loaded.context = context(worktree, preview=preview_config)
+    loaded.extra.update(attempt=1, run_id="run-1", evict=[], taken=[], preview=preview_config.model_dump(),
+                        worktree=str(worktree))
+    qa = QA()
+    result = coordinator._accept(qa, loaded)
+    assert [c["status"] for c in result["cases"]] == ["passed"] and len(qa.feedback) == 2
+    assert "strict mode violation" in qa.feedback[1] and result["tests"]["retry"]["ok"]
