@@ -23,6 +23,7 @@ Acceptance criteria and edge cases to prove:
 - One test per criterion (more when a criterion has several paths). Every test title starts with the criterion id, for example "AC-01 HR admin creates an employee"; a test without an id proves nothing to the QC.
 - Go through the user interface as the role of the story does: sign in with its demo account, use the screens, and assert what the criterion says the user sees. Take a named screenshot at each step that matters (page.screenshot with a descriptive path under the output directory, or test.info().attach).
 - Use data the seed provides or create it in the test with unique values; never depend on the order of tests.
-- Do not commit, push, or install anything.
+- Do not commit, push, or install anything. The platform provides @playwright/test at the image's version; add no package.json unless the e2e folder already has one.
+- Use only BASE_URL and the demo accounts above: the tests get no other variables, commands or controls (no restarts, no clock control, no test-double switches). A criterion that cannot be shown this way gets no test; name it in your answer under "Not testable on the preview:" with the reason, so the QC knows why it has no evidence.
 {preview}{feedback}
 When you are done, answer with one short paragraph naming the test files and the criteria they cover.

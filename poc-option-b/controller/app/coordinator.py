@@ -1005,7 +1005,28 @@ def _try_environment(loaded: Loaded) -> dict:
         platform = "no space left on device" in log.lower()
         return {"ok": False, "platform": platform,
                 "detail": f"{failed.name} failed (exit {failed.exit_code}): {failed.tail[-1500:]}"}
-    return {"ok": True, "detail": f"image {image} built; {len(policy.services)} service(s) ready"}
+    started = _try_preview(policy, loaded)
+    if started and started["status"] != "running":
+        return {"ok": False, "detail": f"the preview does not start with these files: {started['detail'][:1500]}"}
+    return {"ok": True, "detail": f"image {image} built; {len(policy.services)} service(s) ready"
+                                  + ("; the preview starts and answers its health path" if started else "")}
+
+
+def _try_preview(policy: EffectivePolicy, loaded: Loaded) -> dict | None:
+    """When the code the preview builds exists (onboarding reopened after coding), start the preview once and stop
+    it: a compose file that drops a variable the code needs fails here, not at the acceptance tests."""
+    from controller.app import preview
+    worktree = Path(loaded.extra["worktree"])
+    if policy.preview is None or preview.missing_parts(worktree, policy.preview):
+        return None
+    port = preview.free_port(set())
+    if port is None:
+        return None
+    joblog.note("starting the preview once to check the onboarding files against the code")
+    state = preview.start(loaded.extra["run_id"], worktree, policy.preview, port,
+                          DATA_DIR / "logs" / loaded.extra["run_id"] / "environment-preview")
+    preview.stop(loaded.extra["run_id"])
+    return state
 
 
 def _apply_environment(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:

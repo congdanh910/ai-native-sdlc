@@ -144,11 +144,15 @@ class CliDoing:
         worktree = self._worktree(context)
         changes.discard(worktree)
         preview = context.policy.preview
-        if not feedback and context.base_commit:
-            existing = changes.find_commit(worktree, context.base_commit, "test(acceptance):")
-            if existing:
-                return StepResult(True, f"acceptance tests already committed in {existing[:10]}; reused",
-                                  evidence={"commit": existing, "reused": True})
+        existing = changes.find_commit(worktree, context.base_commit, "test(acceptance):") if context.base_commit else None
+        # tests written for an earlier preview (the onboarding changed its compose file since) are written again
+        stale = bool(existing) and preview.compose in changes.changed_since(worktree, existing)
+        if existing and not feedback and not stale:
+            return StepResult(True, f"acceptance tests already committed in {existing[:10]}; reused",
+                              evidence={"commit": existing, "reused": True})
+        if stale and not feedback:
+            feedback = (f"The preview changed since these acceptance tests were written ({preview.compose}); write "
+                        "them again for the preview as it is now.")
         if feedback:
             changes.drop_commit(worktree, "test(acceptance):")
         accounts = "\n".join(f"  - {a.role}: {a.username} / {a.password}" + (f" ({a.note})" if a.note else "")
@@ -168,7 +172,8 @@ class CliDoing:
                               evidence=self._evidence(result, label))
         staged = changes.stage_changes(worktree)
         e2e_policy = context.policy.model_copy(update={"test_paths": list(preview.e2e_paths)})
-        problems = changes.check_tests(worktree, staged, e2e_policy) if staged else ["no acceptance test was written"]
+        # a suite written for an earlier preview may be rewritten in place (still no deleted files, no skips)
+        problems = changes.check_tests(worktree, staged, e2e_policy, allow_edits=stale) if staged else ["no acceptance test was written"]
         if problems:
             changes.discard(worktree)
             return StepResult(False, "acceptance tests rejected: " + "; ".join(problems),

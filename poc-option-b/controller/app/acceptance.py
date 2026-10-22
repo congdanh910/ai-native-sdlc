@@ -16,6 +16,29 @@ from controller.app.projects.config import Preview
 
 CRITERION = re.compile(r"\b((?:AC|EC)-\d+)\b")
 REPORT = "results.json"
+IMAGE_VERSION = re.compile(r":v?(\d+\.\d+\.\d+)")
+# The Playwright image has the browsers but not the @playwright/test package the tests import. The repository is
+# mounted read-only (the tests cannot change what they test), so the run works on a copy without dependency folders:
+# the e2e folder's own lockfile when it has one, otherwise the package at the image's version, linked in.
+PREPARE = """set -e
+mkdir -p /tmp/work
+(cd /work && tar --exclude=node_modules --exclude=.venv --exclude=.git -cf - .) | tar -xf - -C /tmp/work
+cd /tmp/work
+if [ -f {folder}/package-lock.json ]; then
+  npm ci --prefix {folder} --no-audit --no-fund
+elif [ -n "{version}" ] && [ ! -d node_modules/@playwright/test ]; then
+  npm install --no-save --no-audit --no-fund --prefix /tmp/pw @playwright/test@{version}
+  ln -s /tmp/pw/node_modules /tmp/work/node_modules
+fi
+exec "$@"
+"""
+
+
+def e2e_argv(preview: Preview) -> list[str]:
+    """The acceptance command, run after preparing a writable copy of the repository with Playwright installed."""
+    match = IMAGE_VERSION.search(preview.e2e_image)
+    folder = (preview.e2e_paths[0].split("/")[0] if preview.e2e_paths else "e2e") or "e2e"
+    return ["sh", "-c", PREPARE.format(folder=folder, version=match[1] if match else ""), "e2e", *preview.e2e]
 
 
 def run_e2e(run_id: str, worktree: Path, preview: Preview, evidence: Path, memory_mb: int) -> dict:
@@ -27,7 +50,7 @@ def run_e2e(run_id: str, worktree: Path, preview: Preview, evidence: Path, memor
                           "-v", f"{worktree}:/work:ro", "-v", f"{evidence}:/evidence", "-w", "/work",
                           "-e", f"BASE_URL=http://{preview.service}:{preview.port}", "-e", "CI=1", "-e", "HOME=/tmp",
                           "-e", f"PLAYWRIGHT_JSON_OUTPUT_NAME=/evidence/{REPORT}",
-                          preview.e2e_image, *preview.e2e], timeout=preview.e2e_timeout_seconds, container=name)
+                          preview.e2e_image, *e2e_argv(preview)], timeout=preview.e2e_timeout_seconds, container=name)
     if result.timed_out:
         run_bounded(["docker", "rm", "-f", name], timeout=30)
     (evidence / "e2e.log").write_text(result.output)

@@ -735,3 +735,56 @@ def test_lint_failures_in_the_new_tests_go_back_to_the_qa_engineer(worktree, tmp
     assert team(LintRunner("src/tasks.js")).red_check(ctx, TASK, TESTS).ok  # lint of other files: not the QA's
     only_lint = team(LintRunner("src/tasks.js", tests_exit=0)).red_check(ctx, TASK, TESTS)
     assert not only_lint.ok and "already pass" in only_lint.detail  # a lint failure is never the red of TDD
+
+
+def test_the_acceptance_run_installs_playwright_at_the_image_version_on_a_copy():
+    from controller.app.acceptance import e2e_argv
+    from controller.app.projects.config import Preview
+    preview = Preview(compose=".sdlc/preview.compose.yml", service="web", port=80, e2e=["npx", "playwright", "test"],
+                      e2e_image="mcr.microsoft.com/playwright:v1.56.1-noble", e2e_paths=["e2e/**"])
+    argv = e2e_argv(preview)
+    assert argv[:2] == ["sh", "-c"] and argv[-3:] == ["npx", "playwright", "test"]
+    assert "@playwright/test@1.56.1" in argv[2] and "npm ci --prefix e2e" in argv[2] and "/tmp/work" in argv[2]
+
+
+def test_acceptance_tests_written_for_an_earlier_preview_are_written_again(worktree, tmp_path):
+    from controller.app.projects.config import Preview
+    preview = Preview(compose=".sdlc/preview.compose.yml", service="web", port=8000, e2e_paths=["test/**"])
+    (worktree / ".sdlc" / "preview.compose.yml").write_text("services:\n  web:\n    build: ./src\n")
+    git(worktree, "add", ".")
+    git(worktree, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "preview")
+    base = git(worktree, "rev-list", "--max-parents=0", "HEAD").strip()
+    (worktree / "test" / "due.spec.ts").write_text("test('AC-1 due', async () => {});\n")
+    changes.stage_changes(worktree)
+    changes.commit(worktree, "test(acceptance): end-to-end tests of the story's criteria", "qa_engineer")
+    ctx = dataclasses.replace(context(worktree, qa_executor="claude", preview=preview), base_commit=base)
+    qa = FakeExecutor("claude", {"test/due.spec.ts": "test('AC-1 due date shows', async () => {});\n"})
+    team, _ = doing(tmp_path, qa=qa)
+    assert team.write_acceptance_tests(ctx, "- AC-1: due", "Due").evidence.get("reused")  # same preview: reused
+    (worktree / ".sdlc" / "preview.compose.yml").write_text("services:\n  web:\n    build: ./web\n")
+    git(worktree, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "onboarding v5")
+    result = team.write_acceptance_tests(ctx, "- AC-1: due", "Due")
+    assert result.ok and not result.evidence.get("reused"), result.detail
+    assert "The preview changed" in qa.sessions[-1].prompt
+
+
+def test_the_environment_check_starts_the_preview_once_the_code_exists(tmp_path, monkeypatch):
+    from controller.app import coordinator, preview
+    from controller.app.coordinator import Loaded
+    from controller.app.projects.config import Preview
+    (tmp_path / ".sdlc").mkdir()
+    (tmp_path / ".sdlc" / "preview.compose.yml").write_text("services:\n  api:\n    build: ./backend\n")
+    policy = coordinator.EffectivePolicy.model_validate(
+        {**policy_dict(), "preview": Preview(compose=".sdlc/preview.compose.yml", service="api", port=8000).model_dump()})
+    loaded = Loaded(None, "environment", None, 1)
+    loaded.extra.update(worktree=str(tmp_path), run_id="run-1")
+    calls = []
+    monkeypatch.setattr(preview, "start", lambda *a, **k: calls.append("start") or {"status": "failed", "detail": "seed (exit 1)"})
+    monkeypatch.setattr(preview, "stop", lambda *a, **k: calls.append("stop"))
+    assert coordinator._try_preview(policy, loaded) is None and calls == []  # backend/ not written yet
+    (tmp_path / "backend").mkdir()
+    assert coordinator._try_preview(policy, loaded)["detail"] == "seed (exit 1)" and calls == ["start", "stop"]
+
+
+def policy_dict() -> dict:
+    return policy().model_dump()
