@@ -107,8 +107,10 @@ Full design: `AI_Native_SDLC_Option_B.md`. This page is the map an agent needs t
   exists, starts the preview once (`_try_preview`). Failure → back to the Architect with the log
   (≤ `limits.max_remediations`); a full Docker disk → NEEDS_HUMAN; a preview build timeout is not the Architect's.
   Success → the run re-pins project_config, effective_policy, agents_md, review_md from the onboarding commit and
-  enters the spec stage like a story run (spec → plan → test cases → code → review → PR). Reopened from NEEDS_HUMAN at
-  the acceptance tests (`onboarding_return` artifact), it goes back to the acceptance tests instead.
+  enters the spec stage like a story run (spec → plan → test cases → code → review → PR). Reopened from NEEDS_HUMAN
+  (`onboarding_return` artifact: target and the stop), it goes back to the acceptance tests, or to coding the approved
+  plan (stopped tasks READY; a disputed task stops again for the person to rule, with the original dispute). A code
+  job discarded at claim frees its idempotency key so the task can be queued again.
 - The plan input has `preview` (compose file and demo accounts): the plan creates what the compose file runs. The
   onboarding prompt keeps a later story's services out of the foundation's preview and takes demo accounts from the
   seed.

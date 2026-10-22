@@ -213,11 +213,13 @@ def test_a_gap_found_at_the_plan_gate_reopens_the_onboarding_and_comes_back_to_t
     assert len([d for d in state["documents"] if d["kind"] == "spec"]) == 1 and len(state["plans"]) == 2
 
 
-@pytest.mark.parametrize("stopped_at, then", [("CODING", "WAITING_PLAN_APPROVAL"),
+@pytest.mark.parametrize("stopped_at, then", [("PLANNING", "WAITING_PLAN_APPROVAL"),
+                                               ("CODING", "WAITING_PR_APPROVAL"),
+                                               ("DISPUTED", "NEEDS_HUMAN"),
                                                ("ACCEPTANCE_TESTING", "WAITING_ACCEPTANCE_APPROVAL")])
 def test_a_foundation_that_needs_a_human_goes_back_to_onboarding(db, sample_repo, stopped_at, then):
-    """Stopped while coding, the run plans again with the revised files; stopped at the acceptance tests (every
-    task passed and was reviewed, the preview's compose file was wrong), it runs the acceptance tests again."""
+    """Stopped before coding, the run plans again with the revised files; stopped while coding an approved plan, it
+    goes on coding; stopped at the acceptance tests (the preview's compose file was wrong), it runs them again."""
     from controller.app.db import session_scope
     from controller.app.models import Run
     from controller.app.states import RunStatus
@@ -232,10 +234,18 @@ def test_a_foundation_that_needs_a_human_goes_back_to_onboarding(db, sample_repo
     spec = [d for d in detail(run["id"])["documents"] if d["kind"] == "spec"][-1]
     post(f"/api/runs/{run['id']}/approve-spec", {"document_id": spec["id"], "sha256": spec["sha256"], "checked": TICKS})
     drain()
+    if stopped_at != "PLANNING":  # the plan and its test cases approved: the tasks exist
+        from controller.tests.integration.test_team_loop import approve_plan
+        approve_plan(uuid.UUID(run["id"]))
     plans = len(detail(run["id"])["plans"])
     with session_scope() as session:
         found = session.get(Run, uuid.UUID(run["id"]))
-        found.resume_status, found.status = RunStatus(stopped_at), RunStatus.NEEDS_HUMAN
+        if stopped_at == "DISPUTED":  # a test needs a variable only the onboarding files set
+            from controller.app import coordinator
+            coordinator.current_tasks(session, found)[0].status = "DISPUTED"
+            found.status_reason = "T1: the Developer disputes a test: it needs SESSION_COOKIE_SECURE=false"
+        found.resume_status = RunStatus.CODING if stopped_at == "DISPUTED" else RunStatus(stopped_at)
+        found.status = RunStatus.NEEDS_HUMAN
     post(f"/api/runs/{run['id']}/onboarding/reopen", {"reason": "The preview's api needs SESSION_SIGNING_SECRET"})
     drain()
     onboarding = [d for d in detail(run["id"])["documents"] if d["kind"] == "onboarding"][-1]
@@ -244,4 +254,6 @@ def test_a_foundation_that_needs_a_human_goes_back_to_onboarding(db, sample_repo
     drain()
     state = detail(run["id"])
     assert state["status"] == then
-    assert len(state["plans"]) == (plans + 1 if stopped_at == "CODING" else plans)
+    assert len(state["plans"]) == (plans + 1 if stopped_at == "PLANNING" else plans)
+    if stopped_at == "DISPUTED":  # the person rules on the dispute again, now that the files are fixed
+        assert "decide the dispute again" in state["reason"] and "SESSION_COOKIE_SECURE" in state["reason"]

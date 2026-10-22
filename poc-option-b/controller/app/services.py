@@ -742,9 +742,12 @@ def reopen_onboarding(session: Session, run: Run, *, actor: str, reason: str) ->
     _approval(session, run, "onboarding", "reject", actor, TL, reason=reason)
     # stopped at the acceptance tests (every task passed and was reviewed): a fix in the onboarding files, such as the
     # preview's compose file, needs no new plan; the run goes back to the acceptance tests
-    back_to = "acceptance" if run.status == RunStatus.NEEDS_HUMAN and run.resume_status == RunStatus.ACCEPTANCE_TESTING \
-        else ""
-    coordinator.store_artifact(session, run, "onboarding_return", TeamRole.COORDINATOR, back_to)
+    # stopped while coding an approved plan (a test needs a variable only the onboarding files set): back to coding
+    stopped_at = run.resume_status if run.status == RunStatus.NEEDS_HUMAN else None
+    back_to = {RunStatus.ACCEPTANCE_TESTING: "acceptance", RunStatus.CODING: "coding"}.get(stopped_at, "") \
+        if coordinator.current_tasks(session, run) else ""
+    coordinator.store_artifact(session, run, "onboarding_return", TeamRole.COORDINATOR,
+                               json.dumps({"to": back_to, "stop": run.status_reason or ""}) if back_to else "")
     transition_run(session, run, RunStatus.DESIGNING_ONBOARDING, actor=actor, acting_role=TL, reason=reason)
     coordinator.queue(session, run, "onboarding", key=f"reopen:v{run.version}")
 

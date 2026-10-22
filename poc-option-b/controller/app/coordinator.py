@@ -459,6 +459,8 @@ def on_claim(session: Session, execution: Execution) -> bool:
         run = session.get(Run, execution.run_id)
         if run.status != RunStatus.CODING:
             finish(session, execution, "discarded", error=f"run is {run.status}, task {task.status}")
+            # free its idempotency key: when the run codes again, the task's job is queued anew under the same key
+            execution.idempotency_key = f"{execution.idempotency_key}:discarded:{execution.id}"
             return False
         if task.status == TaskStatus.READY:
             task.attempt_count += 1  # the next attempt gets a new idempotency key
@@ -1117,11 +1119,29 @@ def _apply_environment(session: Session, run: Run, execution: Execution, result:
         store_artifact(session, run, "review_md", TeamRole.COORDINATOR, snapshot.review_md)
     record_event(session, "environment.ready", actor=COORDINATOR, run_id=run.id,
                  payload={"detail": result["detail"], "commit": head})
-    if artifact(session, run.id, "onboarding_return") == "acceptance":  # reopened when the acceptance tests could not run
+    raw = artifact(session, run.id, "onboarding_return") or ""
+    back = json.loads(raw) if raw.startswith("{") else {"to": raw, "stop": ""}  # a bare value: before 2026-10-22
+    back_to = back["to"]
+    if back_to == "acceptance":  # reopened when the acceptance tests could not run
         store_artifact(session, run, "onboarding_return", TeamRole.COORDINATOR, "")
         transition_run(session, run, RunStatus.ACCEPTANCE_TESTING, actor=COORDINATOR,
                        reason="the onboarding files are fixed; the acceptance tests run again on the same code")
         queue(session, run, "acceptance", key=f"onboarding:v{run.version}")
+        return
+    if back_to == "coding":  # reopened while coding the approved plan: the plan stands, the stopped tasks go on
+        store_artifact(session, run, "onboarding_return", TeamRole.COORDINATOR, "")
+        transition_run(session, run, RunStatus.CODING, actor=COORDINATOR,
+                       reason="the onboarding files are fixed; coding goes on with the approved plan")
+        tasks = current_tasks(session, run)
+        for task in tasks:
+            fail_task(session, task, "its job ended mid-step")
+            if task.status in (TaskStatus.FAILED, TaskStatus.UNKNOWN):
+                transition_task(session, task, TaskStatus.READY, actor=COORDINATOR, reason="the onboarding files are fixed")
+        disputed = [t for t in tasks if t.status == TaskStatus.DISPUTED]
+        if disputed:  # the person still rules on the dispute, now that the files say what they say
+            to_needs_human(session, run, f"the onboarding files are fixed; decide the dispute again. {back['stop']}"[:1500])
+            return
+        schedule_tasks(session, run)
         return
     spec_approved = session.scalar(select(func.count()).select_from(Approval).where(
         Approval.run_id == run.id, Approval.stage == "spec", Approval.decision == "approve"))
