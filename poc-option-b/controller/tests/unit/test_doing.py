@@ -788,3 +788,19 @@ def test_the_environment_check_starts_the_preview_once_the_code_exists(tmp_path,
 
 def policy_dict() -> dict:
     return policy().model_dump()
+
+
+def test_a_preview_build_that_times_out_is_not_the_architects_fault(tmp_path, monkeypatch):
+    from controller.app import coordinator, preview
+    from controller.app.coordinator import Loaded
+    from controller.app.projects.config import Preview
+    (tmp_path / ".sdlc").mkdir()
+    (tmp_path / "backend").mkdir()
+    (tmp_path / ".sdlc" / "preview.compose.yml").write_text("services:\n  api:\n    build: ./backend\n")
+    policy = coordinator.EffectivePolicy.model_validate(
+        {**policy_dict(), "preview": Preview(compose=".sdlc/preview.compose.yml", service="api", port=8000).model_dump()})
+    loaded = Loaded(None, "environment", None, 1)
+    loaded.extra.update(worktree=str(tmp_path), run_id="run-1")
+    monkeypatch.setattr(preview, "start", lambda *a, **k: {"status": "failed", "detail": "did not finish", "timed_out": True})
+    monkeypatch.setattr(preview, "stop", lambda *a, **k: None)
+    assert coordinator._try_preview(policy, loaded)["timed_out"]

@@ -151,7 +151,8 @@ class Preview(Strict):
     port: int = Field(ge=1, le=65535)  # that service's port inside its container
     path: str = "/"  # what Try it opens
     health_path: str = "/"  # answered with 200 once the application is up
-    start_timeout_seconds: int = Field(default=600, ge=30, le=3600)
+    start_timeout_seconds: int = Field(default=600, ge=30, le=3600)  # from started to answering its health path
+    build_timeout_seconds: int = Field(default=1800, ge=60, le=7200)  # building its images (dependencies download)
     accounts: list[Account] = []
     e2e: list[str] = []  # the acceptance tests: argv run in e2e_image next to the preview
     e2e_image: str = "mcr.microsoft.com/playwright:v1.49.1-noble"

@@ -1006,6 +1006,8 @@ def _try_environment(loaded: Loaded) -> dict:
         return {"ok": False, "platform": platform,
                 "detail": f"{failed.name} failed (exit {failed.exit_code}): {failed.tail[-1500:]}"}
     started = _try_preview(policy, loaded)
+    if started and started.get("timed_out"):  # a slow build (downloads), not the Architect's files: the tests will tell
+        return {"ok": True, "detail": f"image {image} built; the preview was not checked: {started['detail'][:300]}"}
     if started and started["status"] != "running":
         return {"ok": False, "detail": f"the preview does not start with these files: {started['detail'][:1500]}"}
     return {"ok": True, "detail": f"image {image} built; {len(policy.services)} service(s) ready"

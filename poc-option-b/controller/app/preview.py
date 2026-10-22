@@ -79,8 +79,13 @@ def start(run_id: str, worktree: Path, preview: Preview, port: int, log_dir: Pat
     # ports as a list of one mapping: the platform's host port, on the loopback interface only
     override.write_text(json.dumps({"services": {preview.service: {"ports": [f"127.0.0.1:{port}:{preview.port}"]}}}))
     result = run_bounded(_compose(run_id, worktree, preview, override, "up", "-d", "--build", "--remove-orphans"),
-                         timeout=preview.start_timeout_seconds)
+                         timeout=preview.build_timeout_seconds)
     (log_dir / "preview-up.log").write_text(result.output)
+    if result.timed_out:
+        stop(run_id, worktree, preview)
+        return {"status": "failed", "detail": f"docker compose up --build did not finish within "
+                                              f"{preview.build_timeout_seconds}s (preview.build_timeout_seconds): "
+                                              f"{result.tail(8)}", "timed_out": True}
     if not result.ok:
         failed = _failed_services(run_id, worktree, preview, override)
         stop(run_id, worktree, preview)
