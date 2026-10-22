@@ -115,6 +115,20 @@ Full design: `AI_Native_SDLC_Option_B.md`. This page is the map an agent needs t
   onboarding prompt keeps a later story's services out of the foundation's preview and takes demo accounts from the
   seed.
 
+## UI concepts (`ui.py`, presets `ui-presets/`, design `poc-option-b/docs/ux-concepts-design.md`)
+
+- The SDS brief carries `brand` (colors, fonts, Figma, devices, accessibility, tone, language) and an optional logo
+  (artifact `brand_logo`, ≤ `SDLC_LOGO_MAX_KB`).
+- After the options (or at preflight when they are skipped), `start_ui_concepts` → DESIGNING_UI → `ui_concepts` job
+  (role `ux_designer`, on the Tech Lead's engine, prompt `ui-concepts.md`, schema `UiConcepts`: tokens, layout,
+  navigation, screens of typed blocks) → document `ui_concepts` with contrast `check`s → gate `ui` (PO):
+  `POST /ui/choose` (artifact `chosen_ui`, then the SDS passes get it as `chosen_ui`) or `/ui/redo`.
+  `GET /runs/{id}/ui/{version}/{concept}/{screen}?device=` renders a prototype (`ui.render`, no script, strict CSP).
+- Accepting the SDS commits SDS.md with `ui.ui_files`: `docs/ui/UI.md`, `design-tokens.json`, the chosen concept's
+  prototypes and the logo. A foundation run reads `docs/ui/UI.md`: its intent adds the design system, the onboarding
+  prompt gets `ui_guide` (AGENTS.md/REVIEW.md rules, docs/ui protected). The acceptance gate adds the human item
+  `ui-concept` when `ui.review` is gated and the guide exists.
+
 ## Documents and gates
 
 - `documents.py`: versioned documents per run (intent, spec, srs, sds, tests, review, inventory …) with SHA-256;

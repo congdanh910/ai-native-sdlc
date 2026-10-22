@@ -121,7 +121,8 @@ export interface Doc {
   created_at: string;
   findings?: string[];
   revision?: Revision | null;
-  choices?: OptionChoices;  // kind "options": what the Solution Architect picks from  // a rewrite after the reviewer's feedback: what they asked and how it was handled
+  choices?: OptionChoices;
+  ui?: UiConcepts;  // kind "ui_concepts": the concepts the Product Owner picks from  // kind "options": what the Solution Architect picks from  // a rewrite after the reviewer's feedback: what they asked and how it was handled
   inventory?: Inventory;  // the requirement inventory of a discovery, for kind "inventory"
 }
 
@@ -132,6 +133,16 @@ export interface PreviewState {
   available: boolean;  // the run has a branch to preview
   missing?: string[];  // build folders of the compose file the branch does not have yet
   locked?: string | null;  // why people cannot start or stop it now (the team is changing the code, acceptance runs on it)
+}
+export interface UiConcepts {
+  notes: string; devices: string[]; accessibility: string;
+  brand: { colors?: string[]; fonts?: string[]; figma_url?: string; logo_name?: string };
+  concepts: {
+    id: string; name: string; preset: string; layout: string; density: string; rationale: string;
+    colors: Record<string, string>; font: string;
+    checks: { pair: string; ratio: number; ok: boolean; need: number }[];
+    screens: { name: string; role: string; slug: string }[];
+  }[];
 }
 export interface OptionChoices {
   recommendation: string;

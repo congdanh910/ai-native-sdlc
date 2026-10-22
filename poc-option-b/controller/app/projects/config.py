@@ -259,8 +259,19 @@ class Stages(Strict):
     coding: Literal["manual", "auto"] = "auto"
     review: Literal["manual", "auto"] = "auto"
     options: Literal["gated", "skip"] = "gated"  # SDS runs: the Architect compares options, the SA picks one
+    ui_concepts: Literal["gated", "skip"] = "gated"  # SDS runs: the UX Designer proposes concepts, the PO picks one
     # Story runs with a preview: E2E tests on the running application, then the QC's acceptance gate
     acceptance: Literal["gated", "auto", "skip"] = "gated"
+
+
+class Ui(Strict):
+    """The project's UI concept: how many concepts the SDS run proposes, and the gate that checks screens against it."""
+    guide: str = "docs/ui/UI.md"
+    tokens: str = "docs/ui/design-tokens.json"
+    concepts: int = Field(default=3, ge=1, le=5)
+    devices: list[Literal["desktop", "tablet", "mobile", "kiosk"]] = ["desktop", "mobile"]
+    accessibility: Literal["wcag-aa", "wcag-aaa", "none"] = "wcag-aa"
+    review: Literal["gated", "skip"] = "gated"  # the QC ticks "the UI follows the concept" at the acceptance gate
 
 
 class Artifacts(Strict):
@@ -296,6 +307,7 @@ class ProjectConfig(Strict):
     architecture: Architecture = Architecture()
     environment: Environment = Environment()
     preview: Preview | None = None
+    ui: Ui = Ui()
 
     @model_validator(mode="after")
     def _consistent(self) -> "ProjectConfig":
@@ -370,6 +382,7 @@ class EffectivePolicy(Strict):
     setup_inputs: list[str] = []
     lock: list[str] = []
     preview: Preview | None = None
+    ui: Ui = Ui()
     toolchains: dict[str, str] = {}  # platform toolchain name -> image, for a validation command's own image
 
 
@@ -410,6 +423,7 @@ def effective_policy(config: ProjectConfig, defaults: PlatformDefaults = Platfor
         setup_inputs=list(config.environment.setup_inputs),
         lock=list(config.environment.lock),
         preview=config.preview,
+        ui=config.ui,
         toolchains=dict(defaults.validation_images),
     )
 

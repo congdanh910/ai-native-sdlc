@@ -88,8 +88,9 @@ def sds_excerpt(sds: str, numbers: tuple[str, ...]) -> str:
     return "\n".join(out).strip()
 
 
-def foundation_intent(request: FoundationRequest, sds: str) -> str:
-    """The intent of the foundation run: generic outcomes, the user's notes, and the parts of the SDS they rest on."""
+def foundation_intent(request: FoundationRequest, sds: str, ui_guide: str = "") -> str:
+    """The intent of the foundation run: generic outcomes, the user's notes, and the parts of the SDS they rest on;
+    with docs/ui/UI.md (the UI concept the SDS run chose), the design system those screens are built from."""
     outcomes = [
         "The repository has the module structure, configuration and tooling of the SDS (section 4.3), and the "
         "test, lint and run commands of AGENTS.md work on it.",
@@ -105,6 +106,11 @@ def foundation_intent(request: FoundationRequest, sds: str) -> str:
         "The preview of .sdlc/project.yaml starts: its docker compose file builds and runs the application with its "
         "database and test doubles, loads seed data with the demo accounts, and answers on its health path.",
     ]
+    if ui_guide:
+        outcomes.append("The user interface has a design system built from docs/ui/design-tokens.json and the rules of "
+                        "docs/ui/UI.md: the tokens as theme variables, base components (layout and navigation, button, "
+                        "form field, table, card, alert, empty, loading and error states) and a page that shows them; "
+                        "the foundation's screens use only these components and tokens.")
     return "\n".join([
         f"# Intent: {request.title}", "",
         "## Problem", "",
@@ -116,7 +122,8 @@ def foundation_intent(request: FoundationRequest, sds: str) -> str:
         "- Follow AGENTS.md and the SDS exactly: names, folders, layers and conventions.", "",
         "## Notes", "", request.notes.strip() or "_None._", "",
         "## Design reference (from SDS.md)", "", sds_excerpt(sds, FOUNDATION_SECTIONS) or "_SDS.md has none of these "
-        "sections._", ""])
+        "sections._", "",
+        *(["## UI concept (docs/ui/UI.md)", "", ui_guide.strip(), ""] if ui_guide else [])])
 
 
 def sds_integrations(sds: str) -> list[str]:

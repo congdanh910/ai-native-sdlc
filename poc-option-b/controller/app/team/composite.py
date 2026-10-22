@@ -42,6 +42,9 @@ class CompositeTeam:
     def check_defects(self, *args, **kwargs):
         return self.thinking.check_defects(*args, **kwargs)
 
+    def design_ui(self, *args, **kwargs):
+        return self.thinking.design_ui(*args, **kwargs)
+
     def extract_part(self, *args, **kwargs):
         return self.thinking.extract_part(*args, **kwargs)
 

@@ -68,6 +68,11 @@ HUMAN_ITEMS = {
         Item("paths", "The paths the coding roles may change and the test paths fit the structure"),
         Item("environment", "The validation environment (image, services, setup) is acceptable and holds no real secret"),
     ],
+    "ui": [
+        Item("tried", "I opened the prototype screens of each concept on the target devices"),
+        Item("fits-users", "The chosen concept fits the roles, devices and brand of the product"),
+        Item("readable", "Text and controls are readable (the contrast checks pass, or the exceptions are acceptable)"),
+    ],
     "options": [
         Item("meets-nfr", "The chosen option meets the quality targets and constraints of the SRS"),
         Item("budget", "Its cost and operations fit the budget and the team that will run it"),
@@ -212,9 +217,14 @@ def human_items(gate: str) -> list[dict]:
     return [{"id": i.id, "text": i.text} for i in HUMAN_ITEMS.get(gate, [])]
 
 
-def missing_ticks(gate: str, checked: list[str] | None) -> list[str]:
+# Added to the acceptance gate when the project has a UI guide (docs/ui/UI.md) and ui.review is gated.
+UI_REVIEW = Item("ui-concept", "The screens follow the UI concept in docs/ui/UI.md (tokens, components, states)")
+
+
+def missing_ticks(gate: str, checked: list[str] | None, human: list[dict] | None = None) -> list[str]:
     ticked = set(checked or [])
-    return [i.text for i in HUMAN_ITEMS.get(gate, []) if i.id not in ticked]
+    items = human if human is not None else human_items(gate)
+    return [i["text"] for i in items if i["id"] not in ticked]
 
 
 # The spec-kit requirements checklist (checklists/requirements.md), filled from the spec gate's self-check.

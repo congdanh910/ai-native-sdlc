@@ -86,6 +86,7 @@ Discovery có thêm vai trả lời câu hỏi theo cấu hình dự án: mặc 
 | `SDLC_DOING_MODE` | `cli` | Codex/Claude viết test và code thật (`mock` để thử không gọi AI) |
 | `SDLC_QWEN_ENABLED` | `false` | Qwen trên GX10 đã tắt |
 | `SDLC_KEEP_AWAKE` | `true` | Giữ Mac không ngủ khi có job (macOS) |
+| `SDLC_LOGO_MAX_KB` | `1024` | Kích thước tối đa của logo khách hàng tải lên khi tạo run SDS |
 | `SDLC_DEFECT_CHECK_ENABLED` | `true` | Ghi chú lỗi của QC / Code Owner được đối chiếu với SDS trước khi giao cho task sửa lỗi |
 | `SDLC_ADVICE_ENABLED` | `true` | Code Reviewer viết brief cho Tech Lead mỗi khi một task dừng (một lượt gọi AI) |
 | `SDLC_EXECUTOR_READ_PATHS` | `/Library/Developer/CommandLineTools,/System/Library/OpenSSL` | Thư mục ngoài worktree và PATH mà lệnh của AI được đọc (công cụ cài ở chỗ khác thì thêm vào đây) |
@@ -233,6 +234,12 @@ Nếu baseline chưa merge, run dừng ở `NEEDS_HUMAN` với lý do "merge the
    - Ghi **Adjustments to the chosen option** nếu muốn bổ sung hoặc sửa, ví dụ "dùng PostgreSQL thay MySQL; thêm Redis cho hàng đợi". Architect phải áp đúng các điều chỉnh này.
    - Ghi **Why this option** (bắt buộc), tick checklist rồi bấm **Choose PAx**.
    - Muốn Architect so sánh lại với góp ý thì ghi lý do rồi bấm **Ask for other options**, ví dụ "thêm phương án on-premise cho PA1".
+4. **UI concept** (bật mặc định, tắt bằng `stages.ui_concepts: skip`): sau khi chọn kiến trúc, vai **UX Designer** (AI) đề xuất `ui.concepts` concept (mặc định 3, tối đa 5).
+   - Đầu vào là khung **Brand and UX** khi tạo run SDS, mọi ô đều tuỳ chọn: logo (PNG/SVG/JPG/WebP, tối đa `SDLC_LOGO_MAX_KB`), màu thương hiệu (hex, màu chính trước), font, link Figma, thiết bị (desktop/tablet/mobile/kiosk), accessibility (mặc định WCAG 2.2 AA), giọng điệu, ngôn ngữ giao diện.
+   - Có Figma thì concept bám theo Figma; có màu/font thì mọi concept dùng brand đó và chỉ khác bố cục, mật độ, kiểu component; không có gì thì xuất phát từ 5 concept mặc định của nền tảng (`ui-presets/`: Enterprise clean, Friendly modern, Data dashboard, Mobile first, High contrast accessible).
+   - Mỗi concept: token (màu, font, cỡ chữ, bo góc, khoảng cách), bố cục, menu, 3–4 màn hình chính lấy từ SRS (có trạng thái rỗng/lỗi). **Controller tự vẽ prototype** từ đó, nên mọi concept được dựng cùng một cách, và kiểm độ tương phản màu theo mức accessibility.
+   - **Cổng UI concept** (vai PO): bấm từng concept để xem bảng màu, kết quả tương phản và các màn hình prototype ở bề rộng của từng thiết bị (nút **Open** mở riêng). Ghi **Why this concept** (bắt buộc), **Adjustments** nếu có, tick checklist, bấm **Choose …**; hoặc **Ask for other concepts** kèm góp ý ("dày thông tin hơn", "màu nhấn ấm hơn").
+   - SDS §3 ghi concept đã chọn. Khi duyệt SDS, PR có thêm `docs/ui/`: `UI.md` (concept, lý do, token, luật UI, danh sách màn hình), `design-tokens.json`, `concepts/<concept>/*.html` (prototype), `brand/<logo>`.
 
 #### Thêm một nền tảng hosting khác (Alibaba Cloud, Viettel Cloud, FPT Cloud…)
 
@@ -262,6 +269,20 @@ Sau khi `SDS.md` merge và **trước story đầu tiên**. Mọi thứ đi qua 
 4. Môi trường chạy được: run **ghim lại** policy, `AGENTS.md`, `REVIEW.md` từ nhánh của run, rồi như một story: **spec** (khung dự án: cấu trúc, cấu hình, migration nền, health check, đăng nhập và phân quyền nền của SDS §7, không làm chức năng của story nào) → plan → test cases → code → review → PR.
    Ở cổng Spec, Plan hay Test cases mà phát hiện file onboarding còn thiếu (ví dụ một thư mục plan cần nhưng chưa nằm trong `paths.allowed`): ghi lý do, bấm **Back to onboarding**. Architect sửa, anh duyệt lại, Environment kiểm lại, rồi run quay về đúng bước đó; spec đã duyệt không bị viết lại.
 5. Merge PR, **Projects → Check again**: validation mới chạy trên nhánh mặc định; từ đây các run story dùng stack và môi trường mới.
+
+### Design system từ UI concept
+
+Khi repo có `docs/ui/UI.md` (từ run SDS), run Foundation thêm mục tiêu: **design system** dựng từ `docs/ui/design-tokens.json` (token thành biến theme, component nền: layout và điều hướng, nút, ô nhập, bảng, thẻ, thông báo, trạng thái rỗng/đang tải/lỗi, một trang trình bày các component), và màn hình của Foundation chỉ dùng chúng. Onboarding ghi luật UI vào AGENTS.md (chỉ dùng component và token, không màu hay style viết tay, mỗi màn hình có trạng thái rỗng/đang tải/lỗi), REVIEW.md bắt màu/style viết tay là Important, `docs/ui/` được bảo vệ (chỉ đổi qua run). Ở cổng QC Acceptance có thêm mục **The screens follow the UI concept in docs/ui/UI.md** khi `ui.review: gated` (mặc định).
+
+```yaml
+ui:
+  guide: docs/ui/UI.md
+  tokens: docs/ui/design-tokens.json
+  concepts: 3                # 1..5, số concept ở run SDS
+  devices: [desktop, mobile]
+  accessibility: wcag-aa     # wcag-aa | wcag-aaa | none
+  review: gated              # gated | skip: mục "UI đúng concept" ở cổng QC
+```
 
 ### Môi trường validation của dự án (`environment`)
 

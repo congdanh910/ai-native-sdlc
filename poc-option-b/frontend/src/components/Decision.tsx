@@ -161,6 +161,12 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
     return <OptionsPanel run={run} doc={doc} checklist={checklist} checked={checked} post={post} />;
   }
 
+  if (need.action === "waiting_ui_approval") {
+    const doc = [...run.documents].reverse().find((d) => d.kind === "ui_concepts");
+    if (!doc?.ui) return null;
+    return <UiConceptPanel run={run} doc={doc} checklist={checklist} checked={checked} post={post} />;
+  }
+
   if (need.action === "waiting_baseline_approval") {
     const baseline = [...run.documents].reverse().find((d) => d.kind === "baseline");
     if (!baseline) return null;
@@ -559,5 +565,76 @@ function DefectCheckCard({ run, reason, onUse, post }: {
         <ActionButton disabled={!reason.trim()} title="Give the notes as first written to the fix task; the reason box records why the design does not apply" action={() => post("resume", { decision: "defects_as_written", reason })}>Send as written</ActionButton>
       </div>
     </div>
+  );
+}
+
+
+/** The UI Concept gate: each concept's palette, contrast checks and prototype screens (rendered by the controller,
+ * shown in a sandboxed frame at the width of each target device); the Product Owner picks one with a reason. */
+function UiConceptPanel({ run, doc, checklist, checked, post }: {
+  run: RunDetail; doc: Doc; checklist: ReactNode; checked: string[]; post: (path: string, body: object) => Promise<void>;
+}) {
+  const ui = doc.ui!;
+  const [chosen, setChosen] = useState(ui.concepts[0]?.id ?? "");
+  const [device, setDevice] = useState(ui.devices[0] ?? "desktop");
+  const [reason, setReason] = useState("");
+  const [adjustments, setAdjustments] = useState("");
+  const widths: Record<string, number> = { desktop: 1280, tablet: 820, mobile: 390, kiosk: 1080 };
+  const concept = ui.concepts.find((c) => c.id === chosen) ?? ui.concepts[0];
+  return (
+    <Panel run={run} title={`UI concepts v${doc.version}`}>
+      <p className="m-0 text-sm text-muted">Pick how the product looks before the SDS is written. The chosen concept's guide, design tokens and prototype screens go into docs/ui/ with the SDS pull request; the foundation builds its design system from them.{ui.brand.logo_name || ui.brand.colors?.length ? " The customer's brand is applied to every concept." : ""}</p>
+      {ui.notes ? <p className="m-0 text-sm">{ui.notes}</p> : null}
+      <div className="flex flex-wrap gap-2">
+        {ui.concepts.map((c) => (
+          <button key={c.id} type="button" onClick={() => setChosen(c.id)}
+            className={`flex min-w-52 flex-col gap-1 rounded-lg border p-3 text-left text-sm ${c.id === chosen ? "border-accent bg-accent-soft/40" : "border-line bg-panel"}`}>
+            <b>{c.name}</b>
+            <span className="text-xs text-muted">{c.layout} · {c.density}{c.preset ? ` · from ${c.preset}` : ""}</span>
+            <span className="flex gap-1">{["primary", "accent", "background", "surface", "text"].map((k) => (
+              <span key={k} title={`${k} ${c.colors[k]}`} className="size-5 rounded border border-line" style={{ background: c.colors[k] }} />))}</span>
+            <Badge tone={c.checks.every((x) => x.ok) ? "good" : "warn"}>{c.checks.every((x) => x.ok) ? `contrast ${ui.accessibility} ok` : `${c.checks.filter((x) => !x.ok).length} contrast issue(s)`}</Badge>
+          </button>
+        ))}
+      </div>
+      {concept ? (
+        <div className="flex flex-col gap-2">
+          <p className="m-0 text-sm">{concept.rationale}</p>
+          {concept.checks.some((x) => !x.ok) ? (
+            <p className="m-0 text-xs text-bad">Below {ui.accessibility}: {concept.checks.filter((x) => !x.ok).map((x) => `${x.pair} ${x.ratio}:1 (needs ${x.need})`).join("; ")}</p>
+          ) : null}
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-muted">Device</span>
+            {Object.keys(widths).filter((d) => ui.devices.includes(d) || d === "desktop").map((d) => (
+              <Button key={d} variant={d === device ? "primary" : "default"} onClick={() => setDevice(d)}>{d}</Button>))}
+            <span className="text-muted">Font: {concept.font}</span>
+          </div>
+          <div className="flex flex-col gap-3">
+            {concept.screens.map((s) => {
+              const src = `/api/runs/${run.id}/ui/${doc.version}/${concept.id}/${s.slug}?device=${device}`;
+              return (
+                <div key={s.slug} className="rounded-lg border border-line">
+                  <div className="flex items-center gap-2 border-b border-line px-3 py-1 text-xs">
+                    <b>{s.name}</b>{s.role ? <span className="text-muted">{s.role}</span> : null}
+                    <a className="ml-auto text-accent-ink" href={src} target="_blank" rel="noreferrer">Open</a>
+                  </div>
+                  <div className="overflow-x-auto bg-side p-2">
+                    <iframe title={`${concept.name}: ${s.name}`} src={src} sandbox="" loading="lazy"
+                      style={{ width: widths[device] ?? 1280, height: device === "mobile" ? 700 : 520, border: 0, background: "white" }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+      {checklist}
+      <Field label="Why this concept" htmlFor="ui-reason"><Textarea id="ui-reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Required: who it suits, why not the others; or what the concepts miss, to ask for others" /></Field>
+      <Field label="Adjustments (optional)" htmlFor="ui-adjust"><Textarea id="ui-adjust" value={adjustments} onChange={(e) => setAdjustments(e.target.value)} placeholder="For example: a warmer accent, denser tables" /></Field>
+      <div className="flex flex-wrap gap-2">
+        <ActionButton variant="primary" disabled={!reason.trim() || !concept} success="Concept chosen; the Architect writes the SDS" action={() => post("ui/choose", { document_id: doc.id, concept: concept?.id, reason, adjustments, checked })}>Choose {concept?.name}</ActionButton>
+        <ActionButton variant="danger" disabled={!reason.trim()} action={() => post("ui/redo", { reason })}>Ask for other concepts</ActionButton>
+      </div>
+    </Panel>
   );
 }

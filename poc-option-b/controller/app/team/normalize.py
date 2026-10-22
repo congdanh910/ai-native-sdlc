@@ -531,3 +531,31 @@ def defect_check(data: dict) -> dict:
                        "evidence": [evidence] if isinstance(evidence, str) else evidence})
     data["points"] = points
     return data
+
+
+def ui_concepts(data: dict) -> dict:
+    """Concept ids as slugs, colors in upper case with a leading #, blocks given as strings become text blocks."""
+    import re
+    data = dict(data)
+    concepts = []
+    for n, concept in enumerate(data.get("concepts") or []):
+        if not isinstance(concept, dict):
+            continue
+        concept = dict(concept)
+        concept["id"] = re.sub(r"[^a-z0-9]+", "-", str(concept.get("id") or concept.get("name") or f"c{n + 1}").lower()).strip("-")[:40] or f"c{n + 1}"
+        tokens = dict(concept.get("tokens") or {})
+        tokens["colors"] = {k: (v if str(v).startswith("#") else f"#{v}").upper() for k, v in (tokens.get("colors") or {}).items()}
+        concept["tokens"] = tokens
+        screens = []
+        for screen in concept.get("screens") or []:
+            if isinstance(screen, dict):
+                screen = dict(screen)
+                screen["blocks"] = [b if isinstance(b, dict) else {"type": "alert", "title": str(b)}
+                                    for b in screen.get("blocks") or []]
+                screens.append(screen)
+        concept["screens"] = screens
+        if isinstance(concept.get("navigation"), str):
+            concept["navigation"] = [x.strip() for x in concept["navigation"].split(",") if x.strip()]
+        concepts.append(concept)
+    data["concepts"] = concepts
+    return data

@@ -66,6 +66,7 @@ KINDS: dict[str, tuple[TeamRole, bool, RunStatus]] = {
     "release": (TeamRole.RELEASE_ENGINEER, True, RunStatus.PR_OPEN),
     "extract": (TeamRole.BUSINESS_ANALYST, False, RunStatus.EXTRACTING),
     "options": (TeamRole.ARCHITECT, False, RunStatus.DESIGNING_OPTIONS),
+    "ui_concepts": (TeamRole.UX_DESIGNER, False, RunStatus.DESIGNING_UI),
     "onboarding": (TeamRole.ARCHITECT, False, RunStatus.DESIGNING_ONBOARDING),
     "environment": (TeamRole.VALIDATION_GATE, False, RunStatus.PREPARING_ENVIRONMENT),
     "acceptance": (TeamRole.QA_ENGINEER, True, RunStatus.ACCEPTANCE_TESTING),
@@ -302,6 +303,7 @@ def tick_tasks(session: Session, run: Run) -> None:
 # ---------------------------------------------------------------- gate checklists
 
 GATE_OF_STATUS = {RunStatus.WAITING_BASELINE_APPROVAL: "baseline", RunStatus.WAITING_OPTIONS_APPROVAL: "options",
+                  RunStatus.WAITING_UI_APPROVAL: "ui",
                   RunStatus.WAITING_ONBOARDING_APPROVAL: "onboarding",
                   RunStatus.WAITING_ACCEPTANCE_APPROVAL: "acceptance", RunStatus.WAITING_PLAN_APPROVAL: "plan", RunStatus.WAITING_TEST_APPROVAL: "tests",
                   RunStatus.WAITING_PR_APPROVAL: "pr"}
@@ -393,7 +395,19 @@ def evaluate_gate(session: Session, run: Run, gate: str | None = None) -> dict |
         after = latest_document(session, run.id, "analysis")
         findings = after.data.get("findings", []) if after and after.data.get("stage") == "after" else []
         controller = checklists.check_release(statuses, added, changed, findings)
-    return {"gate": gate, "controller": controller, "ai": ai, "human": checklists.human_items(gate)}
+    human = checklists.human_items(gate)
+    if gate == "acceptance" and _ui_review(session, run):
+        human.append({"id": checklists.UI_REVIEW.id, "text": checklists.UI_REVIEW.text})
+    return {"gate": gate, "controller": controller, "ai": ai, "human": human}
+
+
+def _ui_review(session: Session, run: Run) -> bool:
+    """The acceptance gate asks whether the screens follow the UI concept: the project has its guide, ui.review gated."""
+    raw = artifact(session, run.id, "effective_policy")
+    if not raw or not run.worktree_path:
+        return False
+    policy = EffectivePolicy.model_validate_json(raw)
+    return policy.ui.review == "gated" and (Path(run.worktree_path) / policy.ui.guide).is_file()
 
 
 def baseline_checks(session: Session, run: Run) -> tuple[list[dict], list[dict]]:
@@ -453,7 +467,7 @@ def require_checklist(session: Session, run: Run, checked: list[str] | None) -> 
     failing = [f"{c['text']}: {c['detail']}" for c in evaluation["controller"] if not c["ok"]]
     if failing:
         raise ValueError("the controller checks fail; revise or reject instead: " + " | ".join(failing))
-    missing = checklists.missing_ticks(evaluation["gate"], checked)
+    missing = checklists.missing_ticks(evaluation["gate"], checked, evaluation["human"])
     if missing:
         raise ValueError("tick every review item before approving; missing: " + "; ".join(missing))
     return {**evaluation, "human": [{**h, "checked": True} for h in evaluation["human"]]}
@@ -515,8 +529,11 @@ def build_context(session: Session, run: Run, *, kind: str = "", feedback: list[
     bundle = code_bundle(session, run, [intent, spec.content if spec else "", agents],
                          get_settings().context_char_budget)
     srs = sds = None
+    ui_guide = ""
     if run.kind == RunKind.FOUNDATION and run.base_commit:
         sds = mirror_for(session.get(Project, run.project_id)).read_file(run.base_commit, SDS_PATH)
+        from controller.app.ui import UI_DIR
+        ui_guide = mirror_for(session.get(Project, run.project_id)).read_file(run.base_commit, f"{UI_DIR}/UI.md") or ""
     if run.kind in PROJECT_DOCS and run.base_commit:
         mirror = mirror_for(session.get(Project, run.project_id))
         srs, sds = mirror.read_file(run.base_commit, SRS_PATH), mirror.read_file(run.base_commit, SDS_PATH)
@@ -534,6 +551,7 @@ def build_context(session: Session, run: Run, *, kind: str = "", feedback: list[
                       engines=json.loads(artifact(session, run.id, "engines") or "{}"),
                       baseline=json.loads(artifact(session, run.id, "baseline") or "null"),
                       chosen_option=json.loads(artifact(session, run.id, "chosen_option") or "null"),
+                      chosen_ui=json.loads(artifact(session, run.id, "chosen_ui") or "null"), ui_guide=ui_guide,
                       hosting_platforms=options_platforms(policy, _deployment_context(session, run))
                       if run.kind == RunKind.SDS else [],
                       project_config=artifact(session, run.id, "project_config") or "",
@@ -633,6 +651,10 @@ def load(session: Session, execution: Execution) -> Loaded:
         feedback = [f"Solution Architect asked for other options: {reason}" for reason in session.scalars(
             select(Approval.reason).where(Approval.run_id == run.id, Approval.stage == "options",
                                           Approval.decision == "reject").order_by(Approval.created_at)) if reason]
+    if execution.kind == "ui_concepts":  # the Product Owner's reasons for other concepts
+        feedback = [f"Product Owner asked for other concepts: {reason}" for reason in session.scalars(
+            select(Approval.reason).where(Approval.run_id == run.id, Approval.stage == "ui",
+                                          Approval.decision == "reject").order_by(Approval.created_at)) if reason]
     if execution.kind == "onboarding":  # the Tech Lead's reasons, and what the environment check found
         feedback = [f"{'Environment check' if actor == COORDINATOR else 'Tech Lead'} asked for changes: {reason}"
                     for actor, reason in session.execute(
@@ -673,6 +695,13 @@ def load(session: Session, execution: Execution) -> Loaded:
             Document.run_id == run.id, Document.kind == "acceptance")) + 1)
     if execution.kind == "advise":
         _load_advice(session, run, loaded, session.get(Task, execution.task_id))
+    if execution.kind == "ui_concepts":
+        from controller.app.ui import presets
+        brief = ArchitectureBrief.model_validate(latest_document(session, run.id, "intent").data)
+        policy = loaded.context.policy
+        loaded.extra["ui"] = {"brand": brief.brand.model_dump(), "count": policy.ui.concepts, "presets": presets(),
+                              "devices": brief.brand.devices or policy.ui.devices,
+                              "accessibility": brief.brand.accessibility or policy.ui.accessibility}
     if execution.kind == "check_defects":
         loaded.extra["defects"] = json.loads(artifact(session, run.id, "pending_defects"))
     if execution.kind == "code_task":
@@ -780,6 +809,10 @@ def compute(team: Team, loaded: Loaded) -> dict:
     if loaded.kind == "onboarding":
         joblog.note("Architect writes the onboarding files from the SDS")
         result = {"onboarding": team.write_onboarding(context).model_dump()}
+        record()
+    elif loaded.kind == "ui_concepts":
+        joblog.note("UX Designer proposes the UI concepts")
+        result = {"ui": team.design_ui(context, loaded.extra["ui"]).model_dump(), "brief": loaded.extra["ui"]}
         record()
     elif loaded.kind == "options":
         joblog.note("Architect compares the architecture options")
@@ -925,7 +958,7 @@ def apply(session: Session, loaded: Loaded, result: dict, team: Team) -> None:
     handler = {"preflight": _apply_preflight, "specify": _apply_specify, "plan": _apply_plan,
                "ground": _apply_ground, "design_tests": _apply_design_tests, "code_task": _apply_code_task, "review": _apply_review,
                "release": _apply_release, "extract": _apply_extract, "options": _apply_options,
-               "onboarding": _apply_onboarding, "environment": _apply_environment,
+               "onboarding": _apply_onboarding, "environment": _apply_environment, "ui_concepts": _apply_ui_concepts,
                "preview": _apply_preview, "preview_stop": _apply_preview,
                "acceptance": _apply_acceptance, "advise": _apply_advice,
                "check_defects": _apply_check_defects}[loaded.kind]
@@ -1036,7 +1069,19 @@ def _apply_preflight(session: Session, run: Run, execution: Execution, result: d
                        reason="the Architect compares the architecture options before the SDS")
         queue(session, run, "options")
         return
+    if start_ui_concepts(session, run, actor=COORDINATOR):
+        return
     enter_stage(session, run, "spec")
+
+
+def start_ui_concepts(session: Session, run: Run, *, actor: str, acting_role: str | None = None) -> bool:
+    """An SDS run proposes UI concepts before the SDS is written, unless stages.ui_concepts is skip."""
+    if run.kind != RunKind.SDS or (run.stage_modes or {}).get("ui_concepts", "gated") == "skip":
+        return False
+    transition_run(session, run, RunStatus.DESIGNING_UI, actor=actor, acting_role=acting_role,
+                   reason="the UX Designer proposes UI concepts before the SDS")
+    queue(session, run, "ui_concepts", key=f"ui:v{run.version}")
+    return True
 
 
 def _deployment_context(session: Session, run: Run) -> dict:
@@ -1060,6 +1105,26 @@ def _apply_options(session: Session, run: Run, execution: Execution, result: dic
     document.commit_sha = commit_thread(session, run, "options", content, f"sdlc: architecture options v{document.version}")
     transition_run(session, run, RunStatus.WAITING_OPTIONS_APPROVAL, actor=TeamRole.ARCHITECT.value,
                    reason=f"{len(options.options)} options compared; the Architect recommends {options.recommendation}")
+
+
+def _apply_ui_concepts(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    """The UX Designer's concepts, with the controller's contrast checks, wait at the UI Concept gate."""
+    from controller.app.ui import UiConcepts, check
+    concepts = UiConcepts.model_validate(result["ui"])
+    accessibility = result["brief"]["accessibility"]
+    checks = {c.id: check(c, accessibility) for c in concepts.concepts}
+    lines = [f"# UI concepts: {run.title.removeprefix('SDS: ')}", "", concepts.notes or ""]
+    for concept in concepts.concepts:
+        failed = [c["pair"] for c in checks[concept.id] if not c["ok"]]
+        lines += ["", f"## {concept.id}: {concept.name}", "", concept.rationale, "",
+                  f"Layout {concept.layout}, {concept.density}; screens: {', '.join(s.name for s in concept.screens)}.",
+                  f"Contrast ({accessibility}): " + ("every pair passes" if not failed else f"fails for {', '.join(failed)}")]
+    content = "\n".join(lines) + "\n"
+    document = add_document(session, run.id, "ui_concepts", content, author_kind="ai", author=TeamRole.UX_DESIGNER.value,
+                            data={**concepts.model_dump(), "checks": checks, "brief": result["brief"]})
+    document.commit_sha = commit_thread(session, run, "ui_concepts", content, f"sdlc: UI concepts v{document.version}")
+    transition_run(session, run, RunStatus.WAITING_UI_APPROVAL, actor=TeamRole.UX_DESIGNER.value,
+                   reason=f"{len(concepts.concepts)} UI concept(s) for the Product Owner")
 
 
 def _apply_onboarding(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
@@ -1461,14 +1526,26 @@ def _apply_specify(session: Session, run: Run, execution: Execution, result: dic
                        reason=f"spec v{document.version} ready")
 
 
+def _chosen_ui_files(session: Session, run: Run) -> dict[str, str | bytes]:
+    """docs/ui/ of the UI concept chosen in this SDS run: guide, tokens, prototypes, the customer's logo."""
+    from controller.app.ui import Brand, Concept, logo_bytes, ui_files
+    chosen = json.loads(artifact(session, run.id, "chosen_ui") or "null")
+    if run.kind != RunKind.SDS or not chosen:
+        return {}
+    return ui_files(Concept.model_validate(chosen["concept"]), Brand.model_validate(chosen["brand"]), chosen["reason"],
+                    chosen.get("adjustments", ""), run.title.removeprefix("SDS: "),
+                    logo_bytes(artifact(session, run.id, "brand_logo")))
+
+
 def accept_spec(session: Session, run: Run, document, *, actor: str, acting_role: str | None = None) -> None:
     if run.kind in PROJECT_DOCS:
         # SRS.md or SDS.md goes to the repository root through a draft PR; no plan or code follows.
         path = PROJECT_DOCS[run.kind][1]
         if run.commit_artifacts:
             project = session.get(Project, run.project_id)
-            document.commit_sha = worktree_for(project, run).commit_file(
-                path, document.content, f"sdlc: {path} v{document.version} accepted")
+            files: dict[str, str | bytes] = {path: document.content, **_chosen_ui_files(session, run)}
+            document.commit_sha = worktree_for(project, run).commit_files(
+                files, f"sdlc: {path} v{document.version} accepted" + (" with docs/ui" if len(files) > 1 else ""))
         transition_run(session, run, RunStatus.PR_OPEN, actor=actor, acting_role=acting_role,
                        reason=f"{path} v{document.version} accepted")
         queue(session, run, "release")

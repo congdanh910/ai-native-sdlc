@@ -156,6 +156,10 @@ class ReadonlyTeam(LangflowTeam):
         self._in(context)  # reads SDS.md, SRS.md and the code the notes name
         return super().check_defects(context, notes)
 
+    def design_ui(self, context, brief):
+        self._in(context)  # reads SRS.md and the repository
+        return super().design_ui(context, brief)
+
     @property
     def reads_files(self) -> bool:  # Claude Code's Read tool opens PDFs (20 pages a call) and images
         return self.engine == "claude-readonly"
@@ -239,6 +243,9 @@ class RoutingTeam:
 
     def check_defects(self, context, notes):
         return self._call(self._for(context, "code_reviewer"), "check_defects", context, notes)
+
+    def design_ui(self, context, brief):  # the UX Designer reasons on the Tech Lead's engine, like the Architect
+        return self._call(self._for(context, "tech_lead"), "design_ui", context, brief)
 
     def extract_part(self, context, part):
         return self._call(self._for(context, "business_analyst"), "extract_part", context, part)

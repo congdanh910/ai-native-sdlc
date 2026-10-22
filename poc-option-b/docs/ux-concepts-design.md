@@ -1,6 +1,6 @@
 # UI/UX concept cho từng dự án
 
-_2026-10-22. Đề xuất, chờ người dùng duyệt. Bối cảnh: dự án thực tế có thể có hoặc không có designer/Figma; đa số
+_2026-10-22. U1 và U2 đã làm (người dùng duyệt); U3 ở BACKLOG 3.19. Bối cảnh: dự án thực tế có thể có hoặc không có designer/Figma; đa số
 khách có logo, màu và font có thể có hoặc không; không có thì nền tảng đưa 3–5 concept mặc định để chọn. Người dùng sẽ
 reset attendance và chạy lại từ đầu sau khi test xong các phần khác, nên tính năng phải sẵn sàng từ Discovery/SDS._
 
@@ -17,7 +17,7 @@ SDS §3 chỉ mô tả UI bằng chữ. Không có concept để chọn, không 
 | Logo, có thể kèm màu, font | Áp brand lên 3–5 concept khác nhau về bố cục, mật độ, kiểu component; màu lấy từ logo khi khách không đưa |
 | Không có gì | 3–5 concept mặc định của nền tảng |
 
-Khai báo khi tạo run SDS (khung **Brand and UX** trong New request), lưu thành nguồn của run:
+Khai báo khi tạo run SDS (khung **Brand and UX** trong New request); logo lưu thành artifact `brand_logo` của run:
 logo (file), màu chính/phụ (tuỳ chọn), font (tuỳ chọn), link Figma (tuỳ chọn), thiết bị đích (desktop, tablet,
 mobile, kiosk), mức accessibility (mặc định WCAG 2.2 AA), giọng điệu (trang trọng / thân thiện), ngôn ngữ giao diện.
 
@@ -37,7 +37,7 @@ Số concept mỗi lần: `ui.concepts` trong project.yaml (mặc định 3, t�
 
 1. **Discovery / SRS**: BA ghi yêu cầu UX (vai, thiết bị, ngôn ngữ, accessibility, brand) vào baseline và SRS.
 2. **SDS – bước UI Concepts** (sau bước Options kiến trúc, cùng run SDS): vai **UX Designer** (AI) đưa N concept, mỗi
-   concept gồm token, prototype HTML 3–4 màn hình chính lấy từ SRS (dữ liệu mẫu, các trạng thái rỗng/lỗi/đang tải),
+   concept gồm token, bố cục, menu và 3–4 màn hình chính lấy từ SRS mô tả bằng các khối (heading, stats, table, form, cards, list, chart, alert, empty, actions); controller tự vẽ prototype HTML từ đó (dữ liệu mẫu, các trạng thái rỗng/lỗi/đang tải),
    ảnh chụp ở các thiết bị đích, kiểm tương phản màu, và lý do hợp với dự án. Controller kiểm: token hợp lệ, tương phản
    đạt mức accessibility, prototype mở được.
 3. **Cổng UI Concept** (vai người UX, mặc định PO): xem prototype ngay trên control room (iframe sandbox), chọn một

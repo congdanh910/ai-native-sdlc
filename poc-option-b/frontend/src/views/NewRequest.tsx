@@ -55,6 +55,14 @@ const FOUNDATION: DocField[] = [
 // The customer's environment: a stated platform makes the Architect design on it; left open, it compares platforms.
 const PLATFORMS: [string, string][] = [["", "Not decided yet: compare the platforms"], ["aws", "AWS"], ["azure", "Microsoft Azure"],
   ["gcp", "Google Cloud"], ["on_premise", "On-premise"], ["hybrid", "Hybrid"]];
+const BRAND_FIELDS: readonly [string, string, string][] = [
+  ["colors", "Brand colors", "hex, primary first, such as #1F5FAD #E8590C"],
+  ["fonts", "Fonts", "comma separated, such as Inter, Roboto"],
+  ["figma_url", "Figma file", "a link; the concepts then follow it"],
+  ["tone", "Tone", "formal, friendly ..."],
+  ["language", "Interface language", "such as Vietnamese"],
+];
+
 const DEPLOYMENT_CONTEXT: [string, string, string][] = [
   ["existing_infrastructure", "Existing infrastructure", "cloud contracts, data centre, servers, network the customer already has"],
   ["data_residency", "Data residency", "where personal and biometric data must stay, such as in Vietnam or on the customer's premises"],
@@ -79,6 +87,10 @@ function validateDoc(fields: readonly DocField[], values: Record<string, string>
  * Architect turns into SDS.md. Both come before any feature run. */
 function DocumentForm({ project, fields, bodyKey, submit, allowBaseline, allowProposal, askDeployment }: { project: string; fields: readonly DocField[]; bodyKey: "brief" | "architecture" | "discovery" | "foundation"; submit: string; allowBaseline?: boolean; allowProposal?: boolean; askDeployment?: boolean }) {
   const [deployment, setDeployment] = useState<Record<string, string>>({ platform: "" });
+  const [brand, setBrand] = useState<Record<string, string>>({ colors: "", fonts: "", figma_url: "", tone: "", language: "" });
+  const [devices, setDevices] = useState<string[]>(["desktop", "mobile"]);
+  const [accessibility, setAccessibility] = useState("wcag-aa");
+  const [logo, setLogo] = useState<{ name: string; data: string } | null>(null);
   const [fromBaseline, setFromBaseline] = useState(false);
   const [propose, setPropose] = useState(!!allowProposal);  // the Architect proposes the stack in the Options step
   const [, navigate] = useLocation();
@@ -131,6 +143,41 @@ function DocumentForm({ project, fields, bodyKey, submit, allowBaseline, allowPr
           ))}
         </fieldset>
       ) : null}
+      {askDeployment ? (
+        <fieldset className="flex flex-col gap-3 rounded-lg border border-line p-3">
+          <legend className="px-1 text-sm font-semibold">Brand and UX</legend>
+          <p className="m-0 text-sm text-muted">What the customer gives for the user interface; all optional. The UX Designer proposes UI concepts in this brand (or follows the Figma file); with nothing given, the platform's default concepts are offered.</p>
+          <Field label="Logo" hint="optional: PNG, SVG, JPG or WebP" htmlFor="brand-logo">
+            <input id="brand-logo" type="file" accept=".png,.svg,.jpg,.jpeg,.webp" onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (!file) { setLogo(null); return; }
+              const reader = new FileReader();
+              reader.onload = () => setLogo({ name: file.name, data: String(reader.result).split(",")[1] ?? "" });
+              reader.readAsDataURL(file);
+            }} />
+          </Field>
+          {BRAND_FIELDS.map(([key, label, hint]) => (
+            <Field key={key} label={label} hint={`optional: ${hint}`} htmlFor={`brand-${key}`}>
+              <Input id={`brand-${key}`} value={brand[key] ?? ""} onChange={(e) => setBrand({ ...brand, [key]: e.target.value })} />
+            </Field>
+          ))}
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            <span className="font-semibold">Devices</span>
+            {["desktop", "tablet", "mobile", "kiosk"].map((d) => (
+              <label key={d} className="flex items-center gap-1">
+                <input type="checkbox" checked={devices.includes(d)} onChange={(e) => setDevices(e.target.checked ? [...devices, d] : devices.filter((x) => x !== d))} /> {d}
+              </label>
+            ))}
+          </div>
+          <Field label="Accessibility" htmlFor="brand-a11y">
+            <Select id="brand-a11y" value={accessibility} onChange={(e) => setAccessibility(e.target.value)}>
+              <option value="wcag-aa">WCAG 2.2 AA (text contrast 4.5:1)</option>
+              <option value="wcag-aaa">WCAG 2.2 AAA (7:1)</option>
+              <option value="none">No requirement</option>
+            </Select>
+          </Field>
+        </fieldset>
+      ) : null}
       <div>
         <ActionButton variant="primary" action={async () => {
           setTried(true);
@@ -142,7 +189,15 @@ function DocumentForm({ project, fields, bodyKey, submit, allowBaseline, allowPr
           }
           try {
             const body = fromBaseline ? { ...brief, from_baseline: true }
-              : allowProposal ? { ...brief, propose_stack: propose, ...(askDeployment ? { deployment_context: deployment } : {}) } : brief;
+              : allowProposal ? { ...brief, propose_stack: propose, ...(askDeployment ? {
+                deployment_context: deployment,
+                brand: {
+                  colors: brand.colors.split(/[\s,]+/).filter(Boolean), fonts: brand.fonts.split(",").map((f) => f.trim()).filter(Boolean),
+                  figma_url: brand.figma_url.trim(), tone: brand.tone.trim(), language: brand.language.trim(),
+                  devices: devices.length ? devices : ["desktop"], accessibility,
+                },
+                ...(logo ? { logo } : {}),
+              } : {}) } : brief;
             const run = await api<RunSummary>("/api/runs", { method: "POST", body: { project, [bodyKey]: body, idempotency_key: idempotencyKey } });
             navigate(`/runs/${run.id}`);
           } catch (error) {

@@ -171,6 +171,11 @@ class LangflowTeam(MockTeam):
                    for f in srs_features(context.srs_md or "") for s in f.stories]
         base = {"brief": context.intent_md, "srs": context.srs_md or "", "stories": stories,
                 "chosen_option": context.chosen_option,
+                "chosen_ui": ({k: context.chosen_ui[k] for k in ("reason", "adjustments")}
+                              | {"concept": {k: context.chosen_ui["concept"][k] for k in ("id", "name", "layout", "density",
+                                                                                          "rationale", "navigation")},
+                                 "screens": [s["name"] for s in context.chosen_ui["concept"]["screens"]]}
+                              if context.chosen_ui else None),
                 "current_sds": context.sds_md or "", "answers": [{"question": q, "answer": a} for q, a in context.answers],
                 "agents_md": context.agents_md, "constitution": self._constitution(context),
                 "repository": {"files": context.repository.get("files", []), "symbols": context.repository.get("symbols", {})},
@@ -209,7 +214,7 @@ class LangflowTeam(MockTeam):
                    "platform_protected_paths": list(PlatformDefaults().protected_paths),
                    "limits": {"max_tasks": PlatformDefaults().max_tasks, "max_changed_files": PlatformDefaults().max_changed_files},
                    "constitution": self._constitution(context), "feedback": context.feedback,
-                   "previous_files": context.previous_files}
+                   "previous_files": context.previous_files, "ui_guide": context.ui_guide}
         return self._ask("onboarding", payload, Onboarding, normalize.onboarding, context.session_id,
                          retries=context.policy.max_format_retries)
 
@@ -280,6 +285,14 @@ class LangflowTeam(MockTeam):
         """The brief for the Tech Lead when a task stops: the situation, each side with evidence, a decision."""
         payload = {**stop, "spec": (context.spec_md or "").split(NOTES_HEADING)[0], "agents_md": context.agents_md}
         return self._ask("advice", payload, Advice, normalize.advice, context.session_id,
+                         retries=context.policy.max_format_retries)
+
+    def design_ui(self, context: RunContext, brief: dict) -> "UiConcepts":
+        """UI concepts for the product: tokens, layout and screens from the SRS, in the customer's brand when given."""
+        from controller.app.ui import UiConcepts
+        payload = {**brief, "srs": context.srs_md or "", "chosen_option": context.chosen_option,
+                   "agents_md": context.agents_md, "feedback": context.feedback}
+        return self._ask("ui-concepts", payload, UiConcepts, normalize.ui_concepts, context.session_id,
                          retries=context.policy.max_format_retries)
 
     def check_defects(self, context: RunContext, notes: str) -> DefectCheck:

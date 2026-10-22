@@ -224,3 +224,27 @@ def test_notes_no_code_change_can_satisfy_go_back_to_the_person(db, sample_repo)
     assert status(run_id) == RunStatus.NEEDS_HUMAN and _fix_tasks(run_id) == []
     with session_scope() as session:
         assert "no code change can do" in services.get_run(session, run_id).status_reason
+
+
+def test_the_qc_also_ticks_that_the_screens_follow_the_ui_concept(db, sample_repo):
+    (sample_repo / "docs" / "ui").mkdir(parents=True)
+    (sample_repo / "docs" / "ui" / "UI.md").write_text("# UI\n")
+    git(sample_repo, "-c", "user.name=t", "-c", "user.email=t@t", "add", ".")
+    git(sample_repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "-m", "ui")
+    with_preview(sample_repo)
+    run_id = new_run(add_project(sample_repo))
+    drain()
+    approve_spec(run_id)
+    drain()
+    approve_plan(run_id)
+    drain()
+    from controller.app.api.views import run_detail
+    with session_scope() as session:
+        run = services.get_run(session, run_id)
+        assert "ui-concept" in [h["id"] for h in run_detail(session, run)["checklist"]["human"]]
+        report = latest_document(session, run_id, "acceptance")
+        with pytest.raises(services.DecisionError, match="UI concept"):
+            services.decide_acceptance(session, run, actor=OPERATOR, decision="accept", document_id=report.id,
+                                       checked=TICKS)
+        services.decide_acceptance(session, run, actor=OPERATOR, decision="accept", document_id=report.id,
+                                   checked=[*TICKS, "ui-concept"])

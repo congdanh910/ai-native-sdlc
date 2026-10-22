@@ -150,6 +150,17 @@ def with_srs(sample_repo) -> str:
     return content
 
 
+def choose_ui(run_id) -> None:
+    """The Product Owner picks the first UI concept, ticking the gate's items."""
+    detail = client.get(f"/api/runs/{run_id}").json()
+    assert detail["status"] == "WAITING_UI_APPROVAL"
+    concepts = [d for d in detail["documents"] if d["kind"] == "ui_concepts"][-1]
+    post(f"/api/runs/{run_id}/ui/choose", {"document_id": concepts["id"], "concept": concepts["ui"]["concepts"][0]["id"],
+                                           "reason": "fits the HR back office",
+                                           "checked": [h["id"] for h in detail["checklist"]["human"]]})
+    drain()
+
+
 def test_sds_needs_the_srs_first(db, sample_repo):
     post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
     response = client.post("/api/runs", json={"project": "task-board", "architecture": ARCHITECTURE,
@@ -179,6 +190,7 @@ def test_sds_run_designs_every_srs_story_and_waits_for_the_tech_lead(db, sample_
                                                     "reason": "the customer runs its own cloud account",
                                                     "checked": [h["id"] for h in detail["checklist"]["human"]]})
     drain()
+    choose_ui(run["id"])  # the UI Concept gate comes after the options
     assert [(i["role"], i["action"]) for i in client.get("/api/inbox").json()] == [
         ("tech_lead", "waiting_spec_approval")]
     detail = client.get(f"/api/runs/{run['id']}").json()
@@ -199,7 +211,7 @@ def test_sds_run_designs_every_srs_story_and_waits_for_the_tech_lead(db, sample_
     drain()
     detail = client.get(f"/api/runs/{run['id']}").json()
     assert detail["status"] == "WAITING_PR_APPROVAL"
-    assert [a["role"] for a in detail["approvals"]] == ["solution_architect", "tech_lead"]
+    assert [a["role"] for a in detail["approvals"]] == ["solution_architect", "product_owner", "tech_lead"]
     with session_scope() as session:
         worktree = session.get(Run, uuid.UUID(run["id"])).worktree_path
     committed = subprocess.run(["git", "-C", worktree, "show", "HEAD~1:SDS.md"], capture_output=True, text=True,
@@ -232,6 +244,7 @@ def test_the_sds_records_the_chosen_option_in_section_9(db, sample_repo):
     post(f"/api/runs/{run['id']}/options/choose", {"document_id": options["id"], "option": "PA2", "hosting": "PA2-H2",
                                                     "reason": "own cloud", "checked": [h["id"] for h in detail["checklist"]["human"]]})
     drain()
+    choose_ui(run["id"])  # the UI Concept gate comes after the options
     detail = client.get(f"/api/runs/{run['id']}").json()
     sds = [d for d in detail["documents"] if d["kind"] == "sds"][-1]["content"]
     assert "### 9.1 Architecture Option" in sds and "PA2 Managed cloud, hosted as PA2-H2 Mock hosting on on_premise: own cloud" in sds
@@ -286,6 +299,7 @@ def test_the_architect_proposes_the_stack_and_the_solution_architect_adjusts_it(
                                                     "adjustments": "Use SQLite for the first site",
                                                     "checked": [h["id"] for h in detail["checklist"]["human"]]})
     drain()
+    choose_ui(run["id"])  # the UI Concept gate comes after the options
     detail = client.get(f"/api/runs/{run['id']}").json()
     sds = [d for d in detail["documents"] if d["kind"] == "sds"][-1]["content"]
     assert "Adjustments: Use SQLite for the first site" in sds and "backend: Node.js 20" in sds
@@ -343,3 +357,51 @@ def test_a_stated_platform_shapes_the_hosting_and_an_open_one_asks_the_sa_why(db
     with session_scope() as session:
         chosen = json.loads(artifact(session, uuid.UUID(run["id"]), "chosen_option"))
     assert chosen["hosting"]["id"] == "PA1-H2" and chosen["hosting_reason"] == "HR runs on Azure"
+
+
+def test_the_ui_concept_is_chosen_in_the_customers_brand_and_lands_in_docs_ui(db, sample_repo):
+    import base64
+    with_srs(sample_repo)
+    post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
+    logo = {"name": "acme.png", "data": base64.b64encode(b"\x89PNG fake").decode()}
+    run = post("/api/runs", {"project": "task-board", "idempotency_key": str(uuid.uuid4()), "architecture": {
+        **ARCHITECTURE, "brand": {"colors": ["#AA2200"], "devices": ["desktop", "mobile"]}, "logo": logo}}, status=201)
+    drain()
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    intent = [d for d in detail["documents"] if d["kind"] == "intent"][0]
+    assert "- Logo: acme.png" in intent["content"] and "- Colors: #AA2200" in intent["content"]
+    options = [d for d in detail["documents"] if d["kind"] == "options"][-1]
+    post(f"/api/runs/{run['id']}/options/choose", {"document_id": options["id"], "option": "PA1", "reason": "office",
+                                                    "checked": [h["id"] for h in detail["checklist"]["human"]]})
+    drain()
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    assert detail["status"] == "WAITING_UI_APPROVAL" and detail["checklist"]["gate"] == "ui"
+    doc = [d for d in detail["documents"] if d["kind"] == "ui_concepts"][-1]
+    concepts = doc["ui"]["concepts"]
+    assert len(concepts) == 3 and all(c["colors"]["primary"] == "#AA2200" for c in concepts)  # the brand in every concept
+    page = client.get(f"/api/runs/{run['id']}/ui/{doc['version']}/{concepts[0]['id']}/{concepts[0]['screens'][0]['slug']}",
+                      params={"device": "mobile"})
+    assert page.status_code == 200 and "--primary: #AA2200" in page.text
+    assert "default-src 'none'" in page.headers["content-security-policy"]
+    post(f"/api/runs/{run['id']}/ui/redo", {"reason": "denser tables"})
+    drain()
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    doc = [d for d in detail["documents"] if d["kind"] == "ui_concepts"][-1]
+    assert doc["version"] == 2
+    post(f"/api/runs/{run['id']}/ui/choose", {"document_id": doc["id"], "concept": doc["ui"]["concepts"][1]["id"],
+                                               "reason": "employees use phones", "adjustments": "bigger buttons",
+                                               "checked": [h["id"] for h in detail["checklist"]["human"]]})
+    drain()
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    sds = [d for d in detail["documents"] if d["kind"] == "sds"][-1]
+    post(f"/api/runs/{run['id']}/approve-spec", {"document_id": sds["id"], "sha256": sds["sha256"], "checked": TICKS})
+    drain()
+    with session_scope() as session:
+        worktree = session.get(Run, uuid.UUID(run["id"])).worktree_path
+    files = subprocess.run(["git", "-C", worktree, "show", "--name-only", "--format=", "HEAD~1"], capture_output=True,
+                           text=True, check=True).stdout.split()
+    chosen = doc["ui"]["concepts"][1]["id"]
+    assert {"SDS.md", "docs/ui/UI.md", "docs/ui/design-tokens.json", "docs/ui/brand/acme.png"} <= set(files)
+    assert any(f.startswith(f"docs/ui/concepts/{chosen}/") for f in files)
+    guide = subprocess.run(["git", "-C", worktree, "show", "HEAD~1:docs/ui/UI.md"], capture_output=True, text=True).stdout
+    assert "Why it was chosen: employees use phones" in guide and "bigger buttons" in guide

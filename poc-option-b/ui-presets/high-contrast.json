@@ -1,0 +1,28 @@
+{
+  "id": "high-contrast",
+  "name": "High contrast accessible",
+  "best_for": "public sector or strict accessibility: strong contrast, large text, clear focus",
+  "layout": "topnav",
+  "density": "comfortable",
+  "tokens": {
+    "colors": {
+      "primary": "#003A8C",
+      "on_primary": "#FFFFFF",
+      "accent": "#7A1F00",
+      "background": "#FFFFFF",
+      "surface": "#FFFFFF",
+      "text": "#000000",
+      "muted": "#333333",
+      "border": "#000000",
+      "success": "#0B5D1E",
+      "warning": "#6B4400",
+      "danger": "#9B0000"
+    },
+    "font_family": "'Atkinson Hyperlegible', Verdana, sans-serif",
+    "heading_font": "'Atkinson Hyperlegible', Verdana, sans-serif",
+    "base_size": 18,
+    "radius": 4,
+    "spacing": 12,
+    "shadow": "none"
+  }
+}

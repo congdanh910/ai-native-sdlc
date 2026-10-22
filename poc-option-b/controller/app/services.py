@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 import json
+from pathlib import Path
 import uuid
 
 from pydantic import ValidationError
@@ -78,9 +79,12 @@ def create_run(session: Session, project: Project,
     kind = (RunKind.SRS if isinstance(intent, ProjectBrief) else RunKind.SDS if isinstance(intent, ArchitectureBrief)
             else RunKind.DISCOVERY if isinstance(intent, DiscoveryRequest)
             else RunKind.FOUNDATION if isinstance(intent, FoundationRequest) else RunKind.FEATURE)
-    sds_text = None
+    sds_text, ui_guide = None, ""
     if kind == RunKind.FOUNDATION:
         sds_text = mirror_for(project).read_file(project.checked_commit, SDS_PATH) if project.checked_commit else None
+        if project.checked_commit:
+            from controller.app.ui import UI_DIR
+            ui_guide = mirror_for(project).read_file(project.checked_commit, f"{UI_DIR}/UI.md") or ""
         if not sds_text:
             raise DecisionError(f"{project.key} has no SDS.md on {project.default_branch}; write and merge the SDS "
                                 "first, then run the project check")
@@ -107,6 +111,17 @@ def create_run(session: Session, project: Project,
         if not srs_item or srs_item.get("status") != "ok":
             raise DecisionError(f"{project.key} has no SRS.md with user stories on {project.default_branch}; "
                                 "write and merge the SRS first, then run the project check")
+        if intent.logo:
+            import base64
+            try:
+                size = len(base64.b64decode(intent.logo.get("data", ""), validate=True))
+            except ValueError as exc:
+                raise DecisionError("the logo is not valid base64") from exc
+            if size > get_settings().sdlc_logo_max_kb * 1024:
+                raise DecisionError(f"the logo is larger than {get_settings().sdlc_logo_max_kb} KB (SDLC_LOGO_MAX_KB)")
+            if not str(intent.logo.get("name", "")).lower().endswith((".png", ".svg", ".jpg", ".jpeg", ".webp")):
+                raise DecisionError("the logo must be a PNG, SVG, JPG or WebP file")
+            intent.brand.logo_name = Path(intent.logo["name"]).name
         platform = intent.deployment_context.platform
         if platform:
             from controller.app.projects.config import parse_project_config
@@ -131,9 +146,11 @@ def create_run(session: Session, project: Project,
         engines = json.dumps(pinned)
         coordinator.store_artifact(session, run, "engines", TeamRole.COORDINATOR, engines)
     render = {RunKind.SRS: render_brief, RunKind.SDS: render_architecture_brief, RunKind.DISCOVERY: render_request,
-              RunKind.FOUNDATION: lambda request: foundation_intent(request, sds_text)}.get(kind, render_intent)
-    add_document(session, run.id, "intent", render(intent),
-                 author_kind="human", author=actor, data=intent.model_dump())
+              RunKind.FOUNDATION: lambda request: foundation_intent(request, sds_text, ui_guide)}.get(kind, render_intent)
+    data = intent.model_dump()
+    if kind == RunKind.SDS and data.pop("logo", None):  # the logo's bytes stay out of the intent document
+        coordinator.store_artifact(session, run, "brand_logo", TeamRole.COORDINATOR, json.dumps(intent.logo))
+    add_document(session, run.id, "intent", render(intent), author_kind="human", author=actor, data=data)
     record_event(session, "intent.accepted", actor=actor, acting_role=PO, run_id=run.id, project_id=project.id,
                  payload={"kind": run.kind})
     transition_run(session, run, RunStatus.PREFLIGHT, actor=actor, acting_role=PO)
@@ -417,6 +434,7 @@ def resume(session: Session, run: Run, *, actor: str, decision: str, reason: str
     target = RunStatus(run.resume_status or RunStatus.PREFLIGHT)
     kinds = {RunStatus.PREFLIGHT: "preflight", RunStatus.SPECIFYING: "specify", RunStatus.PLANNING: "plan",
              RunStatus.DESIGNING_OPTIONS: "options", RunStatus.DESIGNING_ONBOARDING: "onboarding",
+             RunStatus.DESIGNING_UI: "ui_concepts",
              RunStatus.PREPARING_ENVIRONMENT: "environment",
              RunStatus.DESIGNING_TESTS: "design_tests", RunStatus.ACCEPTANCE_TESTING: "acceptance",
              RunStatus.REVIEWING: "review", RunStatus.PR_OPEN: "release", RunStatus.EXTRACTING: "extract"}
@@ -597,7 +615,44 @@ def choose_option(session: Session, run: Run, document_id: uuid.UUID, option: st
         "hosting_reason": hosting_reason.strip(),
         "other_hosting": [{"id": v.id, "name": v.name} for v in chosen.hosting if variant and v.id != variant.id],
         "others": [{"id": o.id, "name": o.name} for o in options.options if o.id != chosen.id]}))
-    coordinator.enter_stage(session, run, "spec", actor=actor, acting_role=SA)
+    if not coordinator.start_ui_concepts(session, run, actor=actor, acting_role=SA):
+        coordinator.enter_stage(session, run, "spec", actor=actor, acting_role=SA)
+
+
+def choose_ui(session: Session, run: Run, document_id: uuid.UUID, concept: str, *, actor: str, reason: str,
+              checked: list[str] | None = None, adjustments: str = "") -> None:
+    """The Product Owner (UX) picks the UI concept the SDS designs; its guide, tokens and prototypes go into docs/ui/
+    with the SDS pull request."""
+    from controller.app.ui import Brand, UiConcepts
+    _require(run, RunStatus.WAITING_UI_APPROVAL)
+    document = latest_document(session, run.id, "ui_concepts")
+    if document is None or document.id != document_id:
+        raise DecisionError("the UI concepts changed; reload the page")
+    if not reason.strip():
+        raise DecisionError("say why this concept was chosen; it goes into docs/ui/UI.md")
+    concepts = UiConcepts.model_validate({k: v for k, v in document.data.items() if k not in ("checks", "brief")})
+    chosen = next((c for c in concepts.concepts if c.id == concept), None)
+    if chosen is None:
+        raise DecisionError(f"{concept} is not one of the concepts")
+    checklist = _checklist(session, run, checked)
+    _approval(session, run, "ui", "approve", actor, PO, document_id=document.id,
+              reason=f"{chosen.id} {chosen.name}: {reason}" + (f" | adjustments: {adjustments.strip()}" if adjustments.strip() else ""),
+              checklist=checklist)
+    brand = Brand.model_validate(document.data["brief"]["brand"])
+    coordinator.store_artifact(session, run, "chosen_ui", TeamRole.COORDINATOR, json.dumps({
+        "concept": chosen.model_dump(), "brand": brand.model_dump(), "reason": reason.strip(),
+        "adjustments": adjustments.strip(), "chosen_by": actor,
+        "others": [{"id": c.id, "name": c.name} for c in concepts.concepts if c.id != chosen.id]}))
+    coordinator.enter_stage(session, run, "spec", actor=actor, acting_role=PO)
+
+
+def redo_ui(session: Session, run: Run, *, actor: str, reason: str) -> None:
+    _require(run, RunStatus.WAITING_UI_APPROVAL)
+    if not reason.strip():
+        raise DecisionError("say what the concepts miss (colors, density, another layout ...)")
+    _approval(session, run, "ui", "reject", actor, PO, reason=reason)
+    transition_run(session, run, RunStatus.DESIGNING_UI, actor=actor, acting_role=PO, reason=reason)
+    coordinator.queue(session, run, "ui_concepts", key=f"redo:v{run.version}")
 
 
 def approve_onboarding(session: Session, run: Run, document_id: uuid.UUID, *, actor: str,

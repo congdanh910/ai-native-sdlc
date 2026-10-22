@@ -6,7 +6,7 @@ from typing import Literal
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 
@@ -18,7 +18,7 @@ from controller.app.discovery import service as discovery
 from controller.app.discovery import questions
 from controller.app.discovery.service import DiscoveryRequest
 from controller.app.foundation import FoundationRequest
-from controller.app.models import EvalRun, Execution, Project, Run, Source
+from controller.app.models import Document, EvalRun, Execution, Project, Run, Source
 from controller.app.projects import registry
 from controller.app.project_docs import ArchitectureBrief, ProjectBrief
 from controller.app.schemas import Intent
@@ -406,6 +406,46 @@ def choose_option(run_id: uuid.UUID, body: OptionChoice) -> dict:
                                                                reason=body.reason, checked=body.checked,
                                                                adjustments=body.adjustments, hosting=body.hosting,
                                                                hosting_reason=body.hosting_reason))
+
+
+class UiChoice(Body):
+    document_id: uuid.UUID
+    concept: str
+    reason: str = ""
+    adjustments: str = ""
+    checked: list[str] = []
+
+
+@router.post("/runs/{run_id}/ui/choose")
+def choose_ui(run_id: uuid.UUID, body: UiChoice) -> dict:
+    return _decide(run_id, lambda s, r: services.choose_ui(s, r, body.document_id, body.concept, actor=operator(),
+                                                           reason=body.reason, checked=body.checked,
+                                                           adjustments=body.adjustments))
+
+
+@router.post("/runs/{run_id}/ui/redo")
+def redo_ui(run_id: uuid.UUID, body: Reason) -> dict:
+    return _decide(run_id, lambda s, r: services.redo_ui(s, r, actor=operator(), reason=body.reason))
+
+
+@router.get("/runs/{run_id}/ui/{version}/{concept}/{screen}", response_class=HTMLResponse)
+def ui_prototype(run_id: uuid.UUID, version: int, concept: str, screen: str, device: str = "desktop") -> HTMLResponse:
+    """One prototype screen of a UI concept, rendered by the controller; no script, shown in a sandboxed frame."""
+    from controller.app.ui import UiConcepts, render, slug
+    with session_scope() as session:
+        document = session.scalar(select(Document).where(Document.run_id == run_id, Document.kind == "ui_concepts",
+                                                         Document.version == version))
+        if document is None:
+            raise HTTPException(404, "no such UI concepts version")
+        run = session.get(Run, run_id)
+        concepts = UiConcepts.model_validate({k: v for k, v in document.data.items() if k not in ("checks", "brief")})
+        title = run.title.removeprefix("SDS: ") if run else ""
+    found = next((c for c in concepts.concepts if c.id == concept), None)
+    page = next((s for s in (found.screens if found else []) if slug(s.name) == screen), None)
+    if page is None:
+        raise HTTPException(404, "no such screen")
+    return HTMLResponse(render(found, page, device, title),
+                        headers={"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:"})
 
 
 class AcceptanceDecision(Body):

@@ -305,3 +305,29 @@ def test_the_tech_lead_edits_the_onboarding_files_from_an_earlier_version(db, sa
     post(f"/api/runs/{run['id']}/onboarding/approve", {"document_id": latest["id"], "checked": TICKS})
     drain()
     assert detail(run["id"])["status"] in ("WAITING_SPEC_APPROVAL", "SPECIFYING")
+
+
+def test_a_foundation_builds_the_design_system_of_the_chosen_ui_concept(db, sample_repo):
+    from controller.app.team.mock import MockTeam
+
+    class Architect(MockTeam):
+        guides = []
+
+        def write_onboarding(self, context):
+            self.guides.append(context.ui_guide)
+            return super().write_onboarding(context)
+    (sample_repo / "docs" / "ui").mkdir(parents=True)
+    (sample_repo / "docs" / "ui" / "UI.md").write_text("# UI: Attendance\n\n**Mobile first**\n")
+    with_sds(sample_repo, with_srs(sample_repo))
+    import subprocess
+    subprocess.run(["git", "-C", str(sample_repo), "add", "docs"], check=True)
+    subprocess.run(["git", "-C", str(sample_repo), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet",
+                    "-m", "ui"], check=True)
+    post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
+    run = post("/api/runs", {"project": "task-board", "idempotency_key": str(uuid.uuid4()),
+                             "foundation": {"title": "Attendance"}}, status=201)
+    architect = Architect()
+    drain(architect)
+    intent = [d for d in detail(run["id"])["documents"] if d["kind"] == "intent"][0]["content"]
+    assert "design system built from docs/ui/design-tokens.json" in intent and "**Mobile first**" in intent
+    assert "**Mobile first**" in architect.guides[0]

@@ -21,6 +21,7 @@ export const ROLE_LABEL: Record<string, string> = {
   validation_gate: "Validation Gate",
   code_reviewer: "Code Reviewer",
   release_engineer: "Release Engineer",
+  ux_designer: "UX Designer",
   coordinator: "Coordinator",
 };
 
@@ -31,6 +32,7 @@ export const ACTION_LABEL: Record<string, string> = {
   clarifying: "Review the requirement inventory",
   waiting_baseline_approval: "Approve the baseline",
   waiting_options_approval: "Choose the architecture option",
+  waiting_ui_approval: "Choose the UI concept",
   waiting_onboarding_approval: "Approve the onboarding files",
   waiting_acceptance_approval: "Accept the story on its preview",
   waiting_spec_approval: "Review spec.md",
@@ -42,7 +44,7 @@ export const ACTION_LABEL: Record<string, string> = {
   classify: "Classify what went wrong",
 };
 
-export const ACTIVE_WORK = ["RECEIVED", "PREFLIGHT", "EXTRACTING", "DESIGNING_OPTIONS", "DESIGNING_ONBOARDING", "PREPARING_ENVIRONMENT", "ACCEPTANCE_TESTING", "SPECIFYING", "PLANNING", "GROUNDING", "DESIGNING_TESTS", "READY", "CODING",
+export const ACTIVE_WORK = ["RECEIVED", "PREFLIGHT", "EXTRACTING", "DESIGNING_OPTIONS", "DESIGNING_UI", "DESIGNING_ONBOARDING", "PREPARING_ENVIRONMENT", "ACCEPTANCE_TESTING", "SPECIFYING", "PLANNING", "GROUNDING", "DESIGNING_TESTS", "READY", "CODING",
   "REVIEWING", "PR_OPEN"];
 export const TERMINAL = ["COMPLETED", "CANCELLED", "FAILED", "CLOSED_UNMERGED"];
 

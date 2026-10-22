@@ -11,6 +11,7 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from controller.app.ui import Brand
 from controller.app.schemas import FeedbackReply, Question
 
 SRS_PATH = "SRS.md"
@@ -594,6 +595,8 @@ class ArchitectureBrief(Contract):
     notes: str = ""
     propose_stack: bool = False
     deployment_context: DeploymentContext = DeploymentContext()
+    brand: Brand = Brand()  # what the customer gives for the UI: logo, colors, fonts, Figma; all optional
+    logo: dict | None = None  # {"name": "logo.png", "data": base64}; stored as the run's brand_logo artifact
 
     @field_validator("deployment_context", mode="before")
     @classmethod
@@ -621,10 +624,20 @@ def render_deployment_context(context: DeploymentContext) -> str:
     return "\n".join(lines)
 
 
+def render_brand(brand: Brand) -> str:
+    lines = [f"- Logo: {brand.logo_name}" if brand.logo_name else "",
+             f"- Colors: {', '.join(brand.colors)}" if brand.colors else "",
+             f"- Fonts: {', '.join(brand.fonts)}" if brand.fonts else "",
+             f"- Figma: {brand.figma_url}" if brand.figma_url else "",
+             f"- Devices: {', '.join(brand.devices)}", f"- Accessibility: {brand.accessibility}",
+             f"- Tone: {brand.tone}" if brand.tone else "", f"- Interface language: {brand.language}" if brand.language else ""]
+    return "\n".join(line for line in lines if line)
+
+
 def render_architecture_brief(brief: ArchitectureBrief) -> str:
     sections = [("Technology and stack", brief.stack), ("Deployment and infrastructure", brief.deployment),
                 ("Deployment context", render_deployment_context(brief.deployment_context)),
-                ("Integrations", brief.integrations), ("Notes", brief.notes)]
+                ("Integrations", brief.integrations), ("Brand and UX", render_brand(brief.brand)), ("Notes", brief.notes)]
     if brief.propose_stack:
         lead = ("The Architect proposes the stack, deployment and integrations in the Options step, from the SRS, the "
                 "requirement baseline and the repository. What this brief states is a constraint the options follow.\n\n")

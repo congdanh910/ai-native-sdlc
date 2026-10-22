@@ -1,0 +1,28 @@
+{
+  "id": "friendly-modern",
+  "name": "Friendly modern",
+  "best_for": "employee or customer portals: cards, generous space, rounded shapes",
+  "layout": "topnav",
+  "density": "comfortable",
+  "tokens": {
+    "colors": {
+      "primary": "#5B4BDB",
+      "on_primary": "#FFFFFF",
+      "accent": "#E8590C",
+      "background": "#F7F6FB",
+      "surface": "#FFFFFF",
+      "text": "#1F1B2E",
+      "muted": "#615C73",
+      "border": "#E4E1EE",
+      "success": "#2B8A3E",
+      "warning": "#A15C00",
+      "danger": "#C92A2A"
+    },
+    "font_family": "'Nunito Sans', 'Segoe UI', Roboto, sans-serif",
+    "heading_font": "'Nunito Sans', 'Segoe UI', Roboto, sans-serif",
+    "base_size": 15,
+    "radius": 14,
+    "spacing": 10,
+    "shadow": "0 4px 14px rgba(31,27,46,.08)"
+  }
+}

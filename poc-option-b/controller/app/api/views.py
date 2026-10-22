@@ -15,7 +15,7 @@ from controller.app.services import needs_classification
 from controller.app.states import ACTIVE, STAGE_STARTER, WAITING_FOR, HumanRole
 
 
-WAITING_GATES = ("WAITING_BASELINE_APPROVAL", "WAITING_ONBOARDING_APPROVAL", "WAITING_ACCEPTANCE_APPROVAL", "WAITING_OPTIONS_APPROVAL", "WAITING_SPEC_APPROVAL", "WAITING_PLAN_APPROVAL", "WAITING_TEST_APPROVAL", "WAITING_PR_APPROVAL")
+WAITING_GATES = ("WAITING_BASELINE_APPROVAL", "WAITING_ONBOARDING_APPROVAL", "WAITING_ACCEPTANCE_APPROVAL", "WAITING_OPTIONS_APPROVAL", "WAITING_UI_APPROVAL", "WAITING_SPEC_APPROVAL", "WAITING_PLAN_APPROVAL", "WAITING_TEST_APPROVAL", "WAITING_PR_APPROVAL")
 
 
 def project_view(project: Project) -> dict:
@@ -54,10 +54,25 @@ def _document(document: Document) -> dict:
             **({"choices": _option_choices(document.data)} if document.kind == "options" and document.data else {}),
             **({"acceptance": {k: (document.data or {}).get(k) for k in ("cases", "criteria", "attempt", "url", "problems")}}
                if document.kind == "acceptance" else {}),
+            **({"ui": _ui_concepts(document.data)} if document.kind == "ui_concepts" and document.data else {}),
             # the per-source chunks are kept for the next round only; the page needs the merged inventory
             **({"inventory": {k: v for k, v in (document.data or {}).items() if k != "chunks"}}
                if document.kind == "inventory" else {}),
             "created_at": document.created_at.isoformat()}
+
+
+def _ui_concepts(data: dict) -> dict:
+    """What the Product Owner picks from: each concept with its palette, contrast checks and prototype screens."""
+    from controller.app.ui import slug
+    brief = data.get("brief") or {}
+    return {"notes": data.get("notes", ""), "devices": brief.get("devices", ["desktop"]),
+            "accessibility": brief.get("accessibility", "wcag-aa"), "brand": brief.get("brand", {}),
+            "concepts": [{"id": c["id"], "name": c["name"], "preset": c.get("preset", ""), "layout": c["layout"],
+                          "density": c.get("density", ""), "rationale": c["rationale"], "colors": c["tokens"]["colors"],
+                          "font": c["tokens"]["font_family"], "checks": (data.get("checks") or {}).get(c["id"], []),
+                          "screens": [{"name": s["name"], "role": s.get("role", ""), "slug": slug(s["name"])}
+                                      for s in c["screens"]]}
+                         for c in data.get("concepts", [])]}
 
 
 def _option_choices(data: dict) -> dict:

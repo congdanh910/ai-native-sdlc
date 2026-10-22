@@ -238,6 +238,24 @@ class MockTeam:
         return Advice(situation=f"Mock advice: {stop.get('stop', '')[:200]}", recommendation=decision, confidence="low",
                       reason=f"mock: {decision}", sides=[{"party": "the platform", "claim": "no model was asked"}])
 
+    def design_ui(self, context, brief):
+        """One concept per preset, in order, with the customer's primary color when given."""
+        from controller.app.ui import UiConcepts
+        concepts = []
+        for preset in brief["presets"][:brief["count"]]:
+            colors = dict(preset["tokens"]["colors"])
+            if brief["brand"].get("colors"):
+                colors["primary"] = brief["brand"]["colors"][0]
+            concepts.append({
+                "id": preset["id"], "name": preset["name"], "preset": preset["id"], "layout": preset["layout"],
+                "density": preset["density"], "rationale": f"mock: {preset['best_for']}",
+                "tokens": {**preset["tokens"], "colors": colors}, "navigation": ["Dashboard", "Employees", "Reports"],
+                "screens": [{"name": "Dashboard", "role": "HR_ADMIN", "blocks": [
+                                {"type": "heading", "title": "Today"}, {"type": "stats", "items": ["Present: 42", "Late: 3"]}]},
+                            {"name": "Sign in", "blocks": [{"type": "form", "title": "Sign in",
+                                                            "fields": ["Login", "Password"], "items": ["Sign in"]}]}]})
+        return UiConcepts(concepts=concepts, notes="mock concepts")
+
     def check_defects(self, context, notes) -> DefectCheck:
         # tests choose the outcome
         verdict = "conflict" if "CONTRADICTS-SDS" in notes else "not_actionable" if "NO-CODE-CHANGE" in notes else "consistent"
