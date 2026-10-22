@@ -866,10 +866,11 @@ def test_a_criterion_the_coding_tests_prove_needs_no_browser_test():
     assert "proven by the coding's tests TC-4, TC-5" in report
 
 
-def test_a_fix_task_may_add_new_files_in_the_allowed_paths_but_not_rewrite_others(worktree):
-    fix = TASK.model_copy(update={"modify": ["src/tasks.js"], "create": ["src/**"]})
+def test_a_fix_task_may_change_any_file_in_the_allowed_paths_but_not_others(worktree):
+    fix = TASK.model_copy(update={"modify": ["src/tasks.js", "src/**"], "create": ["src/**"]})
     (worktree / "src" / "migration_0002.js").write_text("// new\n")
     (worktree / "src" / "tasks.js").write_text("export const due = 1;\n")
+    (worktree / "src" / "app.js").write_text("// an earlier plan's module\n")
     assert changes.check_code(worktree, changes.stage_changes(worktree), fix, policy()) == []
     changes.discard(worktree)
     (worktree / "README.md").write_text("# changed\n")  # outside the allowed paths
