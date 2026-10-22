@@ -166,3 +166,12 @@ def test_a_part_needs_its_dependency_manifest_before_its_code():
     findings = check_plan(PlanPayload(summary="s", tasks=tasks), tests(), CRITERIA, strict, FILES, SYMBOLS)["findings"]
     assert findings == ["T1 builds in src/ before src/package.json exists (T2 creates it later); setup installs that "
                         "part's tools from it, so create it in this task or depend on the task that does"]
+
+
+def test_a_task_may_name_its_own_new_file_among_its_references():
+    """List Employees T3 created web/src/features/employees/EmployeeList.tsx and listed it as a reference too."""
+    tasks = [{"id": "T1", "title": "Build the list", "create": ["src/list.js"], "modify": ["src/app.js"],
+              "references": [{"file": "src/list.js", "symbol": "renderList"}, {"file": "src/app.js", "symbol": None}],
+              "acceptance_criteria": ["AC-1", "AC-2"], "validation": ["unit-tests"]}]
+    report = check_plan(PlanPayload(summary="s", tasks=tasks), tests(), CRITERIA, policy(), FILES, SYMBOLS)
+    assert not any("src/list.js" in f for f in report["findings"]), report["findings"]

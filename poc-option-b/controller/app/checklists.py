@@ -164,7 +164,7 @@ def check_plan(plan: PlanPayload, criteria: list[Criterion], grounding: dict | N
         _result("files", "Every task names the files it changes", [f"no files: {', '.join(no_files)}"] if no_files else []),
         _result("no-tests", "No task changes test files; tests are the QA Engineer's", tests),
         _result("placeholders", "No placeholders such as TBD remain", ["placeholder text in the plan"] if PLACEHOLDER.search(text) else []),
-        _result("grounding", "The grounding check passed", findings if (grounding or {}).get("status") == "fail" else []),
+        _result("grounding", "Grounding: every file, function and import the plan names exists or an earlier task creates it", findings if (grounding or {}).get("status") == "fail" else []),
     ]
 
 

@@ -74,6 +74,8 @@ def check_plan(plan: PlanPayload, tests: TestPlan, criteria: list[Criterion], po
         if not task.modify and not task.create:
             findings.append(f"{task.id} changes no file")
         for reference in task.references:
+            if reference.file in task.create:  # the task's own new file: nothing earlier to build on, nothing to check
+                continue
             if reference.file not in files and reference.file not in created_before(task.id):
                 findings.append(f"{task.id} references {reference.file}, which does not exist and no task it "
                                 f"depends on creates")
