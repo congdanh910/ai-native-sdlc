@@ -133,7 +133,7 @@ def schedule_tasks(session: Session, run: Run) -> None:
     for task in tasks:
         if task.status == TaskStatus.PENDING and set(task.payload.get("depends_on", [])) <= passed:
             transition_task(session, task, TaskStatus.READY, actor=COORDINATOR, reason="dependencies passed")
-        if task.status == TaskStatus.READY:
+        if task.status == TaskStatus.READY and set(task.payload.get("depends_on", [])) <= passed:
             # the plan in the key: a replanned run has a T1 again, and the earlier plan's T1 job must not stand for it
             queue(session, run, "code_task", key=f"{task.plan_id}:{task.external_task_id}:a{task.attempt_count}", task=task)
 
@@ -446,14 +446,20 @@ def require_checklist(session: Session, run: Run, checked: list[str] | None) -> 
     return {**evaluation, "human": [{**h, "checked": True} for h in evaluation["human"]]}
 
 
-def on_claim(session: Session, execution: Execution) -> None:
-    """Mark side-effecting work as started before it begins, so a crash leaves a visible trace."""
+def on_claim(session: Session, execution: Execution) -> bool:
+    """Mark side-effecting work as started before it begins, so a crash leaves a visible trace. False: the job is
+    not to run (a code task queued before the run stopped coding), and is discarded without starting."""
     if execution.kind == "code_task":
         task = session.get(Task, execution.task_id, with_for_update=True)
+        run = session.get(Run, execution.run_id)
+        if run.status != RunStatus.CODING:
+            finish(session, execution, "discarded", error=f"run is {run.status}, task {task.status}")
+            return False
         if task.status == TaskStatus.READY:
             task.attempt_count += 1  # the next attempt gets a new idempotency key
             transition_task(session, task, TaskStatus.WRITING_TESTS, actor=TeamRole.QA_ENGINEER.value,
                             reason=f"execution {execution.id} started")
+    return True
 
 
 # ---------------------------------------------------------------- context
@@ -758,7 +764,7 @@ def _work_task(team: Team, loaded: Loaded) -> list[dict]:
     A failed red check goes back to the QA Engineer once with the result. Validation failures go back to the
     Developer with the failing output, at most limits.max_remediations times (.sdlc/project.yaml).
     """
-    task = PlanTask.model_validate(loaded.task_payload)
+    task = PlanTask.model_validate({k: v for k, v in loaded.task_payload.items() if k != "defects"})  # a fix task's notes
     context, tests = loaded.context, loaded.tests
 
     def step(state: TaskStatus, role: TeamRole, result: StepResult) -> dict:
@@ -767,7 +773,12 @@ def _work_task(team: Team, loaded: Loaded) -> list[dict]:
                 "dispute": result.dispute, "changed_files": result.changed_files, "evidence": result.evidence}
 
     ruling = loaded.extra.get("ruling")
-    if ruling and ruling["decision"] == "amend_tests":
+    if loaded.task_payload.get("defects") and not ruling:  # a fix task: the tests of the defects come first
+        first = team.write_tests(context, task, tests, amend=True,
+                                 feedback=f"Defects a human found after every task passed; write or update the tests "
+                                          f"that show each one (they must fail now), and change only what they need:\n"
+                                          f"{loaded.task_payload['defects']}")
+    elif ruling and ruling["decision"] == "amend_tests":
         feedback = (f"The Developer disputed your tests: {ruling['dispute']}\nThe Tech Lead decided that you update "
                     f"the tests: {ruling['reason']}")
         first = team.write_tests(context, task, tests, feedback=feedback, amend=True)
@@ -799,7 +810,10 @@ def _work_task(team: Team, loaded: Loaded) -> list[dict]:
             return steps
     upheld = (f"You disputed a test earlier: {ruling['dispute']}\nThe Tech Lead kept the tests: {ruling['reason']}\n"
               f"Make the code pass them.") if ruling and ruling["decision"] == "keep_tests" else ""
-    if loaded.extra.get("changes"):  # sent back from the acceptance gate or the pull request
+    if loaded.task_payload.get("defects"):
+        upheld = "\n".join(["Fix these defects, found by a human after every task passed:",
+                             loaded.task_payload["defects"], upheld]).strip()
+    elif loaded.extra.get("changes"):  # sent back from the acceptance gate or the pull request
         upheld = "\n".join(["Changes asked after the review; make them where they concern this task:",
                              *loaded.extra["changes"], upheld]).strip()
     steps.append(step(TaskStatus.CODING, TeamRole.DEVELOPER, team.implement(context, task, 1, tests, feedback=upheld)))

@@ -539,9 +539,7 @@ def pr_decision(session: Session, run: Run, *, actor: str, decision: str, reason
             transition_run(session, run, RunStatus.CLARIFYING, actor=actor, acting_role=CO, reason=reason)
             return
         transition_run(session, run, RunStatus.CODING, actor=actor, acting_role=CO, reason=reason)
-        for task in coordinator.current_tasks(session, run):
-            transition_task(session, task, TaskStatus.READY, actor=actor, reason=f"changes requested: {reason}")
-        coordinator.schedule_tasks(session, run)
+        _add_fix_task(session, run, actor=actor, who="Code Owner (pull request)", reason=reason)
     elif decision == "rereview":
         # The code is unchanged; the Code Reviewer writes a new review.md and the PR body is refreshed.
         transition_run(session, run, RunStatus.REVIEWING, actor=actor, acting_role=CO,
@@ -638,9 +636,7 @@ def decide_acceptance(session: Session, run: Run, *, actor: str, decision: str, 
         _corrected(run)
         _approval(session, run, "acceptance", "reject", actor, QC, reason=reason)
         transition_run(session, run, RunStatus.CODING, actor=actor, acting_role=QC, reason=reason)
-        for task in coordinator.current_tasks(session, run):
-            transition_task(session, task, TaskStatus.READY, actor=actor, reason=f"defects found in acceptance: {reason}")
-        coordinator.schedule_tasks(session, run)
+        _add_fix_task(session, run, actor=actor, who="QC (acceptance)", reason=reason)
     elif decision == "retest":
         _approval(session, run, "acceptance", "retest", actor, QC, reason=reason or None)
         transition_run(session, run, RunStatus.ACCEPTANCE_TESTING, actor=actor, acting_role=QC,
@@ -648,6 +644,27 @@ def decide_acceptance(session: Session, run: Run, *, actor: str, decision: str, 
         coordinator.queue(session, run, "acceptance", key=f"retest:v{run.version}")
     else:
         raise DecisionError(f"unknown acceptance decision {decision!r}")
+
+
+def _add_fix_task(session: Session, run: Run, *, actor: str, who: str, reason: str) -> None:
+    """Defects found after every task passed (the QC's acceptance, the Code Owner's review) go to one new task of
+    the plan, which may change any file of the plan's tasks: a defect seldom sits in the files of the first task, and
+    re-running every task in order had the first one dispute what it could not change (attendance, AC-24). The QA
+    Engineer first writes or updates the tests the defects break (a human's decision, so existing lines may change),
+    then the Developer fixes the code; review and acceptance follow."""
+    tasks = coordinator.current_tasks(session, run)
+    files = sorted({f for t in tasks for f in t.payload.get("modify", []) + t.payload.get("create", [])})
+    criteria = sorted({c for t in tasks for c in t.payload.get("acceptance_criteria", [])})
+    number = max(int(t.external_task_id[1:]) for t in tasks) + 1
+    policy = coordinator.EffectivePolicy.model_validate_json(coordinator.artifact(session, run.id, "effective_policy"))
+    payload = {"id": f"T{number}", "title": f"Fix the defects found by the {who}", "depends_on": [], "modify": files,
+               "create": [], "provides": [], "references": [], "acceptance_criteria": criteria,
+               "validation": [c.name for c in policy.validation], "defects": f"{who}: {reason}"}
+    session.add(Task(run_id=run.id, plan_id=tasks[0].plan_id, external_task_id=payload["id"], payload=payload,
+                     status=TaskStatus.READY.value))
+    session.flush()
+    record_event(session, "task.fix_added", actor=actor, run_id=run.id, payload={"task": payload["id"], "reason": reason})
+    coordinator.schedule_tasks(session, run)
 
 
 def preview_locked(run: Run, *, start: bool) -> str | None:

@@ -318,8 +318,12 @@ def test_requested_changes_go_back_through_coding(db, sample_repo):
     drain()
     with session_scope() as session:
         run = session.get(Run, run_id)
-        attempts = {t.attempt_count for t in session.scalars(select(Task).where(Task.run_id == run_id))}
-    assert run.status == RunStatus.WAITING_PR_APPROVAL and attempts == {2} and run.human_corrected
+        tasks = {t.external_task_id: t for t in session.scalars(select(Task).where(Task.run_id == run_id))}
+        fix = tasks[max(tasks, key=lambda i: int(i[1:]))]
+        # one fix task with the Code Owner's reason, over every file of the plan; the planned tasks did not run again
+        assert fix.payload["defects"] == "Code Owner (pull request): rename the field" and fix.status == "PASSED"
+        assert {t.attempt_count for t in tasks.values() if t is not fix} == {1}
+    assert run.status == RunStatus.WAITING_PR_APPROVAL and run.human_corrected
 
 
 def test_project_can_use_another_branch(db, sample_repo):

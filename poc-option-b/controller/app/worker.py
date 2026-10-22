@@ -58,7 +58,8 @@ def run_once(team: Team, worker_id: str = WORKER_ID) -> bool:
         execution = jobs.claim(session, worker_id)
         if execution is None:
             return False
-        coordinator.on_claim(session, execution)
+        if not coordinator.on_claim(session, execution):
+            return True
         execution_id, kind, run_id = execution.id, execution.kind, execution.run_id
         joblog.start(run_id, execution_id, f"{kind} ({execution.role}) claimed by {worker_id}, attempt {execution.attempts}")  # claim counted it
     log.info("claimed %s %s", kind, execution_id)
