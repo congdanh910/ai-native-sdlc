@@ -136,12 +136,14 @@ def check_tests(worktree: Path, changes: list[Change], policy: EffectivePolicy, 
 def check_code(worktree: Path, changes: list[Change], task: PlanTask, policy: EffectivePolicy) -> list[str]:
     """Developer: only the task's files, inside the allowed paths, never the tests."""
     planned = set(task.modify) | set(task.create)
+    # a glob in create (a fix task: any new file in the allowed paths, such as a new migration) admits new files only
+    new_files = [p for p in task.create if any(ch in p for ch in "*?[")]
     problems = []
     for change in changes:
         problems += _common(worktree, change, policy)
         if matches_any(change.path, policy.test_paths):
             problems.append(f"edits test file {change.path}; report a test dispute instead")
-        elif change.path not in planned:
+        elif change.path not in planned and not (change.status == "A" and matches_any(change.path, new_files)):
             problems.append(f"changes {change.path}, which is not in task {task.id} ({', '.join(sorted(planned))})")
         elif not matches_any(change.path, policy.allowed_paths):
             problems.append(f"changes {change.path}, outside the allowed paths {policy.allowed_paths}")

@@ -864,3 +864,13 @@ def test_a_criterion_the_coding_tests_prove_needs_no_browser_test():
         "AC-3 has no acceptance test and no passing test of the coding"]
     report = render_acceptance("t", {"AC-1": "a", "AC-2": "b", "AC-3": "c"}, cases, "", "/e", proven)
     assert "proven by the coding's tests TC-4, TC-5" in report
+
+
+def test_a_fix_task_may_add_new_files_in_the_allowed_paths_but_not_rewrite_others(worktree):
+    fix = TASK.model_copy(update={"modify": ["src/tasks.js"], "create": ["src/**"]})
+    (worktree / "src" / "migration_0002.js").write_text("// new\n")
+    (worktree / "src" / "tasks.js").write_text("export const due = 1;\n")
+    assert changes.check_code(worktree, changes.stage_changes(worktree), fix, policy()) == []
+    changes.discard(worktree)
+    (worktree / "README.md").write_text("# changed\n")  # outside the allowed paths
+    assert "not in task T1" in "\n".join(changes.check_code(worktree, changes.stage_changes(worktree), fix, policy()))

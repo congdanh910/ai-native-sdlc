@@ -650,8 +650,13 @@ def load(session: Session, execution: Execution) -> Loaded:
         loaded.task_payload, loaded.task_attempt = task.payload, task.attempt_count
         ruling = artifact(session, run.id, f"ruling:{task.external_task_id}")
         # a ruling of an earlier plan's task of the same id does not apply (rulings before 2026-10-21 name no plan)
-        if ruling and json.loads(ruling)["attempt"] == task.attempt_count and _ruling_of_plan(session, run, task):
-            loaded.extra["ruling"] = json.loads(ruling)
+        if ruling and _ruling_of_plan(session, run, task):
+            decided = json.loads(ruling)
+            # amend_tests rewrites the tests once; keeping the tests (and what the reason adds) or ruling the task
+            # built holds for every later attempt, such as one after a failure outside the dispute
+            if decided["attempt"] == task.attempt_count or (decided["decision"] != "amend_tests"
+                                                            and decided["attempt"] <= task.attempt_count):
+                loaded.extra["ruling"] = decided
     return loaded
 
 

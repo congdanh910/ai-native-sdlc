@@ -686,8 +686,9 @@ def _add_fix_task(session: Session, run: Run, *, actor: str, who: str, reason: s
     criteria = sorted({c for t in tasks for c in t.payload.get("acceptance_criteria", [])})
     number = max(int(t.external_task_id[1:]) for t in tasks) + 1
     policy = coordinator.EffectivePolicy.model_validate_json(coordinator.artifact(session, run.id, "effective_policy"))
+    # new files anywhere in the allowed paths: a fix often needs one (a new migration; existing ones never change)
     payload = {"id": f"T{number}", "title": f"Fix the defects found by the {who}", "depends_on": [], "modify": files,
-               "create": [], "provides": [], "references": [], "acceptance_criteria": criteria,
+               "create": list(policy.allowed_paths), "provides": [], "references": [], "acceptance_criteria": criteria,
                "validation": [c.name for c in policy.validation], "defects": f"{who}: {reason}"}
     session.add(Task(run_id=run.id, plan_id=tasks[0].plan_id, external_task_id=payload["id"], payload=payload,
                      status=TaskStatus.READY.value))
