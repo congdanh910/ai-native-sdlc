@@ -49,3 +49,18 @@ Loại run mới `foundation`, cần `SDS.md` trên nhánh mặc định, không
 
 Merge PR của Foundation thì Projects → Check again chạy validation mới trên nhánh mặc định; từ đó các run story dùng
 stack và môi trường mới.
+
+## Sau lần chạy thật (attendance, 20–22/10)
+
+- **Onboarding phải khớp code và plan.** Preview của Foundation chỉ chứa phần Foundation xây; plan nhận file compose
+  và tạo đủ thứ compose chạy (seed tài khoản demo…); tài khoản demo lấy từ seed. Bước kiểm môi trường chạy thử preview
+  khi code đã có, nên onboarding làm hỏng preview tự quay về Architect kèm log.
+- **Back to onboarding** dùng được ở cổng Spec/Plan/Test và ở Needs human. Dừng ở Acceptance (mọi task đã pass và
+  review) thì sau khi duyệt onboarding mới, run chạy lại Acceptance trên cùng code, không plan lại.
+- **Plan lại trên code đã có**: plan mới của run có thể gồm việc plan cũ đã làm. Red check báo test mới đã pass; Tech
+  Lead xem bằng chứng (commit trước đã sửa đúng file của task, test mới, ghi chú QA) và chọn **Already built**: test
+  giữ làm guard, bỏ qua Developer, validation quyết định.
+- **Môi trường của AI**: Developer và QA không có mạng, chỉ đọc worktree và công cụ đã cài; lockfile do nền tảng sinh
+  bằng `environment.lock`. Lần chạy này Developer đã ghép lockfile từ repo khác trên máy người dùng; từ nay không thể.
+- **Lint không phải "đỏ" của TDD**: lệnh `kind: lint` (hoặc tên có chữ lint) fail không tính; lỗi lint trong test của
+  QA trả về QA.

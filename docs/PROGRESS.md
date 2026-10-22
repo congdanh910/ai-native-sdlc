@@ -1,19 +1,34 @@
 # Tiến độ và bàn giao
 
-_Cập nhật: 2026-10-21_
+_Cập nhật: 2026-10-22_
 
-## Foundation attendance (run a70e419f), 21/10
+## Foundation attendance (run a70e419f), 21–22/10
 
-- T1–T5 PASSED, Code Review xong; Acceptance chạy thật lần đầu, preview không lên: compose của onboarding chạy
-  `app.seed_demo`, recognition, worker, video camera mà plan không tạo. Người dùng chọn A: Back to onboarding thu gọn
-  preview về phạm vi Foundation rồi plan lại.
-- Sửa nền tảng hôm nay: red check "red by construction" khi task tạo manifest của phần chứa test (007d468); preview cũ
-  thất bại trước commit mới hiện stopped (ca8e5b1); acceptance tạo task giả không qua schema (e989892); resume ở
-  ACCEPTANCE_TESTING với key job riêng (27ca98c); nút preview chỉ khi run chờ người, khóa khi Acceptance (18cc6c7);
-  preview lỗi ghi service hỏng + log và dọn container, Tech Lead đọc compose của preview, onboarding chỉ đưa vào
-  preview cái Foundation xây, Back to onboarding từ Needs human.
-- Đã làm (người dùng duyệt): `environment.lock` (nền tảng sinh lockfile có mạng) và giới hạn đọc của AI trong worktree +
-  công cụ (Codex permission profile, hook Read/Glob/Grep cho Claude). Backlog 3.13 chạy task song song.
+**Trạng thái (22/10):** plan v8 (T1–T4) đã pass và review; Acceptance chạy thật tới cổng QC (18/20 test pass sau khi
+sửa locator). QC gửi AC-24 (thiếu field phải 400) → run được gỡ tay một lần sang mô hình mới: T1–T4 PASSED, T5 "Fix
+the defects found by the QC" đã sửa `backend/app/api/main.py` (feat a492b9c); T5 dừng vì khiếu nại test AC-23 (405 qua
+cổng web vs 401 ở API, brief khuyến nghị amend_tests) và validation exit 137 (thiếu bộ nhớ). Chờ người dùng quyết rồi
+Review → Acceptance → cổng QC → PR. Sau đó người dùng muốn chạy lại Foundation (hoặc cả chuỗi) để kiểm nền tảng.
+
+**Nền tảng đã sửa trong run này** (commit trên `feature/option-b-v2`; chi tiết DECISIONS.md, ARCHITECTURE.md,
+`poc-option-b/docs/acceptance-design.md`, `foundation-design.md`, hướng dẫn sử dụng):
+- Red check: red by construction (007d468); lint không tính đỏ, lỗi lint trong test về QA (dd46ac5); QA viết lại một
+  lần khi bị từ chối, import nhiều dòng (8ce5f0c); Already built + bằng chứng (4d90a6d, 824d5f0).
+- Khiếu nại: QA theo quyết định của Tech Lead, `UNCLEAR` (9b057d4); ruling theo plan (08af680); brief cho Tech Lead
+  (a3f063a).
+- Lockfile `environment.lock` và sandbox đọc của AI (be57302); prompt doing đọc lúc worker khởi động (9a5e246); task có
+  job hỏng thành FAILED, resume chạy lại (bdf28a1).
+- Preview/Acceptance: chỉ Start khi chờ người (18cc6c7); lỗi preview nêu service + log, phạm vi preview Foundation,
+  plan đọc compose (7802178); Playwright được cài, bộ test cũ viết lại, kiểm môi trường chạy thử preview (3674dda);
+  build timeout riêng (1013ed2); xoá file của bộ test cũ (bfde950); lỗi code test về QA một lần (24e1fce); Back to
+  onboarding từ Acceptance quay lại Acceptance (889abb3); resume ở Acceptance (27ca98c).
+- Gửi lỗi về: một task sửa lỗi Tn+1, task chờ phụ thuộc, job code bị huỷ khi run đã dừng (74bc922); QA Acceptance nhận
+  ghi chú QC (e7b2b84).
+- Backlog mới: 3.13 task song song, 3.14 test ngoài validation, 3.15 so biến môi trường, 3.16 brief cho lần dừng
+  ngoài task, 3.17 deploy nền tảng lên Ubuntu, 3.18 tài nguyên Docker.
+
+**Bài học vận hành:** không chạy bộ test nền tảng (có test Docker) khi run đang code: gây exit 137 và test Docker
+chập chờn (`test_a_project_environment_builds_its_image_and_reaches_its_services`).
 
 ## Việc đang làm: Discovery (tài liệu thô → baseline → SRS và SDS)
 

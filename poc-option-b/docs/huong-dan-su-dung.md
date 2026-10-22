@@ -86,6 +86,8 @@ Discovery có thêm vai trả lời câu hỏi theo cấu hình dự án: mặc 
 | `SDLC_DOING_MODE` | `cli` | Codex/Claude viết test và code thật (`mock` để thử không gọi AI) |
 | `SDLC_QWEN_ENABLED` | `false` | Qwen trên GX10 đã tắt |
 | `SDLC_KEEP_AWAKE` | `true` | Giữ Mac không ngủ khi có job (macOS) |
+| `SDLC_ADVICE_ENABLED` | `true` | Code Reviewer viết brief cho Tech Lead mỗi khi một task dừng (một lượt gọi AI) |
+| `SDLC_EXECUTOR_READ_PATHS` | `/Library/Developer/CommandLineTools,/System/Library/OpenSSL` | Thư mục ngoài worktree và PATH mà lệnh của AI được đọc (công cụ cài ở chỗ khác thì thêm vào đây) |
 
 Lưu ý khi vận hành:
 - Sửa `.env` thì chạy `./sdlc down && ./sdlc up`. Engine được ghim vào mỗi run lúc tạo, nên run đang mở giữ engine cũ.
@@ -320,12 +322,23 @@ Kịch bản của bản giả (thành công, lỗi 4xx/5xx, chậm/timeout, d�
 2. **Cổng Spec (PO):** BA viết AC-01… và EC-01… dạng Given/When/Then. Xem checklist, tick, **Accept**.
 3. **Cổng Plan (Tech Lead):** task, file sửa, ma trận tiêu chí × task × test case, kết quả grounding (plan không được nhắc tới file hay hàm không tồn tại). **Approve plan**.
 4. **Cổng Quality (QC):** `test_cases.md` và phân tích chéo. **Approve** thì bắt đầu viết code.
-5. **Code (tự động):** với mỗi task, QA Engineer viết test, red check (test phải trượt), Developer viết code, validation trong container (phải pass). Theo dõi ở tab **Tasks** và **Diff**.
+5. **Code (tự động):** với mỗi task, QA Engineer viết test, red check (test phải trượt), Developer viết code, validation trong container (phải pass). Theo dõi ở tab **Tasks** và **Diff**. Task chỉ chạy khi các task nó phụ thuộc đã pass; task độc lập vẫn chạy lần lượt (song song: BACKLOG 3.13).
+   - **Red check** chỉ tính lệnh test fail là "đỏ"; lệnh lint fail không bao giờ tính. Lỗi lint nằm trong file test QA vừa viết thì test trả về QA sửa ngay. Test nằm trong phần mà chính task tạo manifest (ví dụ `web/` khi task tạo `web/package.json`) là **red by construction**: chưa chạy được trước khi có code, validation sau code sẽ chạy.
+   - Kiểm thay đổi của QA từ chối (sửa dòng test cũ, file ngoài thư mục test…) thì QA được viết lại **một lần** kèm lý do (lý do trích luôn các dòng bị sửa). Thêm tên vào một câu import nhiều dòng không tính là sửa test.
+   - Developer và QA không có mạng và chỉ đọc được worktree. Đổi manifest thì nền tảng chạy `environment.lock` để sinh lockfile (mục 7a).
 6. **Acceptance** (khi dự án có `preview` với lệnh `e2e`, và `stages.acceptance` khác `skip`): QA Engineer viết test **Playwright** cho từng AC/EC (tên test bắt đầu bằng mã tiêu chí), nền tảng bật **preview** của nhánh run và chạy test ngay cạnh nó; mỗi tiêu chí có kết quả, ảnh chụp, video.
+   - Test chỉ dùng `BASE_URL` và tài khoản demo; tiêu chí không chứng minh được bằng trình duyệt (restart, đồng hồ, sự cố của bản giả) thì không có test, QA ghi lý do, cổng QC hiện "has no acceptance test".
+   - Nền tảng cài `@playwright/test` đúng phiên bản của `e2e_image` trên một bản sao của repo (hoặc `npm ci` nếu thư mục e2e có lockfile riêng).
+   - Test fail vì lỗi của chính code test (locator khớp nhiều phần tử – "strict mode violation", spec không load, thiếu module) được trả về QA sửa **một lần** và chạy lại trước khi tới QC; lỗi của app thì để QC thấy.
+   - Bộ test viết cho preview cũ (file compose đổi sau đó) được viết lại; QA được sửa và xoá file của chính bộ đó.
 7. **Cổng QC Acceptance** (`stages.acceptance: gated`, mặc định): khung Preview có **Try it** và tài khoản demo theo vai để QC tự bấm thử; bảng tiêu chí → test → kết quả → ảnh/video (bấm ảnh để phóng to); controller kiểm mọi tiêu chí có test và đều đạt. **Accept the story** → mở PR. **Send defects to the Developer** (ghi đã làm gì, thấy gì, mong đợi gì) → nền tảng thêm **một task sửa lỗi** (Tn+1) được sửa mọi file của plan: QA viết hoặc sửa test cho từng lỗi (phải fail trước), Developer sửa code, rồi Review và Acceptance lại. Các task đã pass không chạy lại. Code Owner **Request changes** trên PR cũng đi đường này. **Run the tests again** (ghi lý do nếu test viết sai, QA viết lại). `auto`: đạt hết thì tự mở PR, có tiêu chí trượt thì dừng ở cổng QC. `skip`: như trước.
 8. **Cổng PR (Code Owner):** `review.md` của Code Reviewer chỉ để tham khảo. Tick checklist, mở PR trên GitHub, merge. Run thành `COMPLETED`.
 
-Developer báo test sai (`DISPUTE`), hoặc một bước lỗi, thì run dừng ở `NEEDS_HUMAN`: chọn **Let QA update the tests**, **Keep the tests**, **Resume**, **Replan** hoặc **Cancel run**, kèm lý do.
+Developer báo test sai (`DISPUTE`), hoặc một bước lỗi, thì run dừng ở `NEEDS_HUMAN`: chọn **Let QA update the tests**, **Keep the tests**, **Resume**, **Replan** hoặc **Cancel run**, kèm lý do. Các nút thêm, chỉ hiện khi hợp: **Already built: keep tests as guards** (red check báo test mới đã pass, kèm bằng chứng: commit trước đã sửa đúng file của task, danh sách test, ghi chú của QA) và **Back to onboarding** (run Foundation; dừng ở Acceptance thì sửa xong quay lại Acceptance, không plan lại).
+
+**Brief for the Tech Lead.** Mỗi lần một task dừng, sau 1–3 phút khung Needs human có brief của Code Reviewer: tình huống bằng lời dễ hiểu, từng bên (Developer, QA, test case đã duyệt, code, SDS) nói gì kèm bằng chứng file:dòng, quyết định khuyến nghị kèm độ chắc chắn và rủi ro, việc nên kiểm, và lý do soạn sẵn ghi rõ test nào, giá trị nào. **Use this reason** điền lý do vào ô; anh vẫn tự chọn nút. Thứ tự ưu tiên khi các bên mâu thuẫn: SDS → acceptance criteria → test case đã duyệt → code hiện có. Độ chắc chắn *low* nghĩa là tài liệu không quyết được, anh phải chọn.
+
+**Quyết định của anh thắng test case.** Khi lý do anh ghi khác test case đã duyệt (ví dụ 201 thay vì 200), QA làm theo lý do. QA không làm theo được hoặc thấy mơ hồ thì trả `UNCLEAR` và task quay lại anh kèm câu hỏi; ghi lý do cụ thể (test nào, giá trị nào, cái gì không đổi) để tránh vòng này.
 
 ### Khi một cổng chưa đạt (mọi loại run)
 
@@ -364,9 +377,13 @@ preview:
   accounts:
     - {role: HR_ADMIN, username: hr@example.test, password: Demo-123}
   e2e: [npx, playwright, test, --config, e2e/playwright.config.ts]
-  e2e_image: mcr.microsoft.com/playwright:v1.49.1-noble
+  e2e_image: mcr.microsoft.com/playwright:v1.56.1-noble   # phiên bản quyết định @playwright/test được cài
   e2e_paths: [e2e/**]
+  start_timeout_seconds: 600   # từ lúc chạy tới khi health_path trả 200
+  build_timeout_seconds: 1800  # build image (tải dependency); quá giờ không bị coi là lỗi của onboarding
 ```
+
+Tài khoản demo phải đúng với seed trong code. Khi code đã có, bước kiểm môi trường của Foundation **chạy thử preview một lần**: compose làm hỏng preview (thiếu biến môi trường, chạy module chưa có) thì tự trả về Architect kèm log.
 
 Test E2E chạy trong `e2e_image`, cùng mạng với preview, `BASE_URL` trỏ tới service, repo chỉ đọc, `/evidence` ghi được (báo cáo JSON `/evidence/results.json`, ảnh, video). Preview của `main` và regression trên `main`: BACKLOG 3.8.
 
@@ -440,7 +457,10 @@ Không có giới hạn nào cố định trong code. Giới hạn theo dự án
 | "…extraction round(s), the project's limit" | Ghi lý do vào ô **Why another round** rồi bấm **Confirm another round**; hoặc chốt baseline luôn |
 | "cannot read PDF/IMAGE sources" hoặc "no text could be read" | BA đang chạy Codex mà nguồn là ảnh hay PDF scan. Chuyển BA của Discovery sang `claude-readonly`, hoặc bỏ nguồn đó |
 | Cổng baseline: "… has no function" | Feature chưa có function: trả lời câu hỏi về nó, hoặc ghi quyết định đưa nó ra ngoài phạm vi, rồi Extract again |
-| Run ở `NEEDS_HUMAN` | Đọc lý do trong khung đỏ, chọn **Resume**, **Replan** hoặc **Cancel run** kèm lý do |
+| Run ở `NEEDS_HUMAN` | Đọc lý do trong khung đỏ và brief của Code Reviewer (nếu có), chọn nút kèm lý do |
+| Validation báo `exit 137` | Container bị kill vì thiếu bộ nhớ, không phải lỗi code. Tắt preview đang chạy, đừng chạy việc nặng khác trên Docker cùng lúc (test nền tảng, build lớn), rồi để task chạy lại (Keep the tests / Resume) |
+| "the preview did not start … did not answer within …s" | Xem log của service trong thông báo: thường thiếu biến môi trường mà code bắt buộc (ví dụ `SESSION_SIGNING_SECRET`) hoặc compose chạy thứ chưa có. Sửa qua **Back to onboarding** |
+| Đăng nhập demo trên preview bị 401 | Tài khoản trong `preview.accounts` khác tài khoản seed tạo; sửa qua onboarding cho khớp code |
 | Dự án báo **not ready** | Mở dòng lỗi ở Projects, sửa trong repo, push, **Check again** |
 | Giao diện không đổi sau khi cập nhật | Tải lại trang (Cmd+R) |
 | "Something went wrong · Internal Server Error", doctor báo postgres "recovery mode" | Ổ đĩa ảo của Docker Desktop đầy (log PostgreSQL: `No space left on device`). Giải phóng: `docker builder prune -f`, xoá image không dùng; hoặc Docker Desktop → Settings → Resources → tăng Disk usage limit. PostgreSQL tự khôi phục khi có chỗ |

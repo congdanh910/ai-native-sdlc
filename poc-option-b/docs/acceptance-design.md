@@ -46,3 +46,21 @@ Sau Review, trước PR, khi dự án có `preview.e2e` và `stages.acceptance` 
    `.data/evidence/<run>/`; tài liệu `acceptance` (bảng tiêu chí → kết quả, ảnh).
 4. `gated`: cổng **QC Acceptance**: link Try it, bằng chứng theo tiêu chí, tick; Accept → PR; Reject kèm lỗi → Developer
    sửa (task về READY với góp ý), rồi Review và Acceptance lại. `auto`: đạt hết thì qua PR, trượt thì về Developer.
+
+## Sau lần chạy thật đầu tiên (Foundation attendance, 21–22/10)
+
+Preview và Acceptance chạy thật lần đầu trên run `a70e419f`. Những gì vỡ và cách nền tảng xử lý từ nay:
+
+| Vỡ ở đâu | Nguyên nhân | Cách xử lý |
+|---|---|---|
+| Preview không lên (`No module named app.seed_demo`) | Compose của onboarding mô tả cả hệ thống, plan Foundation không xây phần đó | Preview của Foundation chỉ gồm cái Foundation xây; Tech Lead đọc compose khi lập plan; lỗi preview nêu service hỏng + cuối log, dọn container |
+| Preview 503 ở health | T3 bắt buộc `SESSION_SIGNING_SECRET`, compose không truyền | Bước kiểm môi trường chạy thử preview khi code đã có; Back to onboarding từ Acceptance quay lại Acceptance |
+| Đăng nhập demo 401 | `preview.accounts` khác tài khoản seed tạo | Prompt onboarding: tài khoản lấy từ seed trong code |
+| Build preview quá 180 giây | Dùng chung timeout với health | `preview.build_timeout_seconds` (mặc định 1800), quá giờ không đổ cho Architect |
+| Test không chạy được | Image Playwright không có `@playwright/test` | Cài đúng phiên bản của image trên bản sao ghi được của repo |
+| Bộ test cũ, đòi 15 biến điều khiển | Viết cho preview trước; đòi restart, đồng hồ… | Viết lại khi compose đổi; chỉ dùng `BASE_URL` và tài khoản demo, tiêu chí không test được thì ghi rõ |
+| 15/20 test fail cùng một dòng | Locator `name: 'Workspace'` khớp cả "Your workspace" | Lỗi trong code test trả về QA sửa một lần trước khi tới QC |
+| Gửi lỗi về làm T1 khiếu nại | Mọi task chạy lại, lỗi nằm trong file của T3 | Một task sửa lỗi Tn+1 được sửa mọi file của plan; QA của Acceptance nhận ghi chú QC |
+| Người bấm Start khi test đang chạy | Hai bên dùng chung compose project | Chỉ Start/Stop khi run chờ người; khoá trong Acceptance |
+
+Còn mở: so biến môi trường code đọc với compose trước Acceptance; preview và regression của `main` (BACKLOG 3.8); brief cho các lần dừng không thuộc task (Acceptance, môi trường).

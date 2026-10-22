@@ -43,6 +43,10 @@ _Cập nhật: 2026-10-21. Mỗi mục ghi vì sao nó nằm đây và lúc nào
 | 3.12 | **Runner riêng cho mobile và Windows**: iOS/macOS native cần máy macOS (Xcode), Android emulator cần KVM, WPF/WinForms/.NET Framework cần Windows | Container Linux không chạy được; chỉ làm khi có dự án thật |
 | 3.13 | **Chạy song song các task độc lập của một run**: setting số job đồng thời của worker (có mặc định); mỗi task một worktree riêng tách từ nhánh run tại `task_base`; gộp lần lượt về nhánh run, xung đột thì task chạy lại trên code mới; validation các task chạy cùng lúc dùng mạng và tên container riêng; tính tới quota engine | Hiện một worker chạy một job một lúc và các task dùng chung một worktree. Lợi rõ ở story lớn có nhiều task độc lập; Foundation attendance chỉ T3 ‖ T4 (tiết kiệm khoảng 6 phút) |
 | 3.14 | **Test ngoài mọi lệnh validation**: grounding hoặc kiểm thay đổi của QA báo khi file test nằm ở chỗ không lệnh validation nào chạy (ví dụ `e2e/*.py` của attendance, cạnh bộ Playwright của Acceptance); hoặc dọn, hoặc thêm lệnh chạy chúng | Foundation attendance: test Python trong `e2e/` không bao giờ chạy, hai test mâu thuẫn (201 và 200) chỉ lộ ra khi Developer đọc code ở T3 |
+| 3.15 | **So biến môi trường code đọc với compose của preview** trước Acceptance (và với `environment.env`) | `SESSION_SIGNING_SECRET` chỉ lộ khi preview không lên ở Acceptance |
+| 3.16 | **Brief cho các lần dừng không thuộc task**: Acceptance không chạy được, môi trường hỏng, preview lỗi | Brief hiện chỉ có khi một task dừng |
+| 3.17 | **Deploy nền tảng lên server Ubuntu**: kiểm sandbox Codex trên Linux (Landlock) và đặt `SDLC_EXECUTOR_READ_PATHS` cho Linux; địa chỉ bind và URL công khai của preview; systemd cho API và worker; hướng dẫn cài; đăng nhập cho control room khi nhiều người dùng | Người dùng hỏi 22/10; hiện chỉ chạy trên Mac của một người |
+| 3.18 | **Tài nguyên Docker**: báo trước khi bộ nhớ thấp; exit 137 hiện như \"thiếu bộ nhớ\" chứ không như lỗi code; không chạy validation khi preview và việc khác chiếm gần hết | T5 attendance: backend-api bị kill (8 GB cho validation, preview và test nền tảng cùng lúc) |
 
 ## 4. Việc cũ còn treo
 
