@@ -27,6 +27,8 @@ Review → Acceptance → cổng QC → PR. Sau đó người dùng muốn chạ
 - Backlog mới: 3.13 task song song, 3.14 test ngoài validation, 3.15 so biến môi trường, 3.16 brief cho lần dừng
   ngoài task, 3.17 deploy nền tảng lên Ubuntu, 3.18 tài nguyên Docker.
 
+**Sau đó (22/10):** run Foundation attendance đã merge (người dùng). Đã làm UI/UX U1+U2 (7b6a25b, thiết kế `poc-option-b/docs/ux-concepts-design.md`): Brand and UX trong yêu cầu SDS, 3–5 concept UI có prototype do controller vẽ, cổng UI concept, `docs/ui/` vào PR của SDS, design system trong Foundation, mục UI ở cổng QC; U3 ở BACKLOG 3.19. Sửa thêm trong lúc chạy: task sửa lỗi sửa/tạo mọi file trong thư mục cho phép, ruling Keep giữ qua các lần chạy, file test do Developer tự viết bị bỏ, bộ test Acceptance viết lại khi tài khoản demo đổi, onboarding revision bắt đầu từ bản trước và Tech Lead tự sửa được file onboarding ở cổng, Back to onboarding lúc đang code quay lại code, Code Reviewer nhận quyết định của người và thông tin nền tảng, đối chiếu ghi chú lỗi với SDS. Tiếp theo: người dùng test các phần khác rồi reset attendance và chạy lại toàn bộ chuỗi.
+
 **Bài học vận hành:** không chạy bộ test nền tảng (có test Docker) khi run đang code: gây exit 137 và test Docker
 chập chờn (`test_a_project_environment_builds_its_image_and_reaches_its_services`).
 
