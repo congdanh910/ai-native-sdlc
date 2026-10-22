@@ -270,6 +270,7 @@ class LangflowTeam(MockTeam):
                          "rule_notes": [r.model_dump() for r in design.rule_notes]}
         spec = (context.spec_md or "").split(NOTES_HEADING)[0]
         payload = {"spec": spec, "plan": reviewed_plan, "test_plan": {"cases": cases},
+                   "decisions": context.decisions, "platform_notes": context.platform_notes,
                    "diff": diff, "validation": validation or "coding was simulated; no validation ran",
                    "agents_md": context.agents_md, "constitution": self._constitution(context), "review_md": context.review_md}
         return self._ask("review", payload, Review, normalize.review, context.session_id,

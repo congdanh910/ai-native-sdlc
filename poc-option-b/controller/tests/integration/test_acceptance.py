@@ -36,6 +36,11 @@ class Recording(MockTeam):
         self.notes.append(feedback)
         return super().implement(context, task, attempt, tests, feedback)
 
+    def review(self, context, plan, tests, diff="", validation=""):
+        self.notes += [f"review decision: {d}" for d in context.decisions]
+        self.notes += [f"review note: {n}" for n in context.platform_notes]
+        return super().review(context, plan, tests, diff=diff, validation=validation)
+
     def write_acceptance_tests(self, context, criteria, story, feedback=""):
         self.notes.append(f"acceptance: {feedback}")
         return super().write_acceptance_tests(context, criteria, story, feedback=feedback)
@@ -63,6 +68,9 @@ def test_the_story_is_accepted_on_its_preview_after_its_defects_are_fixed(db, sa
     assert status(run_id) == RunStatus.WAITING_ACCEPTANCE_APPROVAL  # coding, review and acceptance again
     assert any("QC (acceptance): AC-1: the due date is not shown in the list" in n for n in team.notes)
     assert any(n.startswith("acceptance: The QC sent defects back") for n in team.notes)  # the tests may follow it
+    # the review knows the QC's decision and how the preview runs, so it does not report them as defects
+    assert any(n.startswith("review decision: QC defects: AC-1") for n in team.notes)
+    assert any(n.startswith("review note: The preview runs") for n in team.notes)
     with session_scope() as session:
         report = latest_document(session, run_id, "acceptance")
         assert report.version == 2

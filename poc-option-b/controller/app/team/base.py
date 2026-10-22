@@ -37,6 +37,8 @@ class RunContext:
     project_config: str = ""  # foundation onboarding: the project's .sdlc/project.yaml as it is
     task_base: str = ""  # the commit the current plan's tasks started from; earlier commits belong to other plans
     previous_files: dict = field(default_factory=dict)  # onboarding revision: the files of the version being revised
+    decisions: list[str] = field(default_factory=list)  # review: what people decided (rulings, defect notes)
+    platform_notes: list[str] = field(default_factory=list)  # review: how the platform runs what the diff cannot show
 
 
 @dataclass(frozen=True)

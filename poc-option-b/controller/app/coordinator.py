@@ -545,6 +545,44 @@ def _story_context(session: Session, run: Run) -> dict | None:
     return ref.model_dump() if ref else None
 
 
+def review_decisions(session: Session, run: Run) -> list[str]:
+    """What people decided during the run: rulings on test disputes and the QC's or Code Owner's defect notes. They
+    stand over the plan and the approved test cases."""
+    out = []
+    for content in session.scalars(select(Artifact.content).where(Artifact.run_id == run.id, Artifact.kind.like("ruling:%"))
+                                   .order_by(Artifact.created_at)):
+        ruling = json.loads(content)
+        out.append(f"Tech Lead, {ruling['task']} {ruling['decision']}: {ruling['reason'][:600]}")
+    for stage, reason in session.execute(select(Approval.stage, Approval.reason).where(
+            Approval.run_id == run.id, Approval.reason.is_not(None),
+            ((Approval.stage == "acceptance") & (Approval.decision == "reject"))
+            | ((Approval.stage == "pr") & (Approval.decision == "request_changes"))).order_by(Approval.created_at)):
+        out.append(f"{'QC' if stage == 'acceptance' else 'Code Owner'} defects: {reason[:1200]}")
+    return out
+
+
+def review_notes(session: Session, run: Run) -> list[str]:
+    """How the platform runs what the diff cannot show, so the review does not report it as a defect."""
+    notes = []
+    if run.kind == RunKind.FOUNDATION:
+        notes.append("The onboarding files (AGENTS.md, REVIEW.md, .gitignore, the CI workflow, .sdlc/*) were written by "
+                     "the Architect and approved by the Tech Lead at the onboarding gate; the controller committed them. "
+                     "They are not changes of the coding run.")
+    policy = EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy") or "{}") \
+        if artifact(session, run.id, "effective_policy") else None
+    if policy and policy.preview:
+        notes.append(f"The preview runs `docker compose -f {policy.preview.compose}` with the repository root as the "
+                     "project directory (build contexts such as ./backend resolve from the root), and the platform "
+                     f"publishes {policy.preview.service}:{policy.preview.port} on 127.0.0.1 itself; the compose file "
+                     "publishes no port on purpose.")
+        report = latest_document(session, run.id, "acceptance")
+        if report is not None:
+            cases = (report.data or {}).get("cases", [])
+            notes.append(f"The acceptance tests ran on that preview: {sum(c['status'] == 'passed' for c in cases)} of "
+                         f"{len(cases)} passed (acceptance report v{report.version}).")
+    return notes
+
+
 def validation_summary(session: Session, run: Run) -> str:
     """The last validation result of each current task, for the Code Reviewer."""
     lines = []
@@ -618,6 +656,9 @@ def load(session: Session, execution: Execution) -> Loaded:
         loaded.extra["diff"] = changes.run_diff(Path(run.worktree_path), run.base_commit, loaded.context.policy.test_paths,
                                                 get_settings().context_char_budget // 2)  # spec, plan and test plan need room too
         loaded.extra["validation"] = validation_summary(session, run)
+    if execution.kind == "review":
+        loaded.context = dataclasses.replace(loaded.context, decisions=review_decisions(session, run),
+                                             platform_notes=review_notes(session, run))
     if execution.kind == "acceptance":
         _load_preview(session, run, loaded, start=True)
         retest = session.scalar(select(Approval).where(Approval.run_id == run.id, Approval.stage == "acceptance")
