@@ -257,3 +257,25 @@ def test_a_foundation_that_needs_a_human_goes_back_to_onboarding(db, sample_repo
     assert len(state["plans"]) == (plans + 1 if stopped_at == "PLANNING" else plans)
     if stopped_at == "DISPUTED":  # the person rules on the dispute again, now that the files are fixed
         assert "decide the dispute again" in state["reason"] and "SESSION_COOKIE_SECURE" in state["reason"]
+
+
+def test_a_revised_onboarding_starts_from_the_version_it_revises(db, sample_repo):
+    from controller.app.team.mock import MockTeam
+
+    class Architect(MockTeam):
+        seen = []
+
+        def write_onboarding(self, context):
+            self.seen.append((list(context.feedback), dict(context.previous_files)))
+            return super().write_onboarding(context)
+    with_sds(sample_repo, with_srs(sample_repo))
+    post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
+    run = post("/api/runs", {"project": "task-board", "idempotency_key": str(uuid.uuid4()),
+                             "foundation": {"title": "Attendance"}}, status=201)
+    architect = Architect()
+    drain(architect)
+    post(f"/api/runs/{run['id']}/onboarding/redo", {"reason": "Add SESSION_COOKIE_SECURE=false to environment.env"})
+    drain(architect)
+    (first_feedback, first_previous), (feedback, previous) = architect.seen[:2]
+    assert first_previous == {} and ".sdlc/project.yaml" in previous
+    assert any("SESSION_COOKIE_SECURE" in f for f in feedback)

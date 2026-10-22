@@ -97,7 +97,7 @@ def _preview_view(session: Session, run: Run) -> dict | None:
     if policy is None or policy.preview is None:
         return None
     from pathlib import Path
-    from controller.app.doing.changes import head_time
+    from controller.app.doing.changes import head, head_time
     from controller.app.preview import missing_parts
     state = preview_state(session, run.id) or {"status": "stopped", "detail": "not started"}
     missing = missing_parts(Path(run.worktree_path), policy.preview) if run.worktree_path else ["the run's branch"]
@@ -106,10 +106,13 @@ def _preview_view(session: Session, run: Run) -> dict | None:
         state = {"status": "unavailable", "detail": f"Available once the code exists: {', '.join(missing)} not in the "
                                                      "run's branch yet (the run's coding creates them)"}
     elif state.get("status") == "failed" and run.worktree_path:
-        # a failed start before the latest commit: the code changed since, so its error may no longer hold
+        # a failed start on an earlier commit: the code changed since, so its error may no longer hold. States before
+        # 2026-10-22 name no commit and are compared by time (the database's clock may run apart from git's)
         failed_at = session.scalar(select(Artifact.created_at).where(Artifact.run_id == run.id, Artifact.kind == "preview")
                                    .order_by(Artifact.created_at.desc()).limit(1))
-        if failed_at and head_time(Path(run.worktree_path)) > failed_at:
+        stale = (state["commit"] != head(Path(run.worktree_path))) if state.get("commit") else \
+            bool(failed_at and head_time(Path(run.worktree_path)) > failed_at)
+        if stale:
             state = {"status": "stopped", "detail": "The last start failed on earlier code; the branch changed since, "
                                                      f"start it again. Earlier error: {state.get('detail', '')[:300]}"}
     from controller.app.services import preview_locked

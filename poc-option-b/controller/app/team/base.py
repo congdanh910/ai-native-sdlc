@@ -36,6 +36,7 @@ class RunContext:
     hosting_platforms: list[str] = field(default_factory=list)  # SDS options: the platforms hosting variants may use
     project_config: str = ""  # foundation onboarding: the project's .sdlc/project.yaml as it is
     task_base: str = ""  # the commit the current plan's tasks started from; earlier commits belong to other plans
+    previous_files: dict = field(default_factory=dict)  # onboarding revision: the files of the version being revised
 
 
 @dataclass(frozen=True)

@@ -208,7 +208,8 @@ class LangflowTeam(MockTeam):
                    "platform_toolchains": [name for name, _ in PlatformDefaults().validation_images],
                    "platform_protected_paths": list(PlatformDefaults().protected_paths),
                    "limits": {"max_tasks": PlatformDefaults().max_tasks, "max_changed_files": PlatformDefaults().max_changed_files},
-                   "constitution": self._constitution(context), "feedback": context.feedback}
+                   "constitution": self._constitution(context), "feedback": context.feedback,
+                   "previous_files": context.previous_files}
         return self._ask("onboarding", payload, Onboarding, normalize.onboarding, context.session_id,
                          retries=context.policy.max_format_retries)
 

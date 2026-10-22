@@ -197,6 +197,14 @@ def commit_thread(session: Session, run: Run, kind: str, content: str, message: 
 
 
 def store_artifact(session: Session, run: Run, kind: str, role: TeamRole, content: str) -> None:
+    if kind == "preview" and run.worktree_path and Path(run.worktree_path).is_dir():
+        # the commit the preview state is about: a failure on earlier code no longer shows once the branch moves on
+        state = json.loads(content)
+        if "commit" not in state:
+            try:
+                content = json.dumps({**state, "commit": changes.head(Path(run.worktree_path))})
+            except GitError:
+                pass
     session.add(Artifact(run_id=run.id, kind=kind, role=role.value, content=content, checksum=sha256_text(content)))
 
 
@@ -599,6 +607,10 @@ def load(session: Session, execution: Execution) -> Loaded:
                                           Approval.decision == "reject").order_by(Approval.created_at)) if reason]
     loaded.extra["run_kind"] = run.kind
     loaded.context = build_context(session, run, kind=execution.kind, feedback=feedback)
+    if execution.kind == "onboarding":  # a revision starts from the version being revised, not from scratch
+        previous = latest_document(session, run.id, "onboarding")
+        if previous is not None and feedback:
+            loaded.context = dataclasses.replace(loaded.context, previous_files=(previous.data or {}).get("files", {}))
     if plan:
         loaded.plan = PlanPayload.model_validate(plan.payload)
         loaded.tests = TestPlan.model_validate(plan.test_plan)
