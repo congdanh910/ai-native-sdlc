@@ -3,7 +3,7 @@ import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Sparkles } from "lucide-react";
 import { toast } from "sonner";
-import { ActionButton, Card, Empty, ErrorBox, Field, Input, Loading, PageHeader, Select, Tabs, Textarea } from "../components/ui";
+import { ActionButton, Button, Card, Empty, ErrorBox, Field, Input, Loading, PageHeader, Select, Tabs, Textarea } from "../components/ui";
 import { api, ApiError, type Project, type RunSummary } from "../lib/api";
 
 const FIELDS = [
@@ -327,6 +327,9 @@ export function NewRequestView() {
                   {key === "title" ? <Input {...props} maxLength={200} /> : (
                     <Textarea {...props} placeholder={key === "outcome" ? "Example (replace it):\n- Employees can see their total working hours per week\n- A week without check-ins shows 0 hours" : undefined} />
                   )}
+                  {key === "outcome" && story ? (
+                    <OutcomeSuggestions project={chosen} story={story} onUse={(lines) => update("outcome", lines)} current={intent.outcome} />
+                  ) : null}
                 </Field>
               );
             })}
@@ -371,5 +374,58 @@ export function NewRequestView() {
         </Card>}
       </div>
     </>
+  );
+}
+
+
+type Suggestion = { text: string; source: string };
+
+/** Desired outcomes drafted from the SRS and SDS of the chosen story (each with its source), or written by the AI from
+ * the same sources; the person picks, edits and submits. */
+function OutcomeSuggestions({ project, story, current, onUse }: { project: string; story: string; current: string; onUse: (lines: string) => void }) {
+  const drafted = useQuery({
+    queryKey: ["outcomes", project, story],
+    queryFn: () => api<{ suggestions: Suggestion[] }>(`/api/projects/${encodeURIComponent(project)}/stories/${encodeURIComponent(story)}/outcomes`),
+  });
+  const [ai, setAi] = useState<{ suggestions: Suggestion[]; notes: string } | null>(null);
+  const [picked, setPicked] = useState<Set<number> | null>(null);
+  const lines = ai?.suggestions ?? drafted.data?.suggestions ?? [];
+  const chosen = picked ?? new Set(lines.map((_, i) => i));
+  if (drafted.isLoading) return <p className="m-0 mt-2 text-xs text-muted">Reading the SRS and SDS of {story}…</p>;
+  return (
+    <div className="mt-2 flex flex-col gap-2 rounded-lg border border-line bg-side p-3 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <b>Suggested outcomes</b>
+        <span className="text-xs text-muted">{ai ? "written by the AI from the SRS and SDS" : "from the SRS requirements and rules, the SDS APIs and errors of the story"}</span>
+      </div>
+      {lines.length ? (
+        <ul className="m-0 flex list-none flex-col gap-1 p-0">
+          {lines.map((line, i) => (
+            <li key={`${i}-${line.text}`}>
+              <label className="flex items-start gap-2">
+                <input type="checkbox" className="mt-1" checked={chosen.has(i)} onChange={(e) => {
+                  const next = new Set(chosen);
+                  if (e.target.checked) next.add(i); else next.delete(i);
+                  setPicked(next);
+                }} />
+                <span>{line.text} {line.source ? <span className="text-xs text-muted">({line.source})</span> : null}</span>
+              </label>
+            </li>
+          ))}
+        </ul>
+      ) : <p className="m-0 text-xs text-muted">The SRS and SDS say little about this story; ask the AI, or write the outcomes yourself.</p>}
+      {ai?.notes ? <p className="m-0 text-xs text-muted">{ai.notes}</p> : null}
+      <div className="flex flex-wrap gap-2">
+        <Button disabled={!chosen.size} onClick={() => {
+          const text = lines.filter((_, i) => chosen.has(i)).map((l) => `- ${l.text}`).join("\n");
+          onUse(current.trim() ? `${current.trim()}\n${text}` : text);
+        }}>{current.trim() ? "Add the ticked lines" : "Use the ticked lines"}</Button>
+        <ActionButton success="The AI wrote the outcomes; tick the ones to use" action={async () => {
+          const answer = await api<{ suggestions: Suggestion[]; notes: string }>(`/api/projects/${encodeURIComponent(project)}/stories/${encodeURIComponent(story)}/outcomes/ai`, { method: "POST" });
+          setAi(answer);
+          setPicked(null);
+        }}>Suggest with AI (about a minute)</ActionButton>
+      </div>
+    </div>
   );
 }

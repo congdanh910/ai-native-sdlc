@@ -238,6 +238,11 @@ class MockTeam:
         return Advice(situation=f"Mock advice: {stop.get('stop', '')[:200]}", recommendation=decision, confidence="low",
                       reason=f"mock: {decision}", sides=[{"party": "the platform", "claim": "no model was asked"}])
 
+    def suggest_outcomes(self, story):
+        from controller.app.schemas import Outcomes
+        lines = story.get("suggestions") or [{"text": story.get("statement") or "The story works", "source": "story"}]
+        return Outcomes(outcomes=lines[:8], notes="mock")
+
     def design_ui(self, context, brief):
         """One concept per preset, in order, with the customer's primary color when given."""
         from controller.app.ui import UiConcepts

@@ -22,7 +22,7 @@ from controller.app.discovery.extract import Part, compact_items, repair_chunk, 
 from controller.app.discovery.inventory import ChunkResult, Consolidation, MinutesResult
 from controller.app.project_docs import SDS_PARTS, Options, Sds, Srs, sds_part_model, srs_features
 from controller.app.projects.config import matches_any
-from controller.app.schemas import NOTES_HEADING, Advice, DefectCheck, Intent, PlanPayload, Review, Spec, TestPlan, parse_criteria
+from controller.app.schemas import NOTES_HEADING, Advice, DefectCheck, Intent, Outcomes, PlanPayload, Review, Spec, TestPlan, parse_criteria
 from controller.app.team import normalize
 from controller.app.team.base import CallRecord, CapacityBusy, RunContext
 from controller.app.team.mock import MockTeam
@@ -294,6 +294,10 @@ class LangflowTeam(MockTeam):
                    "agents_md": context.agents_md, "feedback": context.feedback}
         return self._ask("ui-concepts", payload, UiConcepts, normalize.ui_concepts, context.session_id,
                          retries=context.policy.max_format_retries)
+
+    def suggest_outcomes(self, story: dict) -> Outcomes:
+        """Desired outcomes for a feature request, from what the SRS and SDS say about its story."""
+        return self._ask("outcomes", story, Outcomes, lambda data: data, f"outcomes:{story.get('story', '')}")
 
     def check_defects(self, context: RunContext, notes: str) -> DefectCheck:
         """The human's defect notes against the SDS, the SRS and the spec, before the team acts on them."""

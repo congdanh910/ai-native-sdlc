@@ -129,6 +129,13 @@ Full design: `AI_Native_SDLC_Option_B.md`. This page is the map an agent needs t
   prompt gets `ui_guide` (AGENTS.md/REVIEW.md rules, docs/ui protected). The acceptance gate adds the human item
   `ui-concept` when `ui.review` is gated and the guide exists.
 
+## Outcome suggestions (`outcomes.py`)
+
+- `GET /projects/{key}/stories/{story}/outcomes`: `story_context` (story statement, SRS requirements traced to it
+  through the baseline appendix or else its feature's, their business rules, SDS APIs mapped to it and the error codes
+  of those APIs) and `suggest` (lines with their source). `POST …/outcomes/ai`: the same context to
+  `team.suggest_outcomes` (prompt `outcomes.md`, schema `Outcomes`). The feature form shows them under Desired outcome.
+
 ## Documents and gates
 
 - `documents.py`: versioned documents per run (intent, spec, srs, sds, tests, review, inventory …) with SHA-256;

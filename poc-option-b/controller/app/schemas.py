@@ -322,6 +322,17 @@ class Review(Contract):
 DECISIONS = ("amend_tests", "keep_tests", "already_built", "replan", "resume", "back_to_onboarding")
 
 
+class OutcomeLine(Contract):
+    text: str = Field(min_length=3)
+    source: str = ""
+
+
+class Outcomes(Contract):
+    """Suggested desired outcomes of a feature request for one user story; the person edits them."""
+    outcomes: list[OutcomeLine] = Field(min_length=1, max_length=12)
+    notes: str = ""
+
+
 class AdviceSide(Contract):
     party: str = Field(min_length=1)  # who says it: Developer, QA Engineer, the approved test case, the code, the SDS
     claim: str = Field(min_length=1)

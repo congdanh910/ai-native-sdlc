@@ -121,3 +121,18 @@ def test_the_project_constitution_reaches_every_role(db, sample_repo):
     post("/api/runs", {"project": "task-board", "intent": intent, "idempotency_key": str(uuid.uuid4())}, status=201)
     drain(Recording())
     assert seen == ["# Constitution\n\n- AR-01: business rules live in src/tasks.js\n"]
+
+
+def test_the_feature_form_suggests_outcomes_from_the_srs_and_sds_of_the_story(db, sample_repo):
+    from controller.tests.integration.test_srs_flow import post, with_srs
+    from fastapi.testclient import TestClient
+    from controller.app.main import app
+    client = TestClient(app, headers={"X-SDLC-Client": "web"})
+    with_sds(sample_repo, with_srs(sample_repo))
+    post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
+    drafted = client.get("/api/projects/task-board/stories/CIW-US-01/outcomes").json()
+    assert drafted["story"] == "CIW-US-01" and drafted["suggestions"]
+    assert all(s["text"] and s["source"] for s in drafted["suggestions"])
+    answered = client.post("/api/projects/task-board/stories/CIW-US-01/outcomes/ai").json()
+    assert answered["suggestions"] and answered["notes"] == "mock"
+    assert client.get("/api/projects/task-board/stories/XX-US-99/outcomes").status_code == 404

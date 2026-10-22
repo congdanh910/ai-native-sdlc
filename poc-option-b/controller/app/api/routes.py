@@ -206,6 +206,37 @@ def project_stories(key: str) -> dict:
         return views.stories_view(session, project)
 
 
+def _story_context(key: str, story: str) -> dict:
+    from controller.app.outcomes import story_context, suggest
+    from controller.app.project_docs import SDS_PATH, SRS_PATH
+    with session_scope() as session:
+        project = session.scalar(select(Project).where(Project.key == key))
+        if project is None:
+            raise HTTPException(404, "project not found")
+        mirror = registry.mirror_for(project)
+        commit = project.checked_commit
+        srs = mirror.read_file(commit, SRS_PATH) if commit else None
+        sds = (mirror.read_file(commit, SDS_PATH) or "") if commit else ""
+    if not srs or story not in srs:
+        raise HTTPException(404, f"{story} is not a user story of {key}'s SRS")
+    context = story_context(srs, sds, story)
+    return {**context, "suggestions": suggest(context)}
+
+
+@router.get("/projects/{key}/stories/{story}/outcomes")
+def story_outcomes(key: str, story: str) -> dict:
+    """Desired outcomes drafted from the SRS and SDS of the story, each with its source; no model is asked."""
+    return _story_context(key, story)
+
+
+@router.post("/projects/{key}/stories/{story}/outcomes/ai")
+def story_outcomes_ai(key: str, story: str) -> dict:
+    """The same sources given to the thinking engine, which writes four to eight outcomes in a Product Owner's words."""
+    context = _story_context(key, story)
+    answer = get_team().suggest_outcomes(context)
+    return {"suggestions": [o.model_dump() for o in answer.outcomes], "notes": answer.notes}
+
+
 @router.post("/intents/draft")
 def draft_intent(body: DraftRequest) -> dict:
     return get_team().draft_intent(body.text, body.title).model_dump()

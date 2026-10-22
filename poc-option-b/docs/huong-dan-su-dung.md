@@ -341,6 +341,8 @@ Kịch bản của bản giả (thành công, lỗi 4xx/5xx, chậm/timeout, d�
 ## 8. Feature run (một user story)
 
 1. **New request → Feature request**: chọn dự án và **User story** trong SRS §7, điền Desired outcome, bấm **Submit intent.md**.
+   - Chọn story xong, dưới ô Desired outcome có **Suggested outcomes**: các dòng nháp lấy từ requirement và luật nghiệp vụ của SRS truy vết tới story, mục đích các API của story trong SDS và các mã lỗi riêng của chúng; mỗi dòng ghi nguồn (FEN-FR-01, API-FEN-02, FACE_CAPTURE_INVALID…). Tick dòng muốn dùng rồi **Use the ticked lines** (hoặc **Add the ticked lines** khi ô đã có chữ), sửa lại cho đúng ý.
+   - **Suggest with AI** (khoảng 1 phút): engine của các vai suy nghĩ viết 4–8 outcome theo lời của PO, gồm cả edge case, chỉ từ cùng các nguồn đó. Đây chỉ là gợi ý; cổng Spec vẫn kiểm tiêu chí như thường.
 2. **Cổng Spec (PO):** BA viết AC-01… và EC-01… dạng Given/When/Then. Xem checklist, tick, **Accept**.
 3. **Cổng Plan (Tech Lead):** task, file sửa, ma trận tiêu chí × task × test case, kết quả grounding (plan không được nhắc tới file hay hàm không tồn tại). **Approve plan**.
 4. **Cổng Quality (QC):** `test_cases.md` và phân tích chéo. **Approve** thì bắt đầu viết code.

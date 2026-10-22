@@ -45,6 +45,9 @@ class CompositeTeam:
     def design_ui(self, *args, **kwargs):
         return self.thinking.design_ui(*args, **kwargs)
 
+    def suggest_outcomes(self, *args, **kwargs):
+        return self.thinking.suggest_outcomes(*args, **kwargs)
+
     def extract_part(self, *args, **kwargs):
         return self.thinking.extract_part(*args, **kwargs)
 
