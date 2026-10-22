@@ -36,6 +36,10 @@ class Recording(MockTeam):
         self.notes.append(feedback)
         return super().implement(context, task, attempt, tests, feedback)
 
+    def write_acceptance_tests(self, context, criteria, story, feedback=""):
+        self.notes.append(f"acceptance: {feedback}")
+        return super().write_acceptance_tests(context, criteria, story, feedback=feedback)
+
 
 def test_the_story_is_accepted_on_its_preview_after_its_defects_are_fixed(db, sample_repo):
     with_preview(sample_repo)
@@ -58,6 +62,7 @@ def test_the_story_is_accepted_on_its_preview_after_its_defects_are_fixed(db, sa
     drain(team)
     assert status(run_id) == RunStatus.WAITING_ACCEPTANCE_APPROVAL  # coding, review and acceptance again
     assert any("QC (acceptance): AC-1: the due date is not shown in the list" in n for n in team.notes)
+    assert any(n.startswith("acceptance: The QC sent defects back") for n in team.notes)  # the tests may follow it
     with session_scope() as session:
         report = latest_document(session, run_id, "acceptance")
         assert report.version == 2

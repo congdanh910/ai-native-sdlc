@@ -605,6 +605,10 @@ def load(session: Session, execution: Execution) -> Loaded:
                                 .order_by(Approval.created_at.desc()).limit(1))
         if retest is not None and retest.decision == "retest" and retest.reason:  # the QC says the tests are wrong
             loaded.extra["feedback"] = f"The QC asked for the acceptance tests again: {retest.reason}"
+        elif retest is not None and retest.decision == "reject" and retest.reason:  # after the defects were fixed
+            loaded.extra["feedback"] = (f"The QC sent defects back after the last run, now fixed in the code: "
+                                        f"{retest.reason}\nChange the tests only where these notes say a test was "
+                                        f"wrong; keep every other test as it is.")
         loaded.extra.update(attempt=session.scalar(select(func.count()).select_from(Document).where(
             Document.run_id == run.id, Document.kind == "acceptance")) + 1)
     if execution.kind == "advise":
