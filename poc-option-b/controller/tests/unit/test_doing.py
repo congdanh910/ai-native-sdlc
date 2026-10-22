@@ -773,7 +773,7 @@ def test_acceptance_tests_written_for_an_earlier_preview_are_written_again(workt
     git(worktree, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qam", "onboarding v5")
     result = team.write_acceptance_tests(ctx, "- AC-1: due", "Due")
     assert result.ok and not result.evidence.get("reused"), result.detail
-    assert "The preview changed" in qa.sessions[-1].prompt
+    assert "The preview or its demo accounts changed" in qa.sessions[-1].prompt
 
 
 def test_the_environment_check_starts_the_preview_once_the_code_exists(tmp_path, monkeypatch):
@@ -874,3 +874,12 @@ def test_a_fix_task_may_add_new_files_in_the_allowed_paths_but_not_rewrite_other
     changes.discard(worktree)
     (worktree / "README.md").write_text("# changed\n")  # outside the allowed paths
     assert "not in task T1" in "\n".join(changes.check_code(worktree, changes.stage_changes(worktree), fix, policy()))
+
+
+def test_test_files_the_developer_writes_are_dropped_and_the_code_stays(worktree, tmp_path):
+    dev = FakeExecutor("codex", {"src/tasks.js": "export const due = 1;\n", "test/own.test.js": "test('x', () => {});\n"})
+    team, _ = doing(tmp_path, dev=dev)
+    result = team.implement(context(worktree), TASK, 1, TESTS)
+    assert result.ok and result.changed_files == ["src/tasks.js"] and "test/own.test.js" in result.detail
+    assert not (worktree / "test" / "own.test.js").exists()
+    assert "Tests are the QA Engineer's" in dev.sessions[0].prompt

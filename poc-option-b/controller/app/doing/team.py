@@ -145,14 +145,16 @@ class CliDoing:
         changes.discard(worktree)
         preview = context.policy.preview
         existing = changes.find_commit(worktree, context.base_commit, "test(acceptance):") if context.base_commit else None
-        # tests written for an earlier preview (the onboarding changed its compose file since) are written again
-        stale = bool(existing) and preview.compose in changes.changed_since(worktree, existing)
+        # tests written for an earlier preview (the onboarding changed its compose file or project.yaml, which holds the
+        # demo accounts, since) are written again
+        stale = bool(existing) and bool({preview.compose, ".sdlc/project.yaml"} & set(changes.changed_since(worktree, existing)))
         if existing and not feedback and not stale:
             return StepResult(True, f"acceptance tests already committed in {existing[:10]}; reused",
                               evidence={"commit": existing, "reused": True})
         if stale and not feedback:
-            feedback = (f"The preview changed since these acceptance tests were written ({preview.compose}); write "
-                        "them again for the preview as it is now.")
+            feedback = (f"The preview or its demo accounts changed since these acceptance tests were written "
+                        f"({preview.compose}, .sdlc/project.yaml); write them again for the preview and the accounts "
+                        "as they are now (an account's note says which criterion it is for).")
         # the story's own acceptance suite is being rewritten (a new preview, a retest, errors in its code): it may
         # change or drop its files; still nothing outside the e2e paths, and no skipped tests
         rewrite = stale or bool(feedback)
@@ -270,6 +272,11 @@ class CliDoing:
         if earlier:  # resumed after a failure outside the code: the earlier implementation stands, validation decides
             return StepResult(True, f"no change: the implementation committed in {earlier[:10]} stays "
                                     f"({result.executor}, attempt {attempt})", evidence=self._evidence(result, label))
+        # tests are the QA Engineer's: test files the Developer wrote anyway (AGENTS.md often asks for tests with every
+        # change) are dropped, the code stays and the QA Engineer's tests decide; changing them is a dispute
+        own_tests = [c.path for c in staged if c.status == "A" and matches_any(c.path, context.policy.test_paths)]
+        if own_tests:
+            staged = changes.drop_paths(worktree, staged, own_tests)
         problems = changes.check_code(worktree, staged, task, context.policy)
         if problems:
             changes.discard(worktree)
@@ -278,8 +285,9 @@ class CliDoing:
         sha = changes.commit(worktree, f"feat({task.id}): {task.title}" + (f" (attempt {attempt})" if attempt > 1 else ""),
                              "developer")
         files = [c.path for c in staged]
-        return StepResult(True, f"changed {', '.join(files)} ({result.executor}, attempt {attempt})",
-                          changed_files=files, evidence=self._evidence(result, label, commit=sha))
+        dropped = f"; dropped the Developer's own test files {', '.join(own_tests)}" if own_tests else ""
+        return StepResult(True, f"changed {', '.join(files)} ({result.executor}, attempt {attempt}){dropped}",
+                          changed_files=files, evidence=self._evidence(result, label, commit=sha, dropped=own_tests))
 
     def lock(self, context: RunContext, task: PlanTask) -> StepResult | None:
         """After the task changed a dependency manifest, the project's lock command writes the lockfiles (with

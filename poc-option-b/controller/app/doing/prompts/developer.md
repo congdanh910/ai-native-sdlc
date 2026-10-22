@@ -21,6 +21,7 @@ The QA Engineer already wrote these tests in {test_files}. Read them first; they
 
 # Rules
 - Change only the files listed above. Never edit, delete or skip tests, and never touch other files.
+- Tests are the QA Engineer's: add no test files, even when AGENTS.md asks for tests with every change; the QA Engineer's tests above are the tests of this task, and the platform drops test files you write.
 - Follow AGENTS.md: put each rule where its architecture says it belongs.
 - The project validates with: {commands}. All of them must pass after your change, including the tests of earlier tasks.
 - Do not commit, push, or install anything.

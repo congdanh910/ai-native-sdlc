@@ -159,6 +159,18 @@ def commit(worktree: Path, message: str, role: str) -> str:
     return _git("rev-parse", "HEAD", cwd=worktree).strip()
 
 
+def drop_paths(worktree: Path, staged: list[Change], paths: list[str]) -> list[Change]:
+    """Take these paths out of the staged change (new files removed, changed ones restored); returns what stays."""
+    for change in staged:
+        if change.path in paths:
+            _git("reset", "--quiet", "HEAD", "--", change.path, cwd=worktree)
+            if change.status == "A":
+                (worktree / change.path).unlink(missing_ok=True)
+            else:
+                _git("checkout", "--quiet", "HEAD", "--", change.path, cwd=worktree)
+    return [c for c in staged if c.path not in paths]
+
+
 def discard(worktree: Path) -> None:
     """Drop everything a rejected session left behind; ignored files such as dependencies stay."""
     _git("reset", "--quiet", "--hard", "HEAD", cwd=worktree)
