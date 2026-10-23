@@ -74,3 +74,49 @@ def test_controller_checks_name_the_problem():
     assert results["no-paths"]["detail"] == "AC-01 name code"
     release = {r["id"]: r for r in checklists.check_release({"T1": "PASSED"}, ['const password = "hunter22";'], [])}
     assert not release["secrets"]["ok"] and release["tasks"]["ok"]
+
+
+def _gate_check(run_id, item: str) -> dict:
+    return next(c for c in client.get(f"/api/runs/{run_id}").json()["checklist"]["controller"] if c["id"] == item)
+
+
+def test_a_blocking_finding_says_what_to_do_and_a_forgotten_criterion_is_added_without_a_model(db, sample_repo):
+    from controller.app import services
+    from controller.app.db import session_scope
+    from controller.app.documents import latest_plan
+    from controller.tests.integration.test_team_loop import (OPERATOR, add_project, approve_plan, approve_spec,
+                                                             new_run, status)
+    run_id = new_run(add_project(sample_repo))
+    drain()
+    approve_spec(run_id)
+    drain()
+    approve_plan(run_id, tests=False)
+    with session_scope() as session:
+        tests = latest_plan(session, run_id).test_plan
+    moved = {**tests, "cases": [{**c, "task_id": "T1"} if c["criterion"] == "AC-02" else c for c in tests["cases"]]}
+    with session_scope() as session:  # on T1, in the tests' folder: the test sits on the wrong task
+        services.revise_tests(session, services.get_run(session, run_id), moved, actor=OPERATOR, reason="probe")
+    fixes = _gate_check(run_id, "analysis")["fixes"]
+    assert fixes[0]["action"] == "redesign_tests" and "Move TC-T2-1 to T2" in fixes[0]["reason"] and "amend" not in fixes[0]
+    beside = {**moved, "cases": [{**c, "target_file": "src/app.test.js"} if c["criterion"] == "AC-02" else c
+                                 for c in moved["cases"]]}
+    with session_scope() as session:  # next to T1's code: T1 builds what it proves, the plan forgot AC-02 on T1
+        services.revise_tests(session, services.get_run(session, run_id), beside, actor=OPERATOR, reason="probe")
+    check = _gate_check(run_id, "analysis")
+    fix = check["fixes"][0]
+    assert not check["ok"] and fix["action"] == "replan" and fix["amend"] == {"task": "T1", "criterion": "AC-02"}
+    assert fix["reason"].startswith("Add AC-02 to T1's acceptance criteria")
+    post(f"/api/runs/{run_id}/amend-plan", {**fix["amend"], "reason": fix["reason"]})
+    assert _gate_check(run_id, "analysis")["ok"] and status(run_id) == "WAITING_TEST_APPROVAL"
+    with session_scope() as session:
+        plan = latest_plan(session, run_id)
+        assert plan.payload["tasks"][0]["acceptance_criteria"] == ["AC-01", "AC-02"]
+        assert plan.test_plan == beside
+    assert client.post(f"/api/runs/{run_id}/amend-plan", json=fix["amend"]).status_code == 409  # already there
+
+
+def test_a_failing_check_without_findings_of_its_own_gets_the_gate_s_standard_next_step():
+    from controller.app.guidance import check_fixes
+    assert check_fixes("tests", "coverage", "no test: AC-03")[0] == {
+        "action": "redesign_tests", "why": "Every criterion needs a test case.", "reason": "Add a test case for each criterion that has none (no test: AC-03)."}
+    assert check_fixes("plan", "unknown-item", "x") == []

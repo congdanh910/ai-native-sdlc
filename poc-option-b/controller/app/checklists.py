@@ -113,8 +113,16 @@ HUMAN_ITEMS = {
 
 # ---------------------------------------------------------------- controller checks
 
-def _result(item_id: str, text: str, problems: list[str]) -> dict:
-    return {"id": item_id, "text": text, "ok": not problems, "detail": "; ".join(problems[:5])}
+def _result(item_id: str, text: str, problems: list[str], fixes: list[dict] | None = None) -> dict:
+    """fixes: next steps for the person when the check fails (guidance)."""
+    return {"id": item_id, "text": text, "ok": not problems, "detail": "; ".join(problems[:5]),
+            **({"fixes": fixes} if problems and fixes else {})}
+
+
+def with_fixes(gate: str, results: list[dict]) -> list[dict]:
+    """The standard next step of each failing check that has none of its own."""
+    from controller.app.guidance import check_fixes
+    return [r if r["ok"] or r.get("fixes") else {**r, "fixes": check_fixes(gate, r["id"], r["detail"])} for r in results]
 
 
 def check_criteria(criteria: list[Criterion]) -> list[dict]:
@@ -144,11 +152,11 @@ def check_spec(markdown: str) -> list[dict]:
     try:
         criteria = parse_criteria(markdown)
     except ValueError as exc:
-        return [_result("parse", "The spec lists its criteria in the template format", [str(exc)])]
+        return with_fixes("spec", [_result("parse", "The spec lists its criteria in the template format", [str(exc)])])
     stories = len(re.findall(r"\*\*As(?: an?)?\*\*", markdown.split("### Business Analyst notes")[0]))
     results = [_result("one-story", "The section holds exactly one user story statement (**As a** ...)",
                        [] if stories == 1 else [f"found {stories} statements"])]
-    return results + check_criteria(criteria)
+    return with_fixes("spec", results + check_criteria(criteria))
 
 
 def check_plan(plan: PlanPayload, criteria: list[Criterion], grounding: dict | None, test_paths) -> list[dict]:
@@ -159,13 +167,13 @@ def check_plan(plan: PlanPayload, criteria: list[Criterion], grounding: dict | N
     tests = [f"{t.id}: {p}" for t in plan.tasks for p in [*t.modify, *t.create] if matches_any(p, test_paths)]
     text = " ".join([plan.summary, *[t.title for t in plan.tasks]])
     findings = (grounding or {}).get("findings", [])
-    return [
+    return with_fixes("plan", [
         _result("delivered", "Every AC and EC is delivered by at least one task", [f"not delivered: {', '.join(missing)}"] if missing else []),
         _result("files", "Every task names the files it changes", [f"no files: {', '.join(no_files)}"] if no_files else []),
         _result("no-tests", "No task changes test files; tests are the QA Engineer's", tests),
         _result("placeholders", "No placeholders such as TBD remain", ["placeholder text in the plan"] if PLACEHOLDER.search(text) else []),
         _result("grounding", "Grounding: every file, function and import the plan names exists or an earlier task creates it", findings if (grounding or {}).get("status") == "fail" else []),
-    ]
+    ])
 
 
 def check_tests(tests: TestPlan, plan: PlanPayload, criteria: list[Criterion], test_paths) -> list[dict]:
@@ -178,15 +186,17 @@ def check_tests(tests: TestPlan, plan: PlanPayload, criteria: list[Criterion], t
     outside = [f"{t.id}: {t.target_file}" for t in tests.cases if not matches_any(t.target_file, test_paths)]
     empty = [t.id for t in tests.cases if not (t.description.strip() and t.expected.strip())]
     from controller.app.analysis import before_coding, blocking
-    serious = [f"{f['severity']}: {f['text']}" for f in blocking(before_coding(criteria, plan, tests))]
-    return [
-        _result("analysis", "Cross-artifact analysis finds no Critical or High issue (spec, plan, tasks, tests)", serious),
+    found = blocking(before_coding(criteria, plan, tests))
+    serious = [f"{f['severity']}: {f['text']}" for f in found]
+    return with_fixes("tests", [
+        _result("analysis", "Cross-artifact analysis finds no Critical or High issue (spec, plan, tasks, tests)", serious,
+                [{**f["fix"], "finding": f["text"]} for f in found if f.get("fix")]),
         _result("coverage", "Every AC and EC has at least one test case", [f"no test: {', '.join(uncovered)}"] if uncovered else []),
         _result("known-criteria", "Every test case names an AC or EC of this story", [f"unknown: {', '.join(unknown)}"] if unknown else []),
         _result("known-tasks", "Every test case names a task of the approved plan", [f"unknown: {', '.join(orphans)}"] if orphans else []),
         _result("test-paths", "Test files are inside the project's test paths", outside),
         _result("fields", "Every test case has a scenario and an expected result", [f"empty: {', '.join(empty)}"] if empty else []),
-    ]
+    ])
 
 
 def check_release(task_statuses: dict[str, str], added_lines: list[str], other_sections_changed: list[str],

@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ExternalLink, GitPullRequest } from "lucide-react";
-import { api, projectDoc, type Doc, type Meta, type RunDetail } from "../lib/api";
+import { api, projectDoc, type Doc, type GateFix, type Meta, type RunDetail } from "../lib/api";
 import { ACTION_LABEL, role, short } from "../lib/utils";
 import { CoverageMatrix, GroundingSummary } from "./Coverage";
 import { GateChecklist } from "./GateChecklist";
@@ -54,7 +54,18 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
   const [testsDraft, setTestsDraft] = useState(plan ? JSON.stringify(plan.test_plan, null, 2) : "");
   const [checked, setChecked] = useState<string[]>([]);
   const [waitFor, setWaitFor] = useState<string[]>([]);
-  const checklist = run.checklist ? <GateChecklist checklist={run.checklist} checked={checked} onChange={setChecked} /> : null;
+  const onFix = async (fix: GateFix, mode: "use" | "do" | "amend") => {
+    if (mode === "use") {
+      setReason(fix.reason);
+      document.getElementById("decision-reason")?.focus();
+      return;
+    }
+    if (mode === "amend" && fix.amend) return post("amend-plan", { ...fix.amend, reason: fix.reason });
+    if (fix.action === "rewrite_spec") return post("reject-spec", { reason: fix.reason, next: "redo" });
+    if (fix.action === "replan" && need?.action === "waiting_plan_approval") return post("reject-plan", { reason: fix.reason, next: "redo" });
+    return post("reject-tests", { reason: fix.reason, next: fix.action === "replan" ? "replan" : "redo" });
+  };
+  const checklist = run.checklist ? <GateChecklist checklist={run.checklist} checked={checked} onChange={setChecked} onFix={onFix} /> : null;
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [classification, setClassification] = useState({ category: "", stage: "", role: "", note: "" });
   if (!need) return null;

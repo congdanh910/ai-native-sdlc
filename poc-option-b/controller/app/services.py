@@ -367,6 +367,34 @@ def revise_tests(session: Session, run: Run, test_plan: dict, *, actor: str, rea
     _corrected(run)
 
 
+def amend_plan(session: Session, run: Run, *, task_id: str, criterion: str, actor: str, reason: str) -> None:
+    """At the test cases gate: add one criterion to one task of the approved plan, without asking a model again (the
+    analysis found a test case that proves it on a task the plan forgot it on). The test cases stay; the plan and the
+    test cases get a new version, checked again."""
+    _require(run, RunStatus.WAITING_TEST_APPROVAL)
+    payload = json.loads(json.dumps(_approved_payload(session, run)))
+    task = next((t for t in payload["tasks"] if t["id"] == task_id), None)
+    if task is None:
+        raise DecisionError(f"the approved plan has no task {task_id}")
+    known = {c.id for c in parse_criteria(latest_document(session, run.id, "spec").content)}
+    if criterion not in known:
+        raise DecisionError(f"{criterion} is not a criterion of the accepted spec")
+    if criterion in task["acceptance_criteria"]:
+        raise DecisionError(f"{task_id} already delivers {criterion}; reload the run")
+    task["acceptance_criteria"] = sorted(task["acceptance_criteria"] + [criterion],
+                                         key=lambda c: (c.split("-")[0] != "AC", c))
+    tests = latest_plan(session, run.id).test_plan
+    plan = add_plan(session, run.id, payload, tests, author_kind="human", author=actor)
+    coordinator.ground(session, run, plan)
+    note = reason or f"{criterion} added to {task_id} at the test cases gate"
+    _approval(session, run, "plan", "approve", actor, TL, reason=note, plan_id=plan.id)
+    plan.commit_sha = coordinator.commit_thread(session, run, "plan", coordinator.plan_markdown(run, plan),
+                                                f"sdlc: plan v{plan.version} amended ({criterion} on {task_id})")
+    document = coordinator.add_tests_document(session, run, plan)
+    _approval(session, run, "tests", "revise", actor, QC, reason=note, document_id=document.id, plan_id=plan.id)
+    _corrected(run)
+
+
 def reject_tests(session: Session, run: Run, *, actor: str, reason: str, next_step: str) -> None:
     """redo: the QA Analyst designs the tests again; replan: back to the Tech Lead; cancel: stop the run."""
     _require(run, RunStatus.WAITING_TEST_APPROVAL)

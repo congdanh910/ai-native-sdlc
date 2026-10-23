@@ -768,6 +768,19 @@ def approve_plan(run_id: uuid.UUID, body: PlanChoice) -> dict:
                                                                        checked=body.checked, wait_for=body.wait_for))
 
 
+class PlanAmendment(Body):
+    task: str
+    criterion: str
+    reason: str = ""
+
+
+@router.post("/runs/{run_id}/amend-plan")
+def amend_plan(run_id: uuid.UUID, body: PlanAmendment) -> dict:
+    """At the test cases gate: add one criterion to one task of the approved plan, as the analysis suggests."""
+    return _decide(run_id, lambda s, r: services.amend_plan(s, r, task_id=body.task, criterion=body.criterion,
+                                                            actor=operator(), reason=body.reason))
+
+
 @router.post("/runs/{run_id}/stop-waiting")
 def stop_waiting(run_id: uuid.UUID, body: Reason) -> dict:
     """A run that waits for other runs to finish codes now."""

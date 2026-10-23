@@ -11,24 +11,32 @@ from controller.app.schemas import Criterion, PlanPayload, TestPlan
 BLOCKING = ("Critical", "High")
 
 
-def _finding(severity: str, category: str, text: str) -> dict:
-    return {"severity": severity, "category": category, "text": text}
+def _finding(severity: str, category: str, text: str, fix: dict | None = None) -> dict:
+    """fix: the next step for the person at the gate (guidance.fix), when the finding blocks it."""
+    return {"severity": severity, "category": category, "text": text, **({"fix": fix} if fix else {})}
 
 
 def before_coding(criteria: list[Criterion], plan: PlanPayload, tests: TestPlan) -> list[dict]:
+    from controller.app.guidance import fix
     findings = []
     delivered = {a for t in plan.tasks for a in t.acceptance_criteria}
     tested = {c.criterion for c in tests.cases}
     known = {c.id for c in criteria}
     for criterion in criteria:
         if criterion.id not in delivered:
-            findings.append(_finding("Critical", "coverage", f"{criterion.id} is delivered by no task"))
+            findings.append(_finding("Critical", "coverage", f"{criterion.id} is delivered by no task", fix(
+                "replan", f"No task of the plan says it delivers {criterion.id}, so no task would build it.",
+                f"Add {criterion.id} ({criterion.text}) to the acceptance criteria of the task that builds it.")))
         if criterion.id not in tested:
-            findings.append(_finding("High", "coverage", f"{criterion.id} has no test case"))
+            findings.append(_finding("High", "coverage", f"{criterion.id} has no test case", fix(
+                "redesign_tests", f"Nothing would prove {criterion.id} before the pull request.",
+                f"Add a test case for {criterion.id} ({criterion.text}) on a task that delivers it.")))
     for task in plan.tasks:
         unknown = [a for a in task.acceptance_criteria if a not in known]
         if unknown:
-            findings.append(_finding("High", "consistency", f"{task.id} delivers {', '.join(unknown)}, which the spec does not have"))
+            findings.append(_finding("High", "consistency", f"{task.id} delivers {', '.join(unknown)}, which the spec does not have", fix(
+                "replan", f"{task.id} names criteria the accepted spec does not have.",
+                f"Remove {', '.join(unknown)} from {task.id}: the spec has no such criterion.")))
         if not any(c.task_id == task.id for c in tests.cases):
             findings.append(_finding("Medium", "coverage", f"{task.id} has no test case; its change is proven only by other tasks' tests"))
     tasks = {t.id: t for t in plan.tasks}
@@ -46,8 +54,27 @@ def before_coding(criteria: list[Criterion], plan: PlanPayload, tests: TestPlan)
 
     for case in tests.cases:
         if case.task_id in tasks and case.criterion not in delivered_by(case.task_id, set()):
+            task = tasks[case.task_id]
+            owners = [t.id for t in plan.tasks if case.criterion in t.acceptance_criteria]
+            builds = [p for p in [*task.modify, *task.create]
+                      if p.split("/")[0] == case.target_file.split("/")[0]]  # the test's part of the code (backend, web)
+            if builds or not owners:  # the task builds what the test proves: the plan forgot the criterion on it
+                next_step = fix("replan",
+                                f"{case.id} tests {case.criterion} in {case.target_file}, which is {case.task_id}'s part of "
+                                f"the code ({', '.join(builds[:3]) or 'its files'}), but the plan lists {case.criterion} only on "
+                                f"{', '.join(owners) or 'no task'}. The test is right; the plan misses the criterion on {case.task_id}.",
+                                f"Add {case.criterion} to {case.task_id}'s acceptance criteria: {case.task_id} builds what "
+                                f"{case.id} proves ({case.target_file}). Keep the rest of the plan as it is.")
+                next_step["amend"] = {"task": case.task_id, "criterion": case.criterion}  # fixable without a model
+            else:  # the test sits on the wrong task
+                next_step = fix("redesign_tests",
+                                f"{case.id} is put on {case.task_id}, which neither builds {case.criterion} nor runs after "
+                                f"a task that does ({', '.join(owners)}).",
+                                f"Move {case.id} to {owners[-1]}, which delivers {case.criterion}, or prove "
+                                f"{case.criterion} only through {owners[-1]}'s tests.")
             findings.append(_finding("High", "consistency", f"{case.id} proves {case.criterion} on {case.task_id}, "
-                                                            "which neither delivers it nor depends on a task that does"))
+                                                            "which neither delivers it nor depends on a task that does",
+                                     next_step))
     texts = {}
     for criterion in criteria:
         key = " ".join(criterion.full.lower().split())
