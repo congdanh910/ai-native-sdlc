@@ -489,13 +489,15 @@ def test_review_diff_puts_sources_first_and_leaves_out_the_thread(worktree):
 
 # ------------------------------------------------------------------ B5: limits, timeouts, cancellation
 
-def test_a_subscription_limit_postpones_instead_of_failing(worktree, tmp_path):
+def test_a_subscription_limit_postpones_instead_of_failing(worktree, tmp_path, monkeypatch):
+    from controller.app import providers
     from controller.app.team.base import SubscriptionLimit
+    monkeypatch.setattr(providers, "load", lambda: {"thinking": {}, "doing": {}, "fallback": False})  # no other provider
     team, _ = doing(tmp_path, dev=FakeExecutor("codex", message="You've hit your usage limit. Try again at 3pm.",
                                                ok=False))
     with pytest.raises(SubscriptionLimit) as raised:
         team.implement(context(worktree), TASK, 1, TESTS)
-    assert raised.value.wait_seconds == 900
+    assert 890 <= raised.value.wait_seconds <= 900  # no time it can read: subscription_wait_seconds
 
 
 def test_a_failing_session_is_not_mistaken_for_a_limit(worktree, tmp_path):

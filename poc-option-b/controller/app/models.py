@@ -297,3 +297,23 @@ class Backlog(Base):
     created_at: Mapped[datetime] = _created()
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(),
                                                  onupdate=func.now(), nullable=False)
+
+
+class ProviderSetting(Base):
+    """The Platform Admin's AI providers: each role's engines in order of preference (key "default")."""
+    __tablename__ = "provider_settings"
+    key: Mapped[str] = mapped_column(String(32), primary_key=True)
+    data: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    updated_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(),
+                                                 onupdate=func.now(), nullable=False)
+
+
+class EngineLimit(Base):
+    """A provider (codex, claude) out of its subscription window until a time; its roles move to the next engine."""
+    __tablename__ = "engine_limits"
+    provider: Mapped[str] = mapped_column(String(32), primary_key=True)
+    limited_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(),
+                                                 onupdate=func.now(), nullable=False)

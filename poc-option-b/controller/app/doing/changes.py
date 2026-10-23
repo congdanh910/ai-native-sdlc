@@ -266,3 +266,10 @@ def head(worktree: Path) -> str:
 
 def head_time(worktree: Path) -> datetime:
     return datetime.fromisoformat(_git("log", "-1", "--format=%cI", cwd=worktree).strip())
+
+
+def discard_uncommitted(worktree: Path) -> None:
+    """Drop what a session left uncommitted (tracked changes and new untracked files; ignored files such as
+    node_modules stay), so another session starts from the committed work."""
+    _git("reset", "--quiet", "--hard", "HEAD", cwd=worktree)
+    _git("clean", "--quiet", "-fd", cwd=worktree)

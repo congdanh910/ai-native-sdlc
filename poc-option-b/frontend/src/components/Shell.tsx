@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Command } from "cmdk";
-import { Activity, BarChart3, FlaskConical, FolderGit2, Inbox, Moon, Play, Plus, Search, Sun, Workflow } from "lucide-react";
+import { Activity, BarChart3, FlaskConical, FolderGit2, Inbox, Moon, Play, Plus, Search, Sun, Workflow, Cpu } from "lucide-react";
 import { api, type Check, type InboxItem, type Meta, type RunSummary } from "../lib/api";
 import { ACTION_LABEL, cn, role } from "../lib/utils";
 import { Kbd } from "./ui";
@@ -14,6 +14,7 @@ const NAV = [
   { href: "/projects", label: "Projects", icon: FolderGit2, match: (p: string) => p.startsWith("/projects") },
   { href: "/evals", label: "Evals", icon: FlaskConical, match: (p: string) => p.startsWith("/evals") },
   { href: "/reports", label: "Reports", icon: BarChart3, match: (p: string) => p.startsWith("/reports") },
+  { href: "/providers", label: "AI providers", icon: Cpu, match: (p: string) => p.startsWith("/providers") },
   { href: "/health", label: "Health", icon: Activity, match: (p: string) => p.startsWith("/health") },
 ];
 

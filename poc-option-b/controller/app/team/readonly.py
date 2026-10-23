@@ -212,6 +212,37 @@ class RoutingTeam:
             self._teams[cli] = self.factory(cli)
         return self._teams[cli]
 
+    def _route(self, context: RunContext, role: str, method: str, *args, **kwargs):
+        """The role's engines in order (AI providers); one whose subscription is used up is marked limited and the
+        next one answers in the same job. Experiments keep their pinned engine: they compare engines."""
+        from controller.app import providers
+        first = (context.engines or {}).get(role, self.settings.sdlc_default_engine)
+        engines = [first] if getattr(context, "experiment", False) else providers.chain("thinking", role, first)
+        free, back = providers.available(engines)
+        if not free:
+            raise SubscriptionLimit(f"every engine of the {role} is out of quota ({', '.join(engines)})", until=back)
+        last: SubscriptionLimit | None = None
+        for engine in free:
+            try:
+                return self._call(self._team(engine), method, *args, **kwargs)
+            except SubscriptionLimit as exc:
+                last = exc
+                until = providers.mark_limited(engine, str(exc))
+                from controller.app import joblog
+                joblog.note(f"{engine} is out of quota until {until.astimezone():%H:%M}; the {role} moves to the next engine")
+        _, back = providers.available(engines)
+        raise SubscriptionLimit(f"every engine of the {role} is out of quota: {last}", until=back)
+
+    def _team(self, engine: str):
+        if engine == "qwen3":
+            return self.base
+        if engine not in ENGINES:
+            raise ValueError(f"unknown reasoning engine {engine!r}")
+        cli = engine.removesuffix("-readonly")
+        if cli not in self._teams:
+            self._teams[cli] = self.factory(cli)
+        return self._teams[cli]
+
     def _call(self, team, method: str, *args, **kwargs):
         try:
             return getattr(team, method)(*args, **kwargs)
@@ -222,48 +253,48 @@ class RoutingTeam:
         return self._call(self.base, "draft_intent", *args, **kwargs)
 
     def specify(self, context):
-        return self._call(self._for(context, "business_analyst"), "specify", context)
+        return self._route(context, "business_analyst", "specify", context)
 
     def write_srs(self, context):
-        return self._call(self._for(context, "business_analyst"), "write_srs", context)
+        return self._route(context, "business_analyst", "write_srs", context)
 
     def write_sds(self, context):  # the Architect reasons on the Tech Lead's engine
-        return self._call(self._for(context, "tech_lead"), "write_sds", context)
+        return self._route(context, "tech_lead", "write_sds", context)
 
     def plan(self, context):
-        return self._call(self._for(context, "tech_lead"), "plan", context)
+        return self._route(context, "tech_lead", "plan", context)
 
     def design_options(self, context):  # the Architect reasons on the Tech Lead's engine
-        return self._call(self._for(context, "tech_lead"), "design_options", context)
+        return self._route(context, "tech_lead", "design_options", context)
 
     def write_onboarding(self, context):  # the Architect reasons on the Tech Lead's engine
-        return self._call(self._for(context, "tech_lead"), "write_onboarding", context)
+        return self._route(context, "tech_lead", "write_onboarding", context)
 
     def design_tests(self, context, plan):
-        return self._call(self._for(context, "qa_analyst"), "design_tests", context, plan)
+        return self._route(context, "qa_analyst", "design_tests", context, plan)
 
     def review(self, context, plan, tests, diff="", validation=""):
-        return self._call(self._for(context, "code_reviewer"), "review", context, plan, tests, diff=diff,
+        return self._route(context, "code_reviewer", "review", context, plan, tests, diff=diff,
                           validation=validation)
 
     def advise(self, context, stop):  # the Code Reviewer reads tests and code for a living
-        return self._call(self._for(context, "code_reviewer"), "advise", context, stop)
+        return self._route(context, "code_reviewer", "advise", context, stop)
 
     def check_defects(self, context, notes):
-        return self._call(self._for(context, "code_reviewer"), "check_defects", context, notes)
+        return self._route(context, "code_reviewer", "check_defects", context, notes)
 
     def design_ui(self, context, brief):  # the UX Designer reasons on the Tech Lead's engine, like the Architect
-        return self._call(self._for(context, "tech_lead"), "design_ui", context, brief)
+        return self._route(context, "tech_lead", "design_ui", context, brief)
 
     def extract_part(self, context, part):
-        return self._call(self._for(context, "business_analyst"), "extract_part", context, part)
+        return self._route(context, "business_analyst", "extract_part", context, part)
 
     def consolidate(self, context, items, gaps, decisions=(), asked=(), round_info=None):
-        return self._call(self._for(context, "business_analyst"), "consolidate", context, items, gaps, decisions, asked,
+        return self._route(context, "business_analyst", "consolidate", context, items, gaps, decisions, asked,
                           round_info)
 
     def read_minutes(self, context, part, questions, items):
-        return self._call(self._for(context, "business_analyst"), "read_minutes", context, part, questions, items)
+        return self._route(context, "business_analyst", "read_minutes", context, part, questions, items)
 
     def __getattr__(self, name):  # doing roles and anything else
         return getattr(self.base, name)

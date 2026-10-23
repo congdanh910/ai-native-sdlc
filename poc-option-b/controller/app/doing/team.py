@@ -71,14 +71,30 @@ class CliDoing:
 
     def _session(self, executor: str, role: str, prompt: str, context: RunContext, task: PlanTask, writable: list[str],
                  label: str) -> SessionResult:
-        self.last_executor = executor
-        session = Session(role=role, prompt=prompt, worktree=self._worktree(context), writable=writable,
-                          protected=list(context.policy.protected_paths), commands=self._commands(context, task),
-                          timeout=context.policy.session_timeout_seconds, log_path=self._log_dir(context) / f"{label}.log")
-        result = self.executors[executor].run(session)
-        if result.limited:
-            raise SubscriptionLimit(f"{executor} subscription limit reached during {label}: {result.message[-200:]}")
-        return result
+        """The role's executors in order (AI providers; only the project's executors): one out of quota is marked
+        limited, what its session left uncommitted is dropped, and the next one works in the same job."""
+        from controller.app import joblog, providers
+        engines = [executor] if context.experiment else providers.chain(
+            "doing", role, executor, allowed=list(context.policy.executors))
+        free, back = providers.available([e for e in engines if e in self.executors])
+        if not free:
+            raise SubscriptionLimit(f"every executor of the {role} is out of quota ({', '.join(engines)})", until=back)
+        message = ""
+        for name in free:
+            self.last_executor = name
+            session = Session(role=role, prompt=prompt, worktree=self._worktree(context), writable=writable,
+                              protected=list(context.policy.protected_paths), commands=self._commands(context, task),
+                              timeout=context.policy.session_timeout_seconds,
+                              log_path=self._log_dir(context) / f"{label}.log")
+            result = self.executors[name].run(session)
+            if not result.limited:
+                return result
+            message = f"{name} subscription limit reached during {label}: {result.message[-200:]}"
+            until = providers.mark_limited(name, result.message)
+            changes.discard_uncommitted(self._worktree(context))  # the next executor starts from the committed work
+            joblog.note(f"{name} is out of quota until {until.astimezone():%H:%M}; the {role} moves to the next executor")
+        _, back = providers.available([e for e in engines if e in self.executors])
+        raise SubscriptionLimit(message, until=back)
 
     @staticmethod
     def _evidence(result: SessionResult, label: str, **extra) -> dict:

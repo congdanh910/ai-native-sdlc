@@ -576,7 +576,7 @@ def build_context(session: Session, run: Run, *, kind: str = "", feedback: list[
                       answers=answers, story=_story_context(session, run),
                       repository=bundle.as_input(), feedback=feedback or [], session_id=f"{run.id}:{kind}",
                       run_id=str(run.id), worktree=run.worktree_path or "", base_commit=run.base_commit or "",
-                      engines=json.loads(artifact(session, run.id, "engines") or "{}"),
+                      engines=json.loads(artifact(session, run.id, "engines") or "{}"), experiment=run.experiment,
                       baseline=json.loads(artifact(session, run.id, "baseline") or "null"),
                       chosen_option=json.loads(artifact(session, run.id, "chosen_option") or "null"),
                       chosen_ui=json.loads(artifact(session, run.id, "chosen_ui") or "null"), ui_guide=ui_guide,

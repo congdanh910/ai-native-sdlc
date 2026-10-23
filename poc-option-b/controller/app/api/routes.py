@@ -198,6 +198,49 @@ def check_project(key: str) -> dict:
         return views.project_view(project)
 
 
+class ProviderSettings(Body):
+    thinking: dict[str, list[str]] = {}
+    doing: dict[str, list[str]] = {}
+    fallback: bool = True
+
+
+def _providers_view() -> dict:
+    from controller.app import providers
+    settings = get_settings()
+    out = providers.limits()
+    return {**providers.load(), "thinking_roles": list(providers.THINKING_ROLES), "doing_roles": list(providers.DOING_ROLES),
+            "thinking_engines": list(providers.THINKING_ENGINES), "doing_engines": list(providers.DOING_ENGINES),
+            "env": settings.default_engines,
+            "status": [{"provider": p, "limited_until": out[p]["until"].isoformat() if p in out else None,
+                        "reason": out[p]["reason"] if p in out else ""} for p in ("codex", "claude")]}
+
+
+@router.get("/admin/providers")
+def get_providers() -> dict:
+    """Each role's engines in order, the fallback switch, and which providers are out of quota now."""
+    return _providers_view()
+
+
+@router.put("/admin/providers")
+def put_providers(body: ProviderSettings) -> dict:
+    from controller.app import providers
+    try:
+        providers.save(body.model_dump(), actor=operator())
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return _providers_view()
+
+
+@router.post("/admin/providers/{provider}/available")
+def provider_available(provider: str) -> dict:
+    """The quota was reset: use the provider again now and run the jobs that waited for it."""
+    from controller.app import providers
+    if provider not in ("codex", "claude"):
+        raise HTTPException(404, "unknown provider")
+    jobs = providers.mark_available(provider, actor=operator())
+    return {**_providers_view(), "released": jobs}
+
+
 @router.get("/projects/{key}/stories")
 def project_stories(key: str) -> dict:
     """SRS section 7 at the last checked commit, with the latest run of each story."""

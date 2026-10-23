@@ -30,6 +30,7 @@ class RunContext:
     worktree: str = ""  # the run's git worktree, where the doing roles work
     base_commit: str = ""
     engines: dict = field(default_factory=dict)  # thinking role -> engine, experiments only
+    experiment: bool = False  # an eval case: its engines stay pinned, no fallback to another provider
     sources_dir: str = ""  # discovery: the folder of the raw requirement files the Business Analyst reads
     baseline: dict | None = None  # an SRS (or SDS) run built on requirements/baseline.json
     chosen_option: dict | None = None  # SDS: the architecture option the Solution Architect chose, with the reason
@@ -65,10 +66,18 @@ class CapacityBusy(RuntimeError):
 
 
 class SubscriptionLimit(CapacityBusy):
-    """A CLI's subscription usage window is exhausted; committed work is kept and the job runs later."""
+    """A CLI's subscription usage window is exhausted; committed work is kept and the job runs later (when the
+    first engine of the role is back, if known)."""
+    def __init__(self, message: str, until=None):
+        super().__init__(message)
+        self.until = until
+
     @property
     def wait_seconds(self) -> int:  # type: ignore[override]
+        from datetime import datetime, timezone
         from controller.app.config import get_settings
+        if self.until is not None:
+            return max(60, int((self.until - datetime.now(timezone.utc)).total_seconds()))
         return get_settings().subscription_wait_seconds
 
 

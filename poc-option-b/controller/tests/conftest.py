@@ -53,3 +53,15 @@ def sample_repo(tmp_path) -> Path:
     git(repo, "add", ".")
     git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "-m", "initial")
     return repo
+
+
+@pytest.fixture(autouse=True)
+def no_provider_state(request, monkeypatch):
+    """Tests without the database fixture see no AI provider settings and no provider out of quota (rows left by an
+    earlier integration test must not reroute a unit test's executor)."""
+    if "db" in request.fixturenames:
+        return
+    from controller.app import providers
+    monkeypatch.setattr(providers, "load", lambda: {"thinking": {}, "doing": {}, "fallback": True})
+    monkeypatch.setattr(providers, "limits", lambda now=None: {})
+    monkeypatch.setattr(providers, "mark_limited", lambda engine, message: providers.reset_time(message))

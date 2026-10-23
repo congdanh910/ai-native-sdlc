@@ -299,7 +299,8 @@ class LimitedOnceCli(FakeCli):
 
 
 def test_a_subscription_limit_postpones_the_task_and_keeps_its_tests(db, sample_repo, tmp_path):
-    from controller.app import jobs
+    from controller.app import jobs, providers
+    providers.save({"fallback": False}, actor="t")  # no other provider: the task waits
     run_id = _to_coding(sample_repo)
     cli = LimitedOnceCli()
     drain(team(cli, FakeContainer(), tmp_path))
@@ -307,7 +308,8 @@ def test_a_subscription_limit_postpones_the_task_and_keeps_its_tests(db, sample_
         execution = session.scalar(select(Execution).where(Execution.run_id == run_id, Execution.kind == "code_task"))
         assert execution.status == "queued" and "usage limit" in execution.error
         assert execution.available_at > jobs.now()
-        execution.available_at = jobs.now()  # the window reopened
+    assert "codex" in providers.limits()
+    assert providers.mark_available("codex", actor="t") == 1  # the window reopened: the job runs now
     assert status(run_id) == "CODING"
     drain(team(cli, FakeContainer(), tmp_path))
     assert status(run_id) == "WAITING_PR_APPROVAL"
@@ -338,3 +340,27 @@ def test_team_report_counts_roles_and_engines(db, sample_repo, tmp_path):
     assert report["roles"]["qa_engineer"]["test_sessions"] == len(tasks)
     assert report["roles"]["tech_lead"]["first_plans_grounded"] == 1.0
     assert report["engines"]["codex"]["calls"] == 2 * len(tasks)
+
+
+def test_a_role_moves_to_the_next_provider_when_one_is_out_of_quota(db, sample_repo, tmp_path):
+    from controller.app import providers
+    run_id = _to_coding(sample_repo)
+    codex, claude = LimitedCodex(), FakeCli("claude")
+    doing = CliDoing({"codex": codex, "claude": claude}, log_root=tmp_path / "logs",
+                     gate_factory=lambda p, w, l: ValidationGate(p.model_copy(update={"setup": []}), w, l,
+                                                                 runner=FakeContainer()))
+    drain(CompositeTeam(MockTeam(), doing))
+    assert status(run_id) == "WAITING_PR_APPROVAL"  # the work went on with Claude in the same jobs
+    assert "codex" in providers.limits() and claude.sessions and codex.sessions == 1
+    assert {s.role for s in claude.sessions} == {"qa_engineer", "developer"}
+
+
+class LimitedCodex(FakeCli):
+    """Codex is out of quota from the first session: try again at 7:44 PM."""
+    def __init__(self):
+        super().__init__("codex")
+        self.sessions = 0
+
+    def run(self, session: Session) -> SessionResult:
+        self.sessions += 1
+        return SessionResult(self.name, False, "You've hit your usage limit. try again at 7:44 PM.", 1.0, 1, False)

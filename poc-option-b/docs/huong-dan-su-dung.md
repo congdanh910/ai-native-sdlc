@@ -468,6 +468,11 @@ Trang một run gồm: thanh pipeline, panel **your decision** (việc đang ch�
 - Codex đọc PDF qua `pdftotext` (mỗi dòng gắn `[page N]`, nên vẫn trích được trang). Codex **không đọc được ảnh và PDF scan**: gặp loại đó job sẽ dừng và báo lý do. Codex chỉ nhận chữ nên đọc bảng, sơ đồ kém hơn Claude, và tách mục chi tiết hơn.
 - Run đang mở giữ engine lúc tạo. Muốn đổi engine của run đang mở thì hiện phải nhờ người vận hành (xem `docs/BACKLOG.md`, mục 2.6).
 
+- **AI providers** (menu bên trái, Platform Admin): mỗi vai có danh sách engine theo thứ tự ưu tiên. Vai suy nghĩ (BA, Tech Lead/Architect/UX, QA Analyst, Code Reviewer) chọn `codex-readonly`, `claude-readonly`; vai làm việc (QA Engineer, Developer) chọn `codex`, `claude` (chỉ dùng executor dự án cho phép trong `project.yaml`). Để trống: theo `.env` (`SDLC_ENGINES`) và `project.yaml` như trước.
+- **Hết hạn mức**: khi Codex hay Claude báo hết (ví dụ "try again at 7:44 PM"), nền tảng đánh dấu provider đó **out of quota until 19:44** và vai **chuyển sang engine kế tiếp ngay trong job** (vai làm việc bỏ phần chưa commit của phiên bị ngắt). Ô "fall back to any other provider" bật: sau danh sách vẫn thử provider còn lại. Hết mọi engine thì job chờ tới khi engine đầu tiên quay lại.
+- **Mark available**: khi anh reset hạn mức (mua thêm credit, cửa sổ mới), bấm nút này trên thẻ provider: dùng lại ngay và các job đang chờ chạy luôn.
+- Run thử nghiệm (eval) giữ engine đã ghim, không chuyển, để so sánh engine cho đúng.
+
 ## 11. Prompt: xem và tuỳ chỉnh
 
 **AI nhận được gì.** Mỗi lần gọi AI gửi một prompt gồm hai phần:

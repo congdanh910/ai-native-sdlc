@@ -17,6 +17,7 @@ import { BacklogView } from "./views/Backlog";
 import { EvalsView, EvalView } from "./views/Evals";
 import { ReportsView } from "./views/Reports";
 import { HealthView } from "./views/Health";
+import { ProvidersView } from "./views/Providers";
 
 window.addEventListener("error", (e) => reportClientError(e.message, e.error?.stack ?? "", "window"));
 window.addEventListener("unhandledrejection", (e) => reportClientError(String(e.reason?.message ?? e.reason), e.reason?.stack ?? "", "promise"));
@@ -43,6 +44,7 @@ createRoot(document.getElementById("root")!).render(
             <Route path="/evals/:id">{(p) => <EvalView key={p.id} id={p.id} />}</Route>
             <Route path="/evals"><EvalsView /></Route>
             <Route path="/reports"><ReportsView /></Route>
+            <Route path="/providers"><ProvidersView /></Route>
             <Route path="/health"><HealthView /></Route>
             <Route><InboxView /></Route>
           </Switch>

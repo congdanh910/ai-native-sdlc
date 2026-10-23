@@ -1,0 +1,59 @@
+"""AI providers: a thinking role moves to its next engine when one is out of quota; the Admin orders the engines."""
+
+import pytest
+
+from controller.app import providers
+from controller.app.config import get_settings
+from controller.app.team.base import RunContext, SubscriptionLimit
+from controller.app.team.readonly import RoutingTeam
+
+pytestmark = pytest.mark.integration
+
+
+class Engine:
+    def __init__(self, name, limited=False):
+        self.name, self.limited, self.calls, self.last_call = name, limited, 0, None
+
+    def specify(self, context):
+        self.calls += 1
+        if self.limited:
+            raise SubscriptionLimit(f"{self.name} subscription limit reached: try again at 7:44 PM")
+        return f"spec by {self.name}"
+
+
+def context(**engines) -> RunContext:
+    return RunContext(title="t", policy=None, agents_md="", review_md=None, intent_md="", files=[], engines=engines)
+
+
+def routing(teams: dict) -> RoutingTeam:
+    return RoutingTeam(Engine("base"), get_settings(), factory=lambda cli: teams[cli])
+
+
+def test_a_thinking_role_moves_to_the_next_engine_and_the_provider_is_marked(db):
+    teams = {"codex": Engine("codex", limited=True), "claude": Engine("claude")}
+    team = routing(teams)
+    assert team.specify(context(business_analyst="codex-readonly")) == "spec by claude"
+    assert "codex" in providers.limits()
+    assert team.specify(context(business_analyst="codex-readonly")) == "spec by claude"
+    assert teams["codex"].calls == 1  # limited: not asked again until it is back
+    providers.mark_available("codex", actor="t")
+    teams["codex"].limited = False
+    assert team.specify(context(business_analyst="codex-readonly")) == "spec by codex"
+
+
+def test_the_admin_orders_the_engines_and_an_experiment_keeps_its_engine(db):
+    teams = {"codex": Engine("codex"), "claude": Engine("claude")}
+    providers.save({"thinking": {"business_analyst": ["claude-readonly", "codex-readonly"]}}, actor="t")
+    assert routing(teams).specify(context(business_analyst="codex-readonly")) == "spec by claude"
+    pinned = RunContext(title="t", policy=None, agents_md="", review_md=None, intent_md="", files=[],
+                        engines={"business_analyst": "codex-readonly"}, experiment=True)
+    assert routing(teams).specify(pinned) == "spec by codex"
+    with pytest.raises(ValueError, match="at most once"):
+        providers.save({"thinking": {"tech_lead": ["codex-readonly", "codex-readonly"]}}, actor="t")
+
+
+def test_when_every_engine_is_out_of_quota_the_job_waits_until_the_first_is_back(db):
+    teams = {"codex": Engine("codex", limited=True), "claude": Engine("claude", limited=True)}
+    with pytest.raises(SubscriptionLimit) as raised:
+        routing(teams).specify(context(business_analyst="codex-readonly"))
+    assert raised.value.until is not None and raised.value.wait_seconds >= 60
