@@ -57,3 +57,15 @@ def test_when_every_engine_is_out_of_quota_the_job_waits_until_the_first_is_back
     with pytest.raises(SubscriptionLimit) as raised:
         routing(teams).specify(context(business_analyst="codex-readonly"))
     assert raised.value.until is not None and raised.value.wait_seconds >= 60
+
+
+def test_the_admin_chooses_a_model_per_role_and_provider(db):
+    providers.save({"models": {"tech_lead": {"claude": {"model": "opus"}, "codex": {"model": "gpt-6-sol", "effort": "high"}},
+                               "developer": {"codex": {"model": "gpt-6-sol", "effort": "medium"}}}}, actor="t")
+    assert providers.model_for("tech_lead", "claude-readonly") == ("opus", "")
+    assert providers.model_for("developer", "codex") == ("gpt-6-sol", "medium")
+    assert providers.model_for("qa_analyst", "codex-readonly") == ("", "")
+    with pytest.raises(ValueError, match="Codex only"):
+        providers.save({"models": {"tech_lead": {"claude": {"model": "opus", "effort": "high"}}}}, actor="t")
+    with pytest.raises(ValueError, match="not a model name"):
+        providers.save({"models": {"tech_lead": {"codex": {"model": "gpt 6; rm -rf"}}}}, actor="t")

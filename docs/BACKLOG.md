@@ -6,7 +6,7 @@ _Cập nhật: 2026-10-21. Mỗi mục ghi vì sao nó nằm đây và lúc nào
 
 | # | Việc | Vì sao | Gợi ý |
 |---|---|---|---|
-| 1.1 | **Cấu hình AI provider và tài khoản**: model theo từng vai, tài khoản riêng cho nền tảng, model Codex theo dự án (đang lấy từ `~/.codex/config.toml`: `gpt-6-sol`, effort high) | Hiện dùng chung một tài khoản Claude với phiên làm việc của Claude Code nên dễ hết quota (16/10 đã hết, phải chuyển Discovery sang Codex) | 23/10 đã làm phần engine theo vai và tự chuyển khi hết hạn mức (trang AI providers); còn lại: model và effort theo vai, tài khoản riêng của nền tảng, chi phí; gộp chung với 1.2 |
+| 1.1 | **Cấu hình AI provider và tài khoản**: model theo từng vai, tài khoản riêng cho nền tảng, model Codex theo dự án (đang lấy từ `~/.codex/config.toml`: `gpt-6-sol`, effort high) | Hiện dùng chung một tài khoản Claude với phiên làm việc của Claude Code nên dễ hết quota (16/10 đã hết, phải chuyển Discovery sang Codex) | 23/10 đã làm phần engine theo vai và tự chuyển khi hết hạn mức (trang AI providers); model và effort theo vai cũng đã làm; còn lại: tài khoản riêng của nền tảng, chi phí; gộp chung với 1.2 |
 | 1.2 | **Cưỡng chế tách biệt ngữ cảnh** giữa các run và dự án | Hiện tách bằng dữ liệu đầu vào (JSON theo run, worktree riêng, phiên CLI không lưu). Nhưng Claude Read và Codex read-only vẫn *đọc được* file ở chỗ khác trên máy nếu tự tìm sang | Chạy mỗi lần gọi AI trong container chỉ mount thư mục của run, như bước validation; cần khi có nhiều khách hàng trên cùng máy |
 | 1.3 | Bỏ hay giữ code Langflow/Qwen | Qwen đã tắt từ 16/10, code vẫn còn và vẫn có test | Giữ cho tới khi chốt 1.1 |
 

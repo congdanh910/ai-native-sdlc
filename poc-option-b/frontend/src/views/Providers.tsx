@@ -5,8 +5,10 @@ import { ActionButton, Badge, Button, Card, ErrorBox, Loading, Mono, PageHeader,
 import { api } from "../lib/api";
 import { role as roleLabel } from "../lib/utils";
 
+type Models = Record<string, Record<string, { model: string; effort: string }>>;
 interface Providers {
-  thinking: Record<string, string[]>; doing: Record<string, string[]>; fallback: boolean;
+  thinking: Record<string, string[]>; doing: Record<string, string[]>; fallback: boolean; models: Models;
+  model_suggestions: Record<string, string[]>; efforts: string[];
   thinking_roles: string[]; doing_roles: string[]; thinking_engines: string[]; doing_engines: string[];
   env: Record<string, string>;
   status: { provider: string; limited_until: string | null; reason: string }[];
@@ -17,12 +19,31 @@ interface Providers {
 export function ProvidersView() {
   const client = useQueryClient();
   const data = useQuery({ queryKey: ["providers"], queryFn: () => api<Providers>("/api/admin/providers"), refetchInterval: 20000 });
-  const [draft, setDraft] = useState<Pick<Providers, "thinking" | "doing" | "fallback"> | null>(null);
-  useEffect(() => { if (data.data && !draft) setDraft({ thinking: data.data.thinking, doing: data.data.doing, fallback: data.data.fallback }); }, [data.data, draft]);
+  const [draft, setDraft] = useState<Pick<Providers, "thinking" | "doing" | "fallback" | "models"> | null>(null);
+  useEffect(() => { if (data.data && !draft) setDraft({ thinking: data.data.thinking, doing: data.data.doing, fallback: data.data.fallback, models: data.data.models }); }, [data.data, draft]);
   if (data.isLoading || !draft) return <Loading />;
   if (data.error) return <ErrorBox error={data.error} />;
   const d = data.data!;
-  const store = (fresh: Providers) => { client.setQueryData(["providers"], fresh); setDraft({ thinking: fresh.thinking, doing: fresh.doing, fallback: fresh.fallback }); };
+  const store = (fresh: Providers) => { client.setQueryData(["providers"], fresh); setDraft({ thinking: fresh.thinking, doing: fresh.doing, fallback: fresh.fallback, models: fresh.models }); };
+  const choice = (role: string, provider: string) => draft.models[role]?.[provider] ?? { model: "", effort: "" };
+  const setChoice = (role: string, provider: string, change: Partial<{ model: string; effort: string }>) =>
+    setDraft({ ...draft, models: { ...draft.models, [role]: { ...(draft.models[role] ?? {}), [provider]: { ...choice(role, provider), ...change } } } });
+  const modelCells = (r: string) => ["codex", "claude"].map((provider) => (
+    <td key={provider} className="p-2.5">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <input aria-label={`${r} model on ${provider}`} list={`models-${provider}`} placeholder="default"
+          className="h-8 w-40 rounded-md border border-line bg-panel px-2 font-mono text-[12.5px]"
+          value={choice(r, provider).model} onChange={(e) => setChoice(r, provider, { model: e.target.value })} />
+        {provider === "codex" ? (
+          <Select aria-label={`${r} reasoning effort on codex`} className="h-8 w-auto text-sm" value={choice(r, provider).effort}
+            onChange={(e) => setChoice(r, provider, { effort: e.target.value })}>
+            <option value="">effort: default</option>
+            {d.efforts.map((e) => <option key={e} value={e}>{e}</option>)}
+          </Select>
+        ) : null}
+      </div>
+    </td>
+  ));
   const setList = (kind: "thinking" | "doing", role: string, list: string[]) => setDraft({ ...draft, [kind]: { ...draft[kind], [role]: list } });
   const rows = (kind: "thinking" | "doing", roles: string[], engines: string[], fallbackFirst: (role: string) => string) => roles.map((r) => {
     const list = draft[kind][r] ?? [];
@@ -49,9 +70,16 @@ export function ProvidersView() {
             ) : null}
           </div>
         </td>
+        {modelCells(r)}
       </tr>
     );
   });
+  const head = (
+    <thead><tr className="text-left text-xs text-muted">
+      <th scope="col" className="p-2.5">Role</th><th scope="col" className="p-2.5">Engines in order</th>
+      <th scope="col" className="p-2.5">Model on Codex</th><th scope="col" className="p-2.5">Model on Claude</th>
+    </tr></thead>
+  );
   return (
     <>
       <PageHeader title="AI providers" subtitle="As Platform Admin. Each role's engines in order of preference. When a provider's subscription window is used up, the role moves to its next engine in the same job; it waits only when every engine is out of quota." />
@@ -74,17 +102,19 @@ export function ProvidersView() {
       <Card className="flex flex-col gap-3 p-5">
         <h2 className="m-0 text-base font-semibold">Thinking roles</h2>
         <p className="m-0 text-sm text-muted">Read-only sessions that write specs, plans, test cases, reviews and briefs. Empty: the engine of SDLC_ENGINES in .env.</p>
-        <table className="w-full border-collapse"><tbody>{rows("thinking", d.thinking_roles, d.thinking_engines, (r) => d.env[r] ?? "")}</tbody></table>
+        <div className="overflow-x-auto"><table className="w-full border-collapse">{head}<tbody>{rows("thinking", d.thinking_roles, d.thinking_engines, (r) => d.env[r] ?? "")}</tbody></table></div>
         <h2 className="m-0 mt-2 text-base font-semibold">Doing roles</h2>
         <p className="m-0 text-sm text-muted">Sessions that write tests and code in the run's worktree. Only the executors a project allows in its .sdlc/project.yaml are used. Empty: the project's qa_executor / default_executor.</p>
-        <table className="w-full border-collapse"><tbody>{rows("doing", d.doing_roles, d.doing_engines, () => "the project's executor")}</tbody></table>
+        <div className="overflow-x-auto"><table className="w-full border-collapse">{head}<tbody>{rows("doing", d.doing_roles, d.doing_engines, () => "the project's executor")}</tbody></table></div>
+        <p className="m-0 text-xs text-muted">Model empty: the CLI's default (Codex: ~/.codex/config.toml; Claude: its configured model). Claude takes aliases such as opus, sonnet, haiku or a full model id; Codex takes its model names and a reasoning effort.</p>
+        {Object.entries(d.model_suggestions).map(([provider, names]) => <datalist key={provider} id={`models-${provider}`}>{names.map((n) => <option key={n} value={n} />)}</datalist>)}
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={draft.fallback} onChange={(e) => setDraft({ ...draft, fallback: e.target.checked })} />
           After the listed engines, fall back to any other provider (Codex, Claude) rather than wait
         </label>
         <div className="flex gap-2">
           <ActionButton variant="primary" success="AI providers saved; the next calls use them" action={async () => store(await api<Providers>("/api/admin/providers", { method: "PUT", body: draft }))}>Save</ActionButton>
-          <Button onClick={() => setDraft({ thinking: d.thinking, doing: d.doing, fallback: d.fallback })}>Discard</Button>
+          <Button onClick={() => setDraft({ thinking: d.thinking, doing: d.doing, fallback: d.fallback, models: d.models })}>Discard</Button>
         </div>
       </Card>
     </>

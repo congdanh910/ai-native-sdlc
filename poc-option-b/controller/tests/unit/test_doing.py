@@ -492,7 +492,7 @@ def test_review_diff_puts_sources_first_and_leaves_out_the_thread(worktree):
 def test_a_subscription_limit_postpones_instead_of_failing(worktree, tmp_path, monkeypatch):
     from controller.app import providers
     from controller.app.team.base import SubscriptionLimit
-    monkeypatch.setattr(providers, "load", lambda: {"thinking": {}, "doing": {}, "fallback": False})  # no other provider
+    monkeypatch.setattr(providers, "load", lambda: {"thinking": {}, "doing": {}, "fallback": False, "models": {}})  # no other provider
     team, _ = doing(tmp_path, dev=FakeExecutor("codex", message="You've hit your usage limit. Try again at 3pm.",
                                                ok=False))
     with pytest.raises(SubscriptionLimit) as raised:

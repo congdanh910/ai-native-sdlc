@@ -82,10 +82,13 @@ class CliDoing:
         message = ""
         for name in free:
             self.last_executor = name
+            model, effort = ("", "") if context.experiment else providers.model_for(role, name)
+            if model or effort:
+                joblog.note(f"{role} on {name}: model {model or 'default'}" + (f", effort {effort}" if effort else ""))
             session = Session(role=role, prompt=prompt, worktree=self._worktree(context), writable=writable,
                               protected=list(context.policy.protected_paths), commands=self._commands(context, task),
                               timeout=context.policy.session_timeout_seconds,
-                              log_path=self._log_dir(context) / f"{label}.log")
+                              log_path=self._log_dir(context) / f"{label}.log", model=model, effort=effort)
             result = self.executors[name].run(session)
             if not result.limited:
                 return result

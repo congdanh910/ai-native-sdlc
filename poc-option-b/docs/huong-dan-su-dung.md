@@ -470,6 +470,7 @@ Trang một run gồm: thanh pipeline, panel **your decision** (việc đang ch�
 
 - **AI providers** (menu bên trái, Platform Admin): mỗi vai có danh sách engine theo thứ tự ưu tiên. Vai suy nghĩ (BA, Tech Lead/Architect/UX, QA Analyst, Code Reviewer) chọn `codex-readonly`, `claude-readonly`; vai làm việc (QA Engineer, Developer) chọn `codex`, `claude` (chỉ dùng executor dự án cho phép trong `project.yaml`). Để trống: theo `.env` (`SDLC_ENGINES`) và `project.yaml` như trước.
 - **Hết hạn mức**: khi Codex hay Claude báo hết (ví dụ "try again at 7:44 PM"), nền tảng đánh dấu provider đó **out of quota until 19:44** và vai **chuyển sang engine kế tiếp ngay trong job** (vai làm việc bỏ phần chưa commit của phiên bị ngắt). Ô "fall back to any other provider" bật: sau danh sách vẫn thử provider còn lại. Hết mọi engine thì job chờ tới khi engine đầu tiên quay lại.
+- **Model theo vai**: cột *Model on Codex* / *Model on Claude* của từng vai. Claude nhận alias `opus`, `sonnet`, `haiku` hoặc tên đầy đủ (`claude-opus-5-5`…); Codex nhận tên model (ví dụ `gpt-6-sol`) và **effort** (minimal, low, medium, high, xhigh). Để trống: mặc định của CLI (Codex: `~/.codex/config.toml`). Log của job ghi model đã dùng. Run thử nghiệm (eval) không dùng các lựa chọn này.
 - **Mark available**: khi anh reset hạn mức (mua thêm credit, cửa sổ mới), bấm nút này trên thẻ provider: dùng lại ngay và các job đang chờ chạy luôn.
 - Run thử nghiệm (eval) giữ engine đã ghim, không chuyển, để so sánh engine cho đúng.
 

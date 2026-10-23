@@ -22,6 +22,12 @@ DOING_ROLES = ("qa_engineer", "developer")
 THINKING_ENGINES = ("codex-readonly", "claude-readonly")
 DOING_ENGINES = ("codex", "claude")
 # "try again at 7:44 PM" (Codex), "resets 7:40pm (Asia/Saigon)" (Claude)
+MODEL = re.compile(r"^[A-Za-z0-9._:\-\[\]]{1,80}$")
+EFFORTS = ("", "minimal", "low", "medium", "high", "xhigh")  # Codex's model_reasoning_effort; empty: its default
+# what the page offers; any name the CLI accepts may be typed
+MODEL_SUGGESTIONS = {"claude": ["opus", "sonnet", "haiku", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5",
+                                "claude-fable-5-1"],
+                     "codex": ["gpt-6-sol"]}
 RESET_AT = re.compile(r"(?:try again at|resets(?: at)?)\s+(\d{1,2})(?::(\d{2}))?\s*([AP]M)?", re.IGNORECASE)
 
 
@@ -36,7 +42,7 @@ def load() -> dict:
         row = session.get(ProviderSetting, "default")
         data = dict(row.data) if row else {}
     return {"thinking": data.get("thinking") or {}, "doing": data.get("doing") or {},
-            "fallback": data.get("fallback", True)}
+            "fallback": data.get("fallback", True), "models": data.get("models") or {}}
 
 
 def save(data: dict, *, actor: str) -> dict:
@@ -50,7 +56,22 @@ def save(data: dict, *, actor: str) -> dict:
         bad = [e for e in engines if e not in DOING_ENGINES]
         if bad or len(set(engines)) != len(engines):
             raise ValueError(f"{role}: use each of {', '.join(DOING_ENGINES)} at most once (got {', '.join(engines)})")
-    value = {"thinking": thinking, "doing": doing, "fallback": bool(data.get("fallback", True))}
+    models: dict = {}
+    for role, per in (data.get("models") or {}).items():
+        if role not in THINKING_ROLES + DOING_ROLES:
+            raise ValueError(f"unknown role {role}")
+        for provider, choice in (per or {}).items():
+            if provider not in ("codex", "claude"):
+                raise ValueError(f"unknown provider {provider}")
+            model, effort = str(choice.get("model", "")).strip(), str(choice.get("effort", "")).strip()
+            if model and not MODEL.fullmatch(model):
+                raise ValueError(f"{role} on {provider}: {model!r} is not a model name")
+            if effort not in EFFORTS or (effort and provider != "codex"):
+                raise ValueError(f"{role} on {provider}: effort {effort!r} is not one of {', '.join(e for e in EFFORTS if e)}"
+                                 + ("" if provider == "codex" else " (Codex only)"))
+            if model or effort:
+                models.setdefault(role, {})[provider] = {"model": model, "effort": effort}
+    value = {"thinking": thinking, "doing": doing, "fallback": bool(data.get("fallback", True)), "models": models}
     with session_scope() as session:
         row = session.get(ProviderSetting, "default")
         if row is None:
@@ -133,3 +154,9 @@ def available(engines: list[str]) -> tuple[list[str], datetime | None]:
     free = [e for e in engines if provider_of(e) not in out]
     back = min((out[provider_of(e)]["until"] for e in engines if provider_of(e) in out), default=None)
     return free, back
+
+
+def model_for(role: str, engine: str) -> tuple[str, str]:
+    """The model and reasoning effort the Admin chose for a role on a provider; ("", "") keeps the CLI's default."""
+    choice = (load()["models"].get(role) or {}).get(provider_of(engine)) or {}
+    return choice.get("model", ""), choice.get("effort", "")

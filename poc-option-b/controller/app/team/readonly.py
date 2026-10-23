@@ -39,6 +39,8 @@ class CliReasoningClient:
         self.timeout = timeout  # set per call from the project's limits.thinking_timeout_minutes
         self.last_usage: dict = {}
 
+    model, effort = "", ""  # set per call by RoutingTeam from the AI providers settings; empty: the CLI's default
+
     def args(self, cwd: str, last_message: Path) -> list[str]:
         if self.cli == "claude":
             tools = ["Read", "Glob", "Grep"]
@@ -47,9 +49,12 @@ class CliReasoningClient:
                                                   "hooks": [{"type": "command", "command": hook}]}]}}
             return ["claude", "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "dontAsk",
                     "--no-session-persistence", "--setting-sources", "local", "--strict-mcp-config",
+                    *(["--model", self.model] if self.model else []),
                     "--tools", ",".join(tools), "--allowedTools", *tools, "--settings", json.dumps(settings)]
         # A discovery reads its sources folder, which is not a git repository; the folder is read-only to it.
         return ["codex", "exec", "--cd", cwd, "--ephemeral", "--skip-git-repo-check", *codex_args(Path(cwd), write=False),
+                *(["-m", self.model] if self.model else []),
+                *(["-c", f'model_reasoning_effort="{self.effort}"'] if self.effort else []),
                 "-c", 'approval_policy="never"', "--json", "--output-last-message", str(last_message), "-"]
 
     def run(self, endpoint: str, payload: dict, *, session_id: str) -> str:
@@ -223,8 +228,16 @@ class RoutingTeam:
             raise SubscriptionLimit(f"every engine of the {role} is out of quota ({', '.join(engines)})", until=back)
         last: SubscriptionLimit | None = None
         for engine in free:
+            team = self._team(engine)
+            client = getattr(team, "client", None)
+            if client is not None and hasattr(client, "model"):  # the Admin's model for this role on this provider
+                client.model, client.effort = providers.model_for(role, engine)
+                if client.model or client.effort:
+                    from controller.app import joblog
+                    joblog.note(f"{role} on {engine}: model {client.model or 'default'}"
+                                + (f", effort {client.effort}" if client.effort else ""))
             try:
-                return self._call(self._team(engine), method, *args, **kwargs)
+                return self._call(team, method, *args, **kwargs)
             except SubscriptionLimit as exc:
                 last = exc
                 until = providers.mark_limited(engine, str(exc))

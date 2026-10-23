@@ -44,6 +44,8 @@ class Session:
     commands: list[list[str]]  # validation commands, named in the prompt; only Codex can run them (sandboxed)
     timeout: float
     log_path: Path
+    model: str = ""  # the Admin's model for the role on this executor; empty: the CLI's default
+    effort: str = ""  # Codex's model_reasoning_effort
 
 
 @dataclass(frozen=True)
@@ -106,6 +108,7 @@ class ClaudeExecutor:
         tools = ["Read", "Glob", "Grep", "Edit", "MultiEdit", "Write"]
         return [self.binary, "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "dontAsk",
                 "--no-session-persistence", "--setting-sources", "local", "--strict-mcp-config",
+                *(["--model", session.model] if session.model else []),
                 "--tools", ",".join(tools), "--allowedTools", *tools, "--settings", json.dumps(settings)]
 
     def run(self, session: Session) -> SessionResult:
@@ -137,7 +140,10 @@ class CodexExecutor:
     def args(self, session: Session, last_message: Path) -> list[str]:
         # a permission profile, not --sandbox: commands read only the worktree and the installed tools
         return [self.binary, "exec", "--cd", str(session.worktree), "--ephemeral",
-                *codex_args(session.worktree, write=True), "-c", 'approval_policy="never"',
+                *codex_args(session.worktree, write=True),
+                *(["-m", session.model] if session.model else []),
+                *(["-c", f'model_reasoning_effort="{session.effort}"'] if session.effort else []),
+                "-c", 'approval_policy="never"',
                 "--json", "--output-last-message", str(last_message), "-"]
 
     def run(self, session: Session) -> SessionResult:

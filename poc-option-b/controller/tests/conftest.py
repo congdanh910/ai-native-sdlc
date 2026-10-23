@@ -62,6 +62,6 @@ def no_provider_state(request, monkeypatch):
     if "db" in request.fixturenames:
         return
     from controller.app import providers
-    monkeypatch.setattr(providers, "load", lambda: {"thinking": {}, "doing": {}, "fallback": True})
+    monkeypatch.setattr(providers, "load", lambda: {"thinking": {}, "doing": {}, "fallback": True, "models": {}})
     monkeypatch.setattr(providers, "limits", lambda now=None: {})
     monkeypatch.setattr(providers, "mark_limited", lambda engine, message: providers.reset_time(message))
