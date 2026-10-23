@@ -1,7 +1,7 @@
 """Deterministic plan grounding check, run before a human sees the plan."""
 
 from controller.app.context.builder import ContextBundle
-from controller.app.projects.config import EffectivePolicy, matches_any
+from controller.app.projects.config import EffectivePolicy, matches_any, test_folders, unrun_tests
 from controller.app.schemas import Criterion, PlanPayload, TestPlan
 
 
@@ -103,6 +103,9 @@ def check_plan(plan: PlanPayload, tests: TestPlan, criteria: list[Criterion], po
         tested.add(case.criterion)
         if not matches_any(case.target_file, policy.test_paths):
             findings.append(f"{case.id} targets {case.target_file}, outside the test paths {policy.test_paths}")
+        elif unrun_tests([case.target_file], policy.validation):
+            findings.append(f"{case.id} targets {case.target_file}, which no validation command runs (they run "
+                            f"tests in {', '.join(test_folders(policy.validation))}); put it in one of those")
     for criterion in sorted(criterion_ids - tested):
         findings.append(f"no test case proves {criterion}")
     findings = list(dict.fromkeys(findings))  # one line per problem, not one per reference

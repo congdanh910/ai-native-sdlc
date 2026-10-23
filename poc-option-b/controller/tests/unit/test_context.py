@@ -175,3 +175,22 @@ def test_a_task_may_name_its_own_new_file_among_its_references():
               "acceptance_criteria": ["AC-1", "AC-2"], "validation": ["unit-tests"]}]
     report = check_plan(PlanPayload(summary="s", tasks=tasks), tests(), CRITERIA, policy(), FILES, SYMBOLS)
     assert not any("src/list.js" in f for f in report["findings"]), report["findings"]
+
+
+def test_a_test_case_in_a_folder_no_validation_runs_fails_grounding_and_the_tests_gate():
+    from controller.app import checklists
+    from controller.app.projects.config import ValidationCommand
+    commands = [ValidationCommand(name="unit-tests", run=["node", "--test", "test/unit"])]
+    runs_unit = policy().model_copy(update={"validation": commands})
+    unit_plan = plan(validation=["unit-tests"])
+    case = {"id": "TC-1", "task_id": "T1", "criterion": "AC-1", "description": "d", "expected": "e",
+            "target_file": "test/integration/tasks.test.js"}
+    findings = check_plan(unit_plan, tests(case, {**case, "id": "TC-2", "criterion": "AC-2",
+                                                  "target_file": "test/unit/tasks.test.js"}),
+                          CRITERIA, runs_unit, FILES, SYMBOLS)["findings"]
+    assert findings == ["TC-1 targets test/integration/tasks.test.js, which no validation command runs (they run "
+                        "tests in test/unit); put it in one of those"]
+    gate = {r["id"]: r for r in checklists.check_tests(tests(case), unit_plan, CRITERIA, ["test/**"], commands)}
+    assert not gate["test-run"]["ok"] and "TC-1: test/integration/tasks.test.js" in gate["test-run"]["detail"]
+    assert gate["test-run"]["fixes"][0]["action"] == "redesign_tests"
+    assert {r["id"]: r for r in checklists.check_tests(tests(case), unit_plan, CRITERIA, ["test/**"])}["test-run"]["ok"]

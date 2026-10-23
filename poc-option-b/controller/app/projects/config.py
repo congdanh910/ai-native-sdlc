@@ -473,3 +473,35 @@ def glob_to_regex(pattern: str) -> re.Pattern[str]:
 
 def matches_any(path: str, patterns: list[str] | tuple[str, ...]) -> bool:
     return any(glob_to_regex(pattern).match(path) for pattern in patterns)
+
+
+# a folder of tests by its name (backend/tests/api, web/__tests__, e2e); a path token of a command (backend/tests/unit)
+TEST_FOLDER = re.compile(r"(?:^|/)(?:tests?|specs?|__tests__|e2e)(?:/|$)")
+BARE_TEST_FOLDERS = ("tests", "specs", "__tests__", "e2e")
+PATH_TOKEN = re.compile(r"(?<![\w$.\-/])(?:[\w.\-]+/)*[\w.\-]+(?![\w/])")
+
+
+def test_folders(validation: list[ValidationCommand] | tuple[ValidationCommand, ...]) -> dict[str, str]:
+    """The test folders and files the validation commands name ({path: command}), from the text of the commands that
+    are not lint: `pytest -q backend/tests/api` runs backend/tests/api. A command that names none (`npm test`) adds
+    nothing; its part of the code is not judged by unrun_tests."""
+    found: dict[str, str] = {}
+    for command in validation:
+        if command.is_lint:
+            continue
+        for token in PATH_TOKEN.findall(" ".join(command.run)):
+            token = token.rstrip("/")
+            if "/" not in token and token not in BARE_TEST_FOLDERS:  # `npm run test`: a script, not a folder
+                continue
+            if TEST_FOLDER.search(token) and not token.startswith((".", "-")):
+                found.setdefault(token, command.name)
+    return found
+
+
+def unrun_tests(files: list[str], validation) -> list[str]:
+    """Test files no validation command runs: outside every test folder the commands name, in a part of the code
+    (backend, gateway) whose tests run from named folders only. A part with no named folder is not judged."""
+    folders = test_folders(validation)
+    parts = {path.split("/")[0] for path in folders}
+    return [f for f in files if f.split("/")[0] in parts
+            and not any(f == path or f.startswith(path + "/") for path in folders)]

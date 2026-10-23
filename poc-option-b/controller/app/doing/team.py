@@ -13,7 +13,7 @@ from controller.app.config import DATA_DIR
 from controller.app.doing import changes
 from controller.app.doing.executors import Session, SessionResult, executors as default_executors
 from controller.app.doing.validation import ValidationGate, failures, red_check, summary
-from controller.app.projects.config import matches_any
+from controller.app.projects.config import matches_any, test_folders, unrun_tests
 from controller.app.schemas import PlanTask, TestPlan, parse_criteria
 from controller.app.team.base import RunContext, StepResult, SubscriptionLimit
 
@@ -24,6 +24,15 @@ TEMPLATES = {path.stem: path.read_text() for path in PROMPTS.glob("*.md")}
 
 def _prompt(name: str, **values: str) -> str:
     return TEMPLATES[name].format(**values)
+
+
+def _folders_rule(context: RunContext) -> str:
+    folders = test_folders(context.policy.validation)
+    if not folders:
+        return "Put new tests where the project's test commands find them, next to the existing tests."
+    return ("The validation runs tests only from: " + ", ".join(f"{path} ({name})" for path, name in folders.items())
+            + ". A test file elsewhere in those parts of the code never runs: when a case's target file is outside "
+              "them, write it in the folder of that list whose existing tests set up what it needs (the database).")
 
 
 class CliDoing:
@@ -128,7 +137,7 @@ class CliDoing:
                          task_files=", ".join(task.modify + task.create), criteria=self._criteria(context, task),
                          cases=json.dumps(cases, indent=2), test_paths=", ".join(context.policy.test_paths),
                          commands="; ".join(" ".join(c) for c in self._commands(context, task)),
-                         edit_rule=edit_rule, preview=self._preview(context),
+                         edit_rule=edit_rule, preview=self._preview(context), test_folders=_folders_rule(context),
                          feedback=f"\n# {'Decision on the dispute' if amend else 'Previous attempt'}\n\n{feedback}\n"
                          if feedback else "")
         label = f"{task.id}-tests-{'amend' if amend else 2 if feedback else 1}"
@@ -220,6 +229,10 @@ class CliDoing:
                 return StepResult(True, f"red check passed before the earlier implementation {earlier[:10]}",
                                   evidence={"reused": True})
         cases = self._cases(tests, task)
+        unrun = unrun_tests(self._test_files(context, task), context.policy.validation)
+        if unrun:  # the commands would pass without them: that is not "already pass", the QA Engineer moves them
+            return StepResult(False, f"the new tests in {', '.join(unrun)} never run: no validation command runs that "
+                                     f"folder. {_folders_rule(context)}", evidence={"unrun": unrun})
         expect_pass = bool(cases) and all(case["expected_pass"] for case in cases)
         # Every command, not only the task's: a task may list just a syntax check, and the new tests must run.
         names = [c.name for c in context.policy.validation]
@@ -236,6 +249,15 @@ class CliDoing:
             return StepResult(True, f"red by construction: the tests need {', '.join(runners)}, which this task "
                                     "creates; the validation after the code runs them", evidence={"reports": reports})
         return StepResult(ok, detail, evidence={"reports": reports})
+
+    def _test_files(self, context: RunContext, task: PlanTask) -> list[str]:
+        """The test files of the task's committed tests (the QA Engineer may have put a case elsewhere than its
+        target file)."""
+        if not context.base_commit:
+            return []
+        worktree = self._worktree(context)
+        commit = changes.find_commit(worktree, context.task_base or context.base_commit, f"test({task.id}):")
+        return [f for f in changes.files_of(worktree, commit) if matches_any(f, context.policy.test_paths)] if commit else []
 
     def _lint_in_tests(self, context: RunContext, task: PlanTask, reports: list[dict], lint: frozenset[str]) -> list[str]:
         """Lint failures that name a test file the QA Engineer committed for this task, with the lines saying so."""
@@ -269,7 +291,8 @@ class CliDoing:
         prompt = _prompt("developer", agents_md=context.agents_md, task_id=task.id, task_title=task.title,
                          task_files=", ".join(task.modify + task.create), references=references,
                          provides=", ".join(task.provides) or "none", criteria=self._criteria(context, task),
-                         test_files=", ".join(sorted({c["target_file"] for c in cases})) or "the test paths",
+                         test_files=", ".join(self._test_files(context, task)
+                                              or sorted({c["target_file"] for c in cases})) or "the test paths",
                          cases=json.dumps(cases, indent=2),
                          commands="; ".join(" ".join(c) for c in self._commands(context, task)),
                          lock_note=(f"When you change a dependency manifest, do not write its lockfile: the platform runs "

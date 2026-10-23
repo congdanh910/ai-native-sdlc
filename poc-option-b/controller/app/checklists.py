@@ -176,8 +176,8 @@ def check_plan(plan: PlanPayload, criteria: list[Criterion], grounding: dict | N
     ])
 
 
-def check_tests(tests: TestPlan, plan: PlanPayload, criteria: list[Criterion], test_paths) -> list[dict]:
-    from controller.app.projects.config import matches_any
+def check_tests(tests: TestPlan, plan: PlanPayload, criteria: list[Criterion], test_paths, validation=()) -> list[dict]:
+    from controller.app.projects.config import matches_any, test_folders, unrun_tests
     ids = {c.id for c in criteria}
     uncovered = [c.id for c in criteria if not any(t.criterion == c.id for t in tests.cases)]
     unknown = sorted({t.criterion for t in tests.cases} - ids)
@@ -185,6 +185,9 @@ def check_tests(tests: TestPlan, plan: PlanPayload, criteria: list[Criterion], t
     orphans = sorted({t.task_id for t in tests.cases} - tasks)
     outside = [f"{t.id}: {t.target_file}" for t in tests.cases if not matches_any(t.target_file, test_paths)]
     empty = [t.id for t in tests.cases if not (t.description.strip() and t.expected.strip())]
+    folders = ", ".join(test_folders(validation))
+    unrun = [f"{t.id}: {t.target_file} (the validation runs tests in {folders})" for t in tests.cases
+             if matches_any(t.target_file, test_paths) and unrun_tests([t.target_file], validation)]
     from controller.app.analysis import before_coding, blocking
     found = blocking(before_coding(criteria, plan, tests))
     serious = [f"{f['severity']}: {f['text']}" for f in found]
@@ -195,6 +198,7 @@ def check_tests(tests: TestPlan, plan: PlanPayload, criteria: list[Criterion], t
         _result("known-criteria", "Every test case names an AC or EC of this story", [f"unknown: {', '.join(unknown)}"] if unknown else []),
         _result("known-tasks", "Every test case names a task of the approved plan", [f"unknown: {', '.join(orphans)}"] if orphans else []),
         _result("test-paths", "Test files are inside the project's test paths", outside),
+        _result("test-run", "Every test file is in a folder a validation command runs", unrun),
         _result("fields", "Every test case has a scenario and an expected result", [f"empty: {', '.join(empty)}"] if empty else []),
     ])
 

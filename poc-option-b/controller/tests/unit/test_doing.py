@@ -120,6 +120,7 @@ class FakeExecutor:
     def run(self, session: Session) -> SessionResult:
         self.sessions.append(session)
         for path, text in self.edits.items():
+            (session.worktree / path).parent.mkdir(parents=True, exist_ok=True)
             (session.worktree / path).write_text(text)
         return SessionResult(self.name, self.ok, self.message, 1.0, 0 if self.ok else 1, False, {"turns": 3})
 
@@ -932,3 +933,30 @@ def test_validation_tells_a_broken_environment_from_failing_code():
     assert "exit 137" in infrastructure_problem([{"name": "backend-unit", "ok": False, "exit_code": 137, "tail": ""}])
     code = {"name": "backend-unit", "ok": False, "exit_code": 1, "tail": "collected 3\nE   assert 404 == 200\nFAILED test_x"}
     assert infrastructure_problem([code]) == "" and first_error([code]) == "backend-unit: E   assert 404 == 200"
+
+
+def test_the_test_folders_the_validation_names_and_the_files_none_runs():
+    from controller.app.projects.config import test_folders, unrun_tests
+    commands = [ValidationCommand(name="backend-api", run=["sh", "-ec", "if [ -d backend/tests/api ]; then "
+                                                           "backend/.venv/bin/python -m pytest -q backend/tests/api; fi"]),
+                ValidationCommand(name="web-tests", run=["npm", "--prefix", "web", "run", "test"]),
+                ValidationCommand(name="python-lint", run=["ruff", "check", "backend/tests/lint"])]
+    assert test_folders(commands) == {"backend/tests/api": "backend-api"}  # not the script `test`, not lint
+    assert unrun_tests(["backend/tests/integration/test_a.py", "backend/tests/api/test_b.py", "web/tests/c.test.ts"],
+                       commands) == ["backend/tests/integration/test_a.py"]  # web names no folder: not judged
+
+
+def test_new_tests_in_a_folder_no_command_runs_go_back_to_the_qa_engineer(worktree, tmp_path):
+    unit = [ValidationCommand(name="unit-tests", run=["node", "--test", "test/unit"])]
+    qa = FakeExecutor("claude", {"test/integration/due.test.js": "test('due', () => {});\n"})
+    team, runner = doing(tmp_path, qa=qa, exit_codes=[0])
+    base = changes.head(worktree)
+    run = dataclasses.replace(context(worktree, qa_executor="claude", validation=unit), base_commit=base)
+    team.write_tests(run, TASK, TESTS)
+    result = team.red_check(run, TASK, TESTS)
+    assert not result.ok and "already pass" not in result.detail and runner.calls == []
+    assert "test/integration/due.test.js never run" in result.detail and "test/unit (unit-tests)" in result.detail
+    qa.edits = {"test/unit/due.test.js": "test('due', () => {});\n"}
+    team.write_tests(run, TASK, TESTS, feedback=result.detail)  # moved: the commands run it, and it passes
+    assert "already pass" in team.red_check(run, TASK, TESTS).detail and len(runner.calls) == 1
+    assert "test/unit (unit-tests)" in qa.sessions[-1].prompt

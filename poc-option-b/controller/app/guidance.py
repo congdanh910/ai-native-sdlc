@@ -40,6 +40,9 @@ CHECK_FIXES = {
         "known-tasks": ("redesign_tests", "Test cases run with a task of the approved plan.", "Put each test case on a task of the plan: {detail}."),
         "test-paths": ("redesign_tests", "Tests outside the project's test paths are never run by validation.",
                        "Put the test files under the project's test paths: {detail}."),
+        "test-run": ("redesign_tests", "No validation command runs these test files, so the red check and the "
+                                       "validation would pass without them.",
+                     "Put each test case in a folder the validation runs: {detail}."),
         "fields": ("redesign_tests", "A test case without a scenario or an expected result cannot be written.",
                    "Give every test case a scenario and an expected result: {detail}."),
     },

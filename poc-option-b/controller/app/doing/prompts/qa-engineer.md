@@ -23,6 +23,7 @@ Each case names its target file, the criterion it proves, the scenario and the e
 - Test behaviour through the functions and modules the task names, in the style of the existing tests. The code for this task does not exist yet, so your new tests are expected to fail now; do not create stubs or fake the implementation.
 - Write one test for each case above. Use fixed values for ids, dates and times.
 - The project validates with: {commands}.
+- {test_folders}
 - Do not commit, push, or install anything.
 - When the Tech Lead decided a dispute (below), the decision wins over the test cases above wherever they differ: follow its reason exactly, even if a case says otherwise, and change only what it requires. If the decision is unclear or impossible within the test files, do not guess: answer with a line that starts with "UNCLEAR:" and say what is missing.
 {preview}{feedback}

@@ -336,7 +336,8 @@ def evaluate_gate(session: Session, run: Run, gate: str | None = None) -> dict |
     if gate is None:
         return None
     raw_policy = artifact(session, run.id, "effective_policy")
-    test_paths = EffectivePolicy.model_validate_json(raw_policy).test_paths if raw_policy else []
+    policy = EffectivePolicy.model_validate_json(raw_policy) if raw_policy else None
+    test_paths = policy.test_paths if policy else []
     controller: list[dict] = []
     ai: list[dict] = []
     spec = latest_document(session, run.id, "spec")
@@ -410,7 +411,8 @@ def evaluate_gate(session: Session, run: Run, gate: str | None = None) -> dict |
             controller = checklists.check_plan(payload, criteria, plan.grounding_report, test_paths)
             ai = checklists.ai_results(checklists.AI_ITEMS["plan"], [c.model_dump() for c in payload.self_check])
         else:
-            controller = checklists.check_tests(tests, payload, criteria, test_paths)
+            controller = checklists.check_tests(tests, payload, criteria, test_paths,
+                                                  policy.validation if policy else ())
             ai = checklists.ai_results(checklists.AI_ITEMS["tests"], [c.model_dump() for c in tests.self_check])
     elif gate == "pr":
         statuses = {t.external_task_id: t.status for t in current_tasks(session, run)}
@@ -865,8 +867,10 @@ def compute(team: Team, loaded: Loaded) -> dict:
         plan, tidied = tidy_plan(team.plan(context), context.policy)
         record()
         joblog.note(f"plan has {len(plan.tasks)} task(s); the QA Analyst designs the test cases")
-        # The grounding feedback is the Tech Lead's; the QA Analyst gets the QC's feedback only on a redesign.
-        tests, tidied_tests = tidy_tests(team.design_tests(dataclasses.replace(context, feedback=[]), plan), plan)
+        # The grounding feedback is the Tech Lead's, except the lines on test cases (a file no validation runs); the
+        # QA Analyst gets the QC's feedback only on a redesign.
+        on_cases = [line for line in context.feedback if re.match(r"TC-\d+ ", line)]
+        tests, tidied_tests = tidy_tests(team.design_tests(dataclasses.replace(context, feedback=on_cases), plan), plan)
         record()
         result = {"plan": plan.model_dump(), "tests": tests.model_dump(), "tidied": tidied + tidied_tests,
                   "regenerated_from": loaded.extra.get("regenerated_from"), "feedback": context.feedback}

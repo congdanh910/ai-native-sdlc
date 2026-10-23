@@ -1,6 +1,15 @@
 # Tiến độ và bàn giao
 
-_Cập nhật: 2026-10-23_
+_Cập nhật: 2026-10-24_
+
+## 24/10: test không được validation chạy
+
+Manage an Account (f662ce06) T2 dừng vì test ở `backend/tests/integration/` (không lệnh nào chạy) bị coi là "pass sẵn".
+Sửa: `test_folders`/`unrun_tests` (projects/config.py) đọc thư mục test từ lệnh validation; prompt test-design và QA
+Engineer nêu các thư mục đó; grounding + mục `test-run` ở cổng test cases; red check trả QA chuyển test (Developer nhận
+file test thật đã commit); brief không đòi sửa file protected khi chuyển test là đủ. Đã restart và resume run. Server
+GX10 (118.69.64.152) đã khảo sát chỉ đọc để deploy; người dùng tạm dừng việc deploy (cần quyết: tên thư mục thay
+`poc-option-b`, HTTPS với Caddy dùng chung, rootless Docker).
 
 ## Tối 23/10: AI providers
 

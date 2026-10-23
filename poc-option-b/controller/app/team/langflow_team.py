@@ -21,7 +21,7 @@ from controller.app.integrations.langflow import (InvalidModelOutput, LangflowCl
 from controller.app.discovery.extract import Part, compact_items, repair_chunk, repair_consolidation, repair_minutes
 from controller.app.discovery.inventory import ChunkResult, Consolidation, MinutesResult
 from controller.app.project_docs import SDS_PARTS, Options, Sds, Srs, sds_part_model, srs_features
-from controller.app.projects.config import matches_any
+from controller.app.projects.config import matches_any, test_folders
 from controller.app.schemas import NOTES_HEADING, Advice, DefectCheck, Intent, Outcomes, PlanPayload, Review, Spec, TestPlan, parse_criteria
 from controller.app.team import normalize
 from controller.app.team.base import CallRecord, CapacityBusy, RunContext
@@ -126,7 +126,7 @@ class LangflowTeam(MockTeam):
         return {"allowed_paths": policy.allowed_paths, "protected_paths": policy.protected_paths,
                 "test_paths": policy.test_paths, "max_tasks": policy.max_tasks,
                 "validation": [command.name for command in policy.validation],
-                "dependency_manifests": policy.setup_inputs}
+                "dependency_manifests": policy.setup_inputs, "test_folders": test_folders(policy.validation)}
 
     @staticmethod
     def _preview(context: RunContext) -> dict | None:
