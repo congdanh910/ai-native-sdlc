@@ -66,19 +66,23 @@ def run_e2e(run_id: str, worktree: Path, preview: Preview, evidence: Path, memor
     return {"ok": True, "report": report, "detail": f"e2e exit {result.exit_code}"}
 
 
-def _specs(suite: dict):
+def _specs(suite: dict, titles: tuple[str, ...] = ()):
+    """Each spec with the titles of the suites around it (file, describe blocks)."""
+    here = (*titles, suite.get("title", ""))
     for spec in suite.get("specs", []):
-        yield spec
+        yield spec, here
     for child in suite.get("suites", []):
-        yield from _specs(child)
+        yield from _specs(child, here)
 
 
-def parse_report(report: dict, evidence: Path) -> list[dict]:
+def parse_report(report: dict, evidence: Path, story: str = "") -> list[dict]:
     """One case per test of the Playwright JSON report: its criteria, outcome, error and evidence files (relative to
-    the evidence folder)."""
+    the evidence folder). Criterion ids are a story's own (AC-01 of one story is not AC-01 of another): with a story,
+    only a test that names it (in its title or a describe block around it) proves its criteria; the e2e folder's other
+    tests, from earlier stories, run as regression tests."""
     cases = []
     for suite in report.get("suites", []):
-        for spec in _specs(suite):
+        for spec, titles in _specs(suite):
             for test in spec.get("tests", []):
                 results = test.get("results") or [{}]
                 last = results[-1]
@@ -90,7 +94,10 @@ def parse_report(report: dict, evidence: Path) -> list[dict]:
                         files.append({"name": attachment.get("name", ""), "type": attachment.get("contentType", ""),
                                       "path": relative})
                 error = (last.get("error") or {}).get("message", "")
-                cases.append({"title": spec.get("title", ""), "criteria": CRITERION.findall(spec.get("title", "")),
+                title = spec.get("title", "")
+                mine = not story or story in " ".join((*titles, title))
+                cases.append({"title": title, "criteria": CRITERION.findall(title) if mine else [],
+                              "regression": not mine, "file": spec.get("file", ""),
                               "status": last.get("status", test.get("status", "unknown")),
                               "error": re.sub(r"\x1b\[[0-9;]*m", "", error)[:1500], "attachments": files})
     return cases
@@ -110,7 +117,8 @@ def authoring_errors(cases: list[dict]) -> list[str]:
 def coverage(criteria: list[str], cases: list[dict], proven: dict[str, list[str]] | None = None) -> list[str]:
     """Each criterion of the story has a test, and every test of it passed. A criterion a browser cannot show (a
     restart, a clock, a test double's failure) needs no browser test when passing tests of the coding prove it."""
-    problems = []
+    problems = [f"regression: {c['title']} failed (an acceptance test of an earlier story)"
+                for c in cases if c.get("regression") and c["status"] not in ("passed", "skipped")]
     for criterion in criteria:
         mine = [c for c in cases if criterion in c["criteria"]]
         if not mine and not (proven or {}).get(criterion):
@@ -140,7 +148,12 @@ def render_acceptance(title: str, criteria: dict[str, str], cases: list[dict], u
         out += ["", "## Failures", ""]
         for case in failed:
             out += [f"### {case['title']}", "", "```", case["error"], "```", ""]
-    other = [c for c in cases if not c["criteria"]]
+    regression = [c for c in cases if c.get("regression")]
+    if regression:
+        failed = [c for c in regression if c["status"] not in ("passed", "skipped")]
+        out += ["", f"## Regression: acceptance tests of earlier stories ({len(regression) - len(failed)}/{len(regression)} passed)",
+                ""] + [f"- {c['title']}: {c['status']}" for c in failed]
+    other = [c for c in cases if not c["criteria"] and not c.get("regression")]
     if other:
         out += ["", f"Tests without a criterion id in their title: {', '.join(c['title'] for c in other)}", ""]
     return "\n".join(out)

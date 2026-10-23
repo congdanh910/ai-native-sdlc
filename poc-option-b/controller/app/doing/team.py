@@ -163,6 +163,7 @@ class CliDoing:
                              for a in preview.accounts) or "  - none: ask in your answer"
         prompt = _prompt("acceptance-tests", agents_md=context.agents_md, story=story, criteria=criteria,
                          e2e_paths=", ".join(preview.e2e_paths), accounts=accounts, e2e_command=" ".join(preview.e2e),
+                         story_tag=(context.story or {}).get("story_id") or "FOUNDATION",
                          preview=self._preview(context),
                          feedback=f"\n# Previous attempt\n\n{feedback}\n" if feedback else "")
         # not a task of the plan: built without its checks, and every validation command is available to the session

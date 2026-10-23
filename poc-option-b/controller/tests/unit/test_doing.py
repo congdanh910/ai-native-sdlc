@@ -837,7 +837,7 @@ def test_tests_failing_in_their_own_code_go_back_to_the_qa_engineer_once(worktre
     runs = iter([[{"title": "AC-1 due", "criteria": ["AC-1"], "status": "failed", "attachments": [],
                    "error": "strict mode violation: getByRole('heading') resolved to 2 elements"}],
                  [{"title": "AC-1 due", "criteria": ["AC-1"], "status": "passed", "attachments": [], "error": ""}]])
-    monkeypatch.setattr(acceptance, "parse_report", lambda report, evidence: next(runs))
+    monkeypatch.setattr(acceptance, "parse_report", lambda report, evidence, story="": next(runs))
 
     class QA:
         feedback = []
@@ -901,3 +901,19 @@ def test_acceptance_tests_the_qa_engineer_finds_right_after_fixed_defects_are_ke
     ctx = dataclasses.replace(context(worktree, qa_executor="claude", preview=preview), base_commit=base)
     result = team.write_acceptance_tests(ctx, "- AC-1: list", "List", feedback="The QC sent defects back: AC-1 headers")
     assert result.ok and result.evidence["reused"] and result.evidence["commit"] == suite, result.detail
+
+
+def test_only_the_story_s_own_acceptance_tests_prove_its_criteria(tmp_path):
+    from controller.app.acceptance import coverage, parse_report
+    def spec(title, status="passed"):
+        return {"title": title, "tests": [{"results": [{"status": status, "attachments": []}]}]}
+    report = {"suites": [
+        {"title": "auth.spec.ts", "specs": [spec("EC-06 signing out one account leaves the other signed in"),
+                                            spec("AC-09 invalid credentials keep both fields", "failed")]},
+        {"title": "employee-list.spec.ts", "suites": [{"title": "EMP-US-02", "specs": [spec("AC-01 HR_ADMIN sees the list")]}]}]}
+    cases = parse_report(report, tmp_path, "EMP-US-02")
+    assert [(c["title"][:5], c["criteria"], c["regression"]) for c in cases] == [
+        ("EC-06", [], True), ("AC-09", [], True), ("AC-01", ["AC-01"], False)]
+    problems = coverage(["AC-01", "EC-06"], cases)
+    assert problems == ["regression: AC-09 invalid credentials keep both fields failed (an acceptance test of an earlier story)",
+                        "EC-06 has no acceptance test and no passing test of the coding"]  # the foundation's EC-06 is not this one

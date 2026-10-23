@@ -3,7 +3,7 @@ import type { Doc, RunDetail } from "../lib/api";
 import { Badge } from "./ui";
 
 interface Attachment { name: string; type: string; path: string }
-interface Case { title: string; criteria: string[]; status: string; error: string; attachments: Attachment[] }
+interface Case { title: string; criteria: string[]; status: string; error: string; attachments: Attachment[]; regression?: boolean }
 
 /** Each criterion of the story with its end-to-end tests, their outcome and their screenshots and videos. */
 export function AcceptanceReport({ run, doc }: { run: RunDetail; doc: Doc }) {
@@ -46,6 +46,14 @@ export function AcceptanceReport({ run, doc }: { run: RunDetail; doc: Doc }) {
           </div>
         );
       })}
+      {data.cases.some((c) => c.regression) ? (
+        <div className="rounded-lg border border-line p-3 text-sm">
+          <b>Regression</b> <span className="text-xs text-muted">acceptance tests of earlier stories, run again on this preview: {data.cases.filter((c) => c.regression && c.status === "passed").length}/{data.cases.filter((c) => c.regression).length} passed</span>
+          <ul className="m-0 mt-1 pl-5">
+            {data.cases.filter((c) => c.regression && c.status !== "passed").map((c) => <li key={c.title} className="text-bad">{c.title}: {c.status}</li>)}
+          </ul>
+        </div>
+      ) : null}
       {open ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-bg/90 p-6" role="dialog" aria-modal="true" onClick={() => setOpen(null)}>
           <img src={open} alt="evidence" className="max-h-full max-w-full rounded border border-line" />

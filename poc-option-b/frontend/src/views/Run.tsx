@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { AcceptanceReport } from "../components/AcceptanceReport";
 import { Link } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Check, ChevronDown, ChevronRight, ChevronsDownUp, ChevronsUpDown, FileCode2, GitCommit, X } from "lucide-react";
@@ -17,7 +18,7 @@ import { SourcesTab } from "../components/Sources";
 import { PlanSummary } from "../components/PlanSummary";
 import { ActionButton, Badge, Button, Card, Empty, ErrorBox, Loading, Markdown, Mono, PageHeader, Select, StatusBadge, Tabs } from "../components/ui";
 
-type Tab = "sources" | "requirements" | "questions" | "decisions" | "tasks" | "plan" | "thread" | "diff" | "events" | "work";
+type Tab = "sources" | "requirements" | "questions" | "decisions" | "tasks" | "plan" | "acceptance" | "thread" | "diff" | "events" | "work";
 
 const STEP_LABEL: Record<string, string> = {
   WRITING_TESTS: "QA writes tests", RED_CHECK: "Red check", CODING: "Developer", REMEDIATING: "Developer fixes", VALIDATING: "Validation",
@@ -421,6 +422,7 @@ export function RunView({ id }: { id: string }) {
               { id: "requirements" as Tab, label: "Requirements", count: [...r.documents].reverse().find((d) => d.kind === "inventory")?.inventory?.items.length ?? 0 },
               { id: "questions" as Tab, label: "Questions", count: r.questions?.filter((q) => q.status === "open").length ?? 0 },
               { id: "decisions" as Tab, label: "Decisions", count: r.decisions?.length ?? 0 }] : []),
+            ...(r.documents.some((d) => d.kind === "acceptance") ? [{ id: "acceptance" as Tab, label: "Acceptance", count: r.documents.filter((d) => d.kind === "acceptance").length }] : []),
             { id: "thread", label: "Thread" },
             ...(srs ? [] : [{ id: "diff" as Tab, label: "Diff" }]),
             { id: "events", label: "Events" },
@@ -432,6 +434,9 @@ export function RunView({ id }: { id: string }) {
           {shown === "requirements" ? <RequirementsTab run={r} /> : null}
           {shown === "questions" ? <QuestionsTab run={r} onChange={refresh} /> : null}
           {shown === "decisions" ? <DecisionsTab run={r} onChange={refresh} /> : null}
+          {shown === "acceptance" ? (
+            <Card className="p-5"><VersionPicker items={r.documents.filter((d) => d.kind === "acceptance")}>{(d) => <AcceptanceReport run={r} doc={d} />}</VersionPicker></Card>
+          ) : null}
           {shown === "thread" ? <ThreadTab run={r} /> : null}
           {shown === "diff" ? <DiffTab run={r} /> : null}
           {shown === "events" ? <EventsTab run={r} /> : null}

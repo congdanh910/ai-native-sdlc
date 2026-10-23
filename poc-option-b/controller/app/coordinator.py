@@ -1369,11 +1369,14 @@ def _accept(team: Team, loaded: Loaded) -> dict:
         return {**result, "ok": False, "detail": f"the preview did not start: {state['detail'][:1500]}"}
     evidence = DATA_DIR / "evidence" / run_id / str(extra["attempt"])
 
+    # the story's own tests name it, so an earlier story's AC-01 never stands for this one's
+    story_tag = (context.story or {}).get("story_id") or ("FOUNDATION" if loaded.extra.get("run_kind") == RunKind.FOUNDATION else "")
+
     def run_tests() -> tuple[dict, list[dict]]:
         shutil.rmtree(evidence, ignore_errors=True)
         joblog.note(f"running the acceptance tests against {state['url']}")
         ran = acceptance.run_e2e(run_id, Path(extra["worktree"]), config, evidence, context.policy.container_memory_mb)
-        cases = acceptance.parse_report(ran["report"], evidence) if ran["ok"] else []
+        cases = acceptance.parse_report(ran["report"], evidence, story_tag) if ran["ok"] else []
         joblog.note(f"{sum(c['status'] == 'passed' for c in cases)}/{len(cases)} acceptance test(s) passed")
         return ran, cases
 
