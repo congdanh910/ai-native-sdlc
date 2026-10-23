@@ -63,6 +63,7 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
     }
     if (mode === "amend" && fix.amend) return post("amend-plan", { ...fix.amend, reason: fix.reason });
     if (fix.action === "rewrite_spec") return post("reject-spec", { reason: fix.reason, next: "redo" });
+    if (fix.action === "revise_onboarding") return post("onboarding/redo", { reason: fix.reason });
     if (fix.action === "replan" && need?.action === "waiting_plan_approval") return post("reject-plan", { reason: fix.reason, next: "redo" });
     return post("reject-tests", { reason: fix.reason, next: fix.action === "replan" ? "replan" : "redo" });
   };

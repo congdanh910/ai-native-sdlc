@@ -217,7 +217,7 @@ export interface Step {
 /** The review checklist of the gate a run waits at (aif-review-checklist.md). */
 /** The next step for a failing controller check: the decision to take and a reason written for the role that redoes the work. */
 export interface GateFix {
-  action: "replan" | "redesign_tests" | "rewrite_spec"; why: string; reason: string; finding?: string;
+  action: "replan" | "redesign_tests" | "rewrite_spec" | "revise_onboarding"; why: string; reason: string; finding?: string;
   amend?: { task: string; criterion: string };  // fixable at once, without a model
 }
 export interface GateChecklist {

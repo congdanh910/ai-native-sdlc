@@ -11,7 +11,11 @@ hiệu lực sau restart), "Allow these files", Next step ở mọi mục kiểm
 thuật (`disputes`). Docker đã lên 9.7 GB RAM, 2 worker chạy. **Nợ phải trả:** Manage Positions tạm giữ cột "Actions" trên bảng nhân
 viên để gán chức vụ (người dùng chọn nhanh để verify); SDS §3.2.3–3.2.4 đặt việc sửa phòng ban/chức vụ ở trang chi tiết
 nhân viên: khi làm EMP-US-04 (Update an Employee) phải chuyển việc gán chức vụ vào đó và gỡ cột Actions (ghi vào
-intent của EMP-US-04).
+intent của EMP-US-04). **CI GitHub của attendance fail từ Foundation** vì `.github/workflows/ci.yml` thiếu
+`SESSION_COOKIE_SECURE: 'false'` (có trong environment.env); cổng Onboarding giờ bắt lỗi này; repo hiện tại cần sửa
+một dòng ở ci.yml (file onboarding, protected path) hoặc đợi chạy lại Foundation. PR #12 (Positions) đã merge; PR #13
+(Departments) đã tự theo main (6 file tài liệu tự gộp, 4 xung đột code + migration hai head do task T5 giải), 96 test
+Acceptance pass, chờ người dùng merge.
 
 ## Điều phối nhiều story (23/10)
 

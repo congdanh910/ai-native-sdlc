@@ -217,3 +217,27 @@ def render_onboarding(title: str, onboarding: Onboarding, files: dict[str, str],
             language = "yaml" if path.endswith((".yaml", ".yml")) else "dockerfile" if "Dockerfile" in path else ""
             out += [f"````{language}", content.rstrip(), "````", ""]
     return "\n".join(out)
+
+
+def ci_env_gaps(files: dict[str, str]) -> list[str]:
+    """Variables of environment.env (what validation runs with) that the CI workflow does not set: the same tests then
+    pass on the platform and fail in CI (attendance, 23/10: SESSION_COOKIE_SECURE missing, 8 session tests got 401)."""
+    import yaml
+    from controller.app.projects.config import parse_project_config
+    ci, raw = files.get(CI_PATH, ""), files.get(CONFIG_PATH, "")
+    if not ci.strip() or not raw.strip():
+        return []
+    try:
+        wanted = parse_project_config(raw).environment.env
+        workflow = yaml.safe_load(ci) or {}
+    except (ValueError, yaml.YAMLError):
+        return []
+    have: set[str] = set(((workflow.get("env") or {}) if isinstance(workflow, dict) else {}).keys())
+    for job in ((workflow.get("jobs") or {}) if isinstance(workflow, dict) else {}).values():
+        if isinstance(job, dict):
+            have |= set((job.get("env") or {}).keys())
+            have |= set(((job.get("container") or {}) if isinstance(job.get("container"), dict) else {}).get("env", {}) or {})
+            for step in job.get("steps") or []:
+                if isinstance(step, dict):
+                    have |= set((step.get("env") or {}).keys())
+    return [f"{CI_PATH} does not set {key} (environment.env has {key}={value})" for key, value in wanted.items() if key not in have]

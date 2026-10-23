@@ -350,8 +350,16 @@ def evaluate_gate(session: Session, run: Run, gate: str | None = None) -> dict |
         from controller.app.foundation import CONFIG_PATH, Onboarding, check_test_doubles
         data = latest_document(session, run.id, "onboarding").data or {}
         files = data.get("files", {})
+        from controller.app.foundation import ci_env_gaps
+        from controller.app.guidance import fix
+        gaps = ci_env_gaps(files)
         controller = [checklists._result("files", "AGENTS.md and a .sdlc/project.yaml that loads are present",
-                                         [f"{p} is missing" for p in ("AGENTS.md", CONFIG_PATH) if p not in files])]
+                                         [f"{p} is missing" for p in ("AGENTS.md", CONFIG_PATH) if p not in files]),
+                      checklists._result("ci-env", "The CI workflow sets every variable of environment.env", gaps,
+                                         [fix("revise_onboarding", "Tests that pass in the platform's validation fail "
+                                              "in CI when CI runs without the same variables.",
+                                              "Add to the CI workflow's env the variables of environment.env it misses: "
+                                              + "; ".join(gaps[:6]))] if gaps else None)]
         # a warning, not a block: the Tech Lead may accept an integration without a double for now
         sds = mirror_for(session.get(Project, run.project_id)).read_file(run.base_commit, SDS_PATH) or ""
         onboarding = Onboarding.model_validate({k: v for k, v in data.items() if k not in ("files", "revision", "edited_from")})

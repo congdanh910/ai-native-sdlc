@@ -4,7 +4,7 @@ T2, which neither delivers it nor depends on a task that does" (Manage Departmen
 
 Actions name the decision, not a button of one gate: replan (the Tech Lead AI plans again; the test cases follow),
 redesign_tests (the QA Analyst designs the test cases again), rewrite_spec (the Business Analyst writes the spec
-again). The page maps them to the gate's buttons.
+again), revise_onboarding (the Architect revises the onboarding files). The page maps them to the gate's buttons.
 """
 
 

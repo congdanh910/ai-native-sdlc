@@ -10,6 +10,7 @@ const ACTION: Record<GateFix["action"], { label: string; who: string }> = {
   replan: { label: "Reject: replan", who: "the Tech Lead AI plans again with this reason, then the test cases follow (about 10 minutes)" },
   redesign_tests: { label: "Reject: redesign tests", who: "the QA Analyst designs the test cases again with this reason (a few minutes)" },
   rewrite_spec: { label: "Reject: rewrite", who: "the Business Analyst writes the spec again with this reason" },
+  revise_onboarding: { label: "Ask for changes", who: "the Architect revises the onboarding files with this reason" },
 };
 
 export function GateChecklist({ checklist, checked, onChange, onFix }: {
