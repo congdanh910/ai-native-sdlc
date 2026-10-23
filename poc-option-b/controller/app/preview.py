@@ -90,6 +90,9 @@ def start(run_id: str, worktree: Path, preview: Preview, port: int, log_dir: Pat
     if missing:
         return {"status": "failed", "detail": f"nothing to run yet: {', '.join(missing)} not in the run's branch "
                                               "(the run's coding creates them)"}
+    # every start on fresh data: a database kept from the last start keeps what its tests left (Manage an Account,
+    # 24/10: the failed sign-ins of the first acceptance run throttled every sign-in of the second)
+    stop(run_id, worktree, preview)
     override = log_dir / "preview.override.yml"
     # ports as a list of one mapping: the platform's host port, on the loopback interface only
     override.write_text(json.dumps({"services": {preview.service: {"ports": [f"127.0.0.1:{port}:{preview.port}"]}}}))

@@ -971,3 +971,16 @@ def test_the_developer_reads_the_end_of_the_failing_log_without_colours(tmp_path
     text = failures([report, CommandReport("lint", True, 0, 1.0, False, "", "")])
     assert text.startswith("## web-tests (exit 1)\nFAIL TC-36 empty state") and "line 59" in text and "\x1b" not in text
     assert first_error([{"name": "web-tests", "ok": False, "tail": "\x1b[1mError\x1b[22m: boom"}]) == "web-tests: Error: boom"
+
+
+def test_every_preview_start_begins_on_fresh_data(tmp_path, monkeypatch):
+    from controller.app import preview
+    from controller.app.projects.config import Preview
+    (tmp_path / ".sdlc").mkdir()
+    (tmp_path / ".sdlc" / "preview.compose.yml").write_text("services:\n  web:\n    image: nginx\n")
+    calls = []
+    monkeypatch.setattr(preview, "run_bounded", lambda argv, **k: calls.append(argv) or ProcessResult(argv, 1, "no", 0.1))
+    monkeypatch.setattr(preview, "_failed_services", lambda *a: [])
+    preview.start("run-1", tmp_path, Preview(compose=".sdlc/preview.compose.yml", service="web", port=80), 9100,
+                  tmp_path / "logs")
+    assert calls[0][-3:] == ["down", "-v", "--remove-orphans"] and "up" in calls[1]  # the last start's database goes
