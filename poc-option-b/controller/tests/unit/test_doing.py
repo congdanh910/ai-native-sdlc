@@ -884,3 +884,20 @@ def test_test_files_the_developer_writes_are_dropped_and_the_code_stays(worktree
     assert result.ok and result.changed_files == ["src/tasks.js"] and "test/own.test.js" in result.detail
     assert not (worktree / "test" / "own.test.js").exists()
     assert "Tests are the QA Engineer's" in dev.sessions[0].prompt
+
+
+def test_acceptance_tests_the_qa_engineer_finds_right_after_fixed_defects_are_kept(worktree, tmp_path):
+    from controller.app.projects.config import Preview
+    preview = Preview(compose=".sdlc/preview.compose.yml", service="web", port=8000, e2e_paths=["test/**"])
+    base = changes.head(worktree)
+    (worktree / "test" / "list.spec.ts").write_text("test('AC-1 list', async () => {});\n")
+    changes.stage_changes(worktree)
+    suite = changes.commit(worktree, "test(acceptance): end-to-end tests of the story's criteria", "qa_engineer")
+    (worktree / "src" / "tasks.js").write_text("// the fix task's change\n")
+    changes.stage_changes(worktree)
+    changes.commit(worktree, "feat(T4): Fix the defects found by the QC (acceptance)", "developer")
+    qa = FakeExecutor("claude", message="No test changes were needed.")
+    team, _ = doing(tmp_path, qa=qa)
+    ctx = dataclasses.replace(context(worktree, qa_executor="claude", preview=preview), base_commit=base)
+    result = team.write_acceptance_tests(ctx, "- AC-1: list", "List", feedback="The QC sent defects back: AC-1 headers")
+    assert result.ok and result.evidence["reused"] and result.evidence["commit"] == suite, result.detail

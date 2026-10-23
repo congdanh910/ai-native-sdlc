@@ -158,8 +158,7 @@ class CliDoing:
         # the story's own acceptance suite is being rewritten (a new preview, a retest, errors in its code): it may
         # change or drop its files; still nothing outside the e2e paths, and no skipped tests
         rewrite = stale or bool(feedback)
-        if feedback:
-            changes.drop_commit(worktree, "test(acceptance):")
+        dropped = changes.drop_commit(worktree, "test(acceptance):") if feedback else False
         accounts = "\n".join(f"  - {a.role}: {a.username} / {a.password}" + (f" ({a.note})" if a.note else "")
                              for a in preview.accounts) or "  - none: ask in your answer"
         prompt = _prompt("acceptance-tests", agents_md=context.agents_md, story=story, criteria=criteria,
@@ -178,6 +177,11 @@ class CliDoing:
         staged = changes.stage_changes(worktree)
         e2e_policy = context.policy.model_copy(update={"test_paths": list(preview.e2e_paths)})
         # the rewritten suite may change or drop its own files (see rewrite above)
+        if not staged and existing and not dropped:
+            # asked to look again (the QC's notes after fixed defects) and nothing needed changing: the suite stays
+            return StepResult(True, f"acceptance tests in {existing[:10]} kept; the QA Engineer changed nothing "
+                                    f"({result.executor}): {result.message[-300:]}",
+                              evidence={**self._evidence(result, label), "commit": existing, "reused": True})
         problems = changes.check_tests(worktree, staged, e2e_policy, allow_edits=rewrite, allow_deletes=rewrite) if staged else ["no acceptance test was written"]
         if problems:
             changes.discard(worktree)
