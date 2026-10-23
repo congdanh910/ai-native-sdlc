@@ -520,11 +520,14 @@ def resume(session: Session, run: Run, *, actor: str, decision: str, reason: str
 
 
 def _rule_on_dispute(session: Session, run: Run, *, actor: str, decision: str, reason: str) -> None:
-    """The Tech Lead decides a test dispute: the QA Engineer updates the tests, or the tests stand.
+    """The Tech Lead decides a test dispute, or a task whose validation kept failing: the QA Engineer updates the
+    tests, or the tests stand (the Developer tries again with the reason).
 
     The ruling is stored for the task's next attempt only; the task continues from its committed tests.
     """
-    disputed = [t for t in coordinator.current_tasks(session, run) if t.status == TaskStatus.DISPUTED]
+    tasks = coordinator.current_tasks(session, run)
+    disputed = [t for t in tasks if t.status == TaskStatus.DISPUTED] or (
+        [t for t in tasks if t.status == TaskStatus.FAILED] if coordinator.failed_validation(run, tasks) else [])
     if not disputed:
         raise DecisionError("no task is disputed; resume, replan or cancel instead")
     task = disputed[0]

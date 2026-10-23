@@ -373,4 +373,4 @@ class CliDoing:
         reports = self._gate(context).run([c.name for c in context.policy.validation], f"{task.id}-validate-{attempt}")
         ok = bool(reports) and all(r.ok for r in reports)
         return StepResult(ok, summary(reports), evidence={"reports": [asdict(r) for r in reports],
-                                                          "failures": "" if ok else failures(reports)[-6000:]})
+                                                          "failures": "" if ok else failures(reports)})

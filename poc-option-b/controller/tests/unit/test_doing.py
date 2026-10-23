@@ -960,3 +960,14 @@ def test_new_tests_in_a_folder_no_command_runs_go_back_to_the_qa_engineer(worktr
     team.write_tests(run, TASK, TESTS, feedback=result.detail)  # moved: the commands run it, and it passes
     assert "already pass" in team.red_check(run, TASK, TESTS).detail and len(runner.calls) == 1
     assert "test/unit (unit-tests)" in qa.sessions[-1].prompt
+
+
+def test_the_developer_reads_the_end_of_the_failing_log_without_colours(tmp_path):
+    from controller.app.doing.validation import CommandReport, failures, first_error
+    log = tmp_path / "web-tests.log"
+    log.write_text("\x1b[31mFAIL\x1b[39m TC-36 empty state\n" + "".join(f"line {i}\n" for i in range(60))
+                   + "\x1b[1mError\x1b[22m: expect(element).toBeVisible()\n")
+    report = CommandReport("web-tests", False, 1, 1.0, False, str(log), "tail only")
+    text = failures([report, CommandReport("lint", True, 0, 1.0, False, "", "")])
+    assert text.startswith("## web-tests (exit 1)\nFAIL TC-36 empty state") and "line 59" in text and "\x1b" not in text
+    assert first_error([{"name": "web-tests", "ok": False, "tail": "\x1b[1mError\x1b[22m: boom"}]) == "web-tests: Error: boom"

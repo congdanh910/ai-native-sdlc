@@ -290,6 +290,15 @@ def test_validation_failure_after_remediation_needs_a_human(db, sample_repo):
         services.classify(session, run, actor=OPERATOR, category="WEAK_TESTS", stage="validation",
                           role="developer", note="mock")
         assert not services.needs_classification(run)
+        # a test may be the wrong one: the QA Engineer corrects it, or the Developer tries again told why
+        assert {"amend_tests", "keep_tests"} <= set(coordinator.decisions_for(run, [task]))
+        services.resume(session, run, actor=OPERATOR, decision="amend_tests",
+                        reason="TC-T1-1 finds the form's option, not the table cell; look in the row")
+        ruling = json.loads(coordinator.artifact(session, run_id, "ruling:T1"))
+        assert (run.status, task.status, ruling["decision"]) == ("CODING", "READY", "amend_tests")
+        assert "validation failed after 2 remediations" in ruling["dispute"]
+    drain()
+    assert status(run_id) != "NEEDS_HUMAN"
 
 
 def test_test_dispute_goes_to_a_human(db, sample_repo):

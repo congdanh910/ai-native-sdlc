@@ -166,6 +166,14 @@ def queue_advice(session: Session, run: Run, task: Task) -> Execution | None:
     return queue(session, run, "advise", key=f"advise:{datetime.now(timezone.utc).isoformat()}", task=task)
 
 
+VALIDATION_FAILED = "validation failed after"
+
+
+def failed_validation(run: Run, tasks: list[Task]) -> bool:
+    """A task failed because its validation kept failing after the Developer's remediations."""
+    return VALIDATION_FAILED in (run.status_reason or "") and any(t.status == TaskStatus.FAILED for t in tasks)
+
+
 def decisions_for(run: Run, tasks: list[Task]) -> dict[str, str]:
     """The decisions the Tech Lead can take on a stopped run now, and what each one does."""
     from controller.app.services import ALREADY_PASS
@@ -174,6 +182,11 @@ def decisions_for(run: Run, tasks: list[Task]) -> dict[str, str]:
     if any(t.status == TaskStatus.DISPUTED for t in tasks):
         options["amend_tests"] = "the QA Engineer updates the tests as the reason says; existing test lines may change"
         options["keep_tests"] = "the tests stand; the Developer makes the code pass them, told the reason"
+    elif failed_validation(run, tasks):
+        options["amend_tests"] = ("a test is wrong: the QA Engineer corrects the tests the reason names (existing test "
+                                  "lines may change), then the Developer makes the code pass them all")
+        options["keep_tests"] = ("the tests are right: the Developer tries again, told the reason (what in the code "
+                                 "makes each named test fail)")
     if ALREADY_PASS in reason:
         options["already_built"] = ("the code already does what the new tests check: they stay as regression guards, "
                                     "the Developer is skipped, the validation decides")
@@ -772,6 +785,10 @@ def _load_advice(session: Session, run: Run, loaded: Loaded, task: Task) -> None
     steps = [{"state": s["state"], "role": s["role"], "ok": s["ok"], "detail": s["detail"][:1500],
               "message": (s.get("evidence") or {}).get("message", "")[-1500:]}
              for s in ((last.result or {}).get("steps", []) if last else [])]
+    from controller.app.doing.validation import plain
+    failed = [s for s in ((last.result or {}).get("steps", []) if last else [])
+              if s["state"] == TaskStatus.VALIDATING and not s["ok"]]
+    failures = plain((failed[-1].get("evidence") or {}).get("failures", "")) if failed else ""
     plan = session.get(Plan, task.plan_id)
     cases = [c for c in (plan.test_plan or {}).get("cases", []) if c.get("task_id") == task.external_task_id]
     files = task.payload.get("modify", []) + task.payload.get("create", [])
@@ -790,7 +807,7 @@ def _load_advice(session: Session, run: Run, loaded: Loaded, task: Task) -> None
         "stop": run.status_reason or "", "decisions": decisions_for(run, current_tasks(session, run)),
         "task": {"id": task.external_task_id, "title": task.payload["title"], "files": files,
                  "acceptance_criteria": task.payload.get("acceptance_criteria", [])},
-        "test_cases": cases, "steps": steps, "earlier_commits": earlier,
+        "test_cases": cases, "steps": steps, "failures": failures, "earlier_commits": earlier,
         "rulings": [{k: r.get(k) for k in ("task", "decision", "reason", "dispute")} for r in rulings]}
 
 
@@ -945,8 +962,9 @@ def _work_task(team: Team, loaded: Loaded) -> list[dict]:
                                           f"that show each one (they must fail now), and change only what they need:\n"
                                           f"{loaded.task_payload['defects']}")
     elif ruling and ruling["decision"] == "amend_tests":
-        feedback = (f"The Developer disputed your tests: {ruling['dispute']}\nThe Tech Lead decided that you update "
-                    f"the tests: {ruling['reason']}")
+        stop = ("Your tests kept failing on the Developer's code" if VALIDATION_FAILED in (ruling["dispute"] or "")
+                else "The Developer disputed your tests")
+        feedback = f"{stop}: {ruling['dispute']}\nThe Tech Lead decided that you update the tests: {ruling['reason']}"
         first = team.write_tests(context, task, tests, feedback=feedback, amend=True)
     else:
         first = team.write_tests(context, task, tests)  # reuses tests already committed for the task
@@ -974,7 +992,9 @@ def _work_task(team: Team, loaded: Loaded) -> list[dict]:
         steps.append(step(TaskStatus.RED_CHECK, TeamRole.VALIDATION_GATE, team.red_check(context, task, tests)))
         if not steps[-1]["ok"]:
             return steps
-    upheld = (f"You disputed a test earlier: {ruling['dispute']}\nThe Tech Lead kept the tests: {ruling['reason']}\n"
+    earlier = ("Your code kept failing the tests" if ruling and VALIDATION_FAILED in (ruling["dispute"] or "")
+               else "You disputed a test earlier")
+    upheld = (f"{earlier}: {ruling['dispute']}\nThe Tech Lead kept the tests: {ruling['reason']}\n"
               f"Make the code pass them.") if ruling and ruling["decision"] == "keep_tests" else ""
     if loaded.task_payload.get("defects"):
         upheld = "\n".join(["Fix these defects, found by a human after every task passed:",
@@ -1794,7 +1814,7 @@ def _apply_code_task(session: Session, run: Run, execution: Execution, result: d
         reports = (last.get("evidence") or {}).get("reports", [])
         failing = [r["name"] for r in reports if not r.get("ok")]
         error = first_error(reports)
-        to_needs_human(session, run, f"{task.external_task_id}: validation failed after {policy.max_remediations} "
+        to_needs_human(session, run, f"{task.external_task_id}: {VALIDATION_FAILED} {policy.max_remediations} "
                                      f"remediations: {', '.join(failing) or last['detail'][:200]} still fail"
                                      + (f"; first error: {error}" if error else "")
                                      + ". The Code Reviewer's brief below weighs the code against the tests.")

@@ -254,20 +254,39 @@ def infrastructure_problem(reports: list[dict]) -> str:
     return ""
 
 
+ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+
+
+def plain(text: str) -> str:
+    """Output without terminal colours (vitest, pytest colour their failures)."""
+    return ANSI.sub("", text or "")
+
+
 def first_error(reports: list[dict]) -> str:
     """The first line of the failing output that names the error, for a person reading the stop."""
     for report in reports:
         if report.get("ok"):
             continue
-        for line in (report.get("tail") or "").splitlines():
+        for line in plain(report.get("tail") or "").splitlines():
             if re.search(r"Error|FAILED|assert|Traceback|error:|failed", line):
                 return f"{report['name']}: {line.strip()[:240]}"
     return ""
 
 
 def failures(reports: list[CommandReport]) -> str:
-    """The failing commands' output, for the Developer's next attempt."""
-    return "\n\n".join(f"## {r.name} (exit {r.exit_code})\n{r.tail}" for r in reports if not r.ok)
+    """The failing commands' output, for the Developer's next attempt and the Code Reviewer's brief: the end of each
+    log up to validation_failure_chars (a test runner prints every failure before its summary; 40 lines cut most of
+    them), without colours."""
+    from controller.app.config import get_settings
+    budget = get_settings().validation_failure_chars // max(1, sum(1 for r in reports if not r.ok))
+    out = []
+    for report in reports:
+        if report.ok:
+            continue
+        log = Path(report.log_path) if report.log_path else None
+        text = plain(log.read_text(errors="replace") if log and log.is_file() else report.tail).rstrip()
+        out.append(f"## {report.name} (exit {report.exit_code})\n{text[-budget:]}")
+    return "\n\n".join(out)
 
 
 def red_check(gate: ValidationGate, names: list[str], expect_pass: bool, label: str,
