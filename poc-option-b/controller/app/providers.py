@@ -185,3 +185,14 @@ def model_for(role: str, engine: str) -> tuple[str, str]:
     """The model and reasoning effort the Admin chose for a role on a provider; ("", "") keeps the CLI's default."""
     choice = (load()["models"].get(role) or {}).get(provider_of(engine)) or {}
     return choice.get("model", ""), choice.get("effort", "")
+
+
+def recommendations() -> dict:
+    """Suggested model and effort per role (provider-recommendations.json at the platform root), shown on the page."""
+    import json
+    from controller.app.config import PROJECT_ROOT
+    try:
+        data = json.loads((PROJECT_ROOT / "provider-recommendations.json").read_text())
+    except (OSError, ValueError):
+        return {}
+    return {role: value for role, value in data.items() if role in THINKING_ROLES + DOING_ROLES}

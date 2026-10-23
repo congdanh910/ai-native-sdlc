@@ -214,7 +214,7 @@ def _providers_view() -> dict:
             "env": settings.default_engines, "codex_models": providers.codex_models(),
             "model_suggestions": {**providers.MODEL_SUGGESTIONS,
                                   "codex": [m["slug"] for m in providers.codex_models()] or providers.MODEL_SUGGESTIONS["codex"]},
-            "efforts": [e for e in providers.efforts() if e],
+            "efforts": [e for e in providers.efforts() if e], "recommendations": providers.recommendations(),
             "status": [{"provider": p, "limited_until": out[p]["until"].isoformat() if p in out else None,
                         "reason": out[p]["reason"] if p in out else ""} for p in ("codex", "claude")]}
 

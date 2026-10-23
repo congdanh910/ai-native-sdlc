@@ -1,0 +1,33 @@
+{
+  "_note": "Suggested models per role on the AI providers page; edit freely. Codex: model slug and reasoning effort; Claude: model alias or id.",
+  "business_analyst": {
+    "codex": {"model": "gpt-6-sol", "effort": "medium"},
+    "claude": {"model": "sonnet"},
+    "why": "Specs, SRS and discovery extraction: long reading and careful wording more than deep reasoning; raise to high for a large discovery."
+  },
+  "tech_lead": {
+    "codex": {"model": "gpt-6-sol", "effort": "high"},
+    "claude": {"model": "opus"},
+    "why": "Plans, SDS, architecture options, onboarding files and UI concepts: design decisions every later step builds on."
+  },
+  "qa_analyst": {
+    "codex": {"model": "gpt-6-sol", "effort": "medium"},
+    "claude": {"model": "sonnet"},
+    "why": "Test case design from the spec and plan: systematic coverage of criteria and edge cases."
+  },
+  "code_reviewer": {
+    "codex": {"model": "gpt-6-sol", "effort": "high"},
+    "claude": {"model": "opus"},
+    "why": "Reviews, briefs and the disputes it settles on its own: its decisions are applied without a person, so it reads the most carefully."
+  },
+  "qa_engineer": {
+    "codex": {"model": "gpt-6-sol", "effort": "medium"},
+    "claude": {"model": "sonnet"},
+    "why": "Writes the test code of approved test cases and the acceptance tests: well specified work."
+  },
+  "developer": {
+    "codex": {"model": "gpt-6-sol", "effort": "high"},
+    "claude": {"model": "sonnet"},
+    "why": "Writes the code that must pass validation within few remediations; a stronger setting saves retries. Use opus on Claude for hard tasks."
+  }
+}

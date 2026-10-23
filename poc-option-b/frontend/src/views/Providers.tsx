@@ -10,6 +10,7 @@ interface Providers {
   thinking: Record<string, string[]>; doing: Record<string, string[]>; fallback: boolean; models: Models;
   model_suggestions: Record<string, string[]>; efforts: string[];
   codex_models: { slug: string; name: string; efforts: string[]; default_effort: string }[];
+  recommendations: Record<string, { codex?: { model: string; effort?: string }; claude?: { model: string }; why?: string }>;
   thinking_roles: string[]; doing_roles: string[]; thinking_engines: string[]; doing_engines: string[];
   env: Record<string, string>;
   status: { provider: string; limited_until: string | null; reason: string }[];
@@ -26,6 +27,17 @@ export function ProvidersView() {
   if (data.error) return <ErrorBox error={data.error} />;
   const d = data.data!;
   const store = (fresh: Providers) => { client.setQueryData(["providers"], fresh); setDraft({ thinking: fresh.thinking, doing: fresh.doing, fallback: fresh.fallback, models: fresh.models }); };
+  const suggested = (role: string, models: Models): Models => {
+    const rec = d.recommendations[role];
+    if (!rec) return models;
+    return { ...models, [role]: {
+      ...(models[role] ?? {}),
+      ...(rec.codex ? { codex: { model: rec.codex.model, effort: rec.codex.effort ?? "" } } : {}),
+      ...(rec.claude ? { claude: { model: rec.claude.model, effort: "" } } : {}),
+    } };
+  };
+  const applySuggestion = (role: string) => setDraft({ ...draft, models: suggested(role, draft.models) });
+  const applyAllSuggestions = () => setDraft({ ...draft, models: [...d.thinking_roles, ...d.doing_roles].reduce((m, r) => suggested(r, m), draft.models) });
   const choice = (role: string, provider: string) => draft.models[role]?.[provider] ?? { model: "", effort: "" };
   const setChoice = (role: string, provider: string, change: Partial<{ model: string; effort: string }>) =>
     setDraft({ ...draft, models: { ...draft.models, [role]: { ...(draft.models[role] ?? {}), [provider]: { ...choice(role, provider), ...change } } } });
@@ -69,7 +81,16 @@ export function ProvidersView() {
     const rest = engines.filter((e) => !list.includes(e));
     return (
       <tr key={r} className="border-b border-line align-top last:border-0">
-        <td className="p-2.5 font-medium">{roleLabel(r)}</td>
+        <td className="p-2.5 font-medium">
+          {roleLabel(r)}
+          {d.recommendations[r] ? (
+            <div className="mt-1 max-w-[260px] text-xs font-normal text-muted">
+              Suggested: Codex <Mono>{d.recommendations[r].codex?.model}</Mono>{d.recommendations[r].codex?.effort ? ` · ${d.recommendations[r].codex?.effort}` : ""}, Claude <Mono>{d.recommendations[r].claude?.model}</Mono>
+              {d.recommendations[r].why ? <span className="block">{d.recommendations[r].why}</span> : null}
+              <button type="button" className="mt-0.5 font-semibold text-accent-ink hover:underline" onClick={() => applySuggestion(r)}>Use suggestion</button>
+            </div>
+          ) : null}
+        </td>
         <td className="p-2.5">
           <div className="flex flex-wrap items-center gap-1.5">
             {list.length ? list.map((e, i) => (
@@ -132,6 +153,7 @@ export function ProvidersView() {
         </label>
         <div className="flex gap-2">
           <ActionButton variant="primary" success="AI providers saved; the next calls use them" action={async () => store(await api<Providers>("/api/admin/providers", { method: "PUT", body: draft }))}>Save</ActionButton>
+          <Button onClick={applyAllSuggestions} title="Fill every role's models with the suggestions; nothing is saved until Save">Apply all suggestions</Button>
           <Button onClick={() => setDraft({ thinking: d.thinking, doing: d.doing, fallback: d.fallback, models: d.models })}>Discard</Button>
         </div>
       </Card>

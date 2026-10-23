@@ -86,3 +86,11 @@ def test_codex_models_and_their_efforts_come_from_the_codex_cache(db, tmp_path, 
     providers.save({"models": {"developer": {"codex": {"model": "gpt-6-sol", "effort": "ultra"}}}}, actor="t")
     with pytest.raises(ValueError, match="not one of low, medium, high"):
         providers.save({"models": {"developer": {"codex": {"model": "gpt-6-luna", "effort": "ultra"}}}}, actor="t")
+
+
+def test_every_suggested_model_is_one_the_settings_accept(db):
+    suggested = providers.recommendations()
+    assert set(suggested) == set(providers.THINKING_ROLES + providers.DOING_ROLES)
+    models = {role: {p: {"model": v[p]["model"], "effort": v[p].get("effort", "")} for p in ("codex", "claude") if p in v}
+              for role, v in suggested.items()}
+    assert providers.save({"models": models}, actor="t")["models"]["code_reviewer"]["claude"]["model"] == "opus"
