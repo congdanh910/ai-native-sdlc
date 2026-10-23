@@ -4,6 +4,7 @@ import { CheckCircle2, CircleAlert, CircleDashed, XCircle } from "lucide-react";
 import { ActionButton, Card, ErrorBox, Field, Input, Loading, Mono, PageHeader, StatusBadge } from "../components/ui";
 import { api, ApiError, type Project } from "../lib/api";
 import { short } from "../lib/utils";
+import { Link } from "wouter";
 
 const ICON = { ok: CheckCircle2, warn: CircleAlert, fail: XCircle, pending: CircleDashed } as const;
 const COLOR = { ok: "text-good", warn: "text-warn", fail: "text-bad", pending: "text-muted" } as const;
@@ -25,7 +26,8 @@ export function ProjectsView() {
             <div className="flex flex-wrap items-center gap-2.5">
               <h2 className="m-0 text-lg font-semibold">{p.key}</h2>
               <StatusBadge status={p.readiness} />
-              <ActionButton className="ml-auto" success={`${p.key} checked`} action={async () => { await api(`/api/projects/${p.key}/check`, { method: "POST" }); refresh(); }}>
+              <Link href={`/projects/${p.key}/backlog`} className="ml-auto text-sm font-semibold">Backlog</Link>
+              <ActionButton success={`${p.key} checked`} action={async () => { await api(`/api/projects/${p.key}/check`, { method: "POST" }); refresh(); }}>
                 Check again
               </ActionButton>
             </div>

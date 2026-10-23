@@ -109,7 +109,7 @@ class StageStart(Body):
 
 class Resume(Body):
     decision: Literal["resume", "replan", "cancel", "amend_tests", "keep_tests", "already_built",
-                      "defects_as_written", "defects_revised"]
+                      "defects_as_written", "defects_revised", "defects_retest"]
     reason: str
 
 
@@ -235,6 +235,71 @@ def story_outcomes_ai(key: str, story: str) -> dict:
     context = _story_context(key, story)
     answer = get_team().suggest_outcomes(context)
     return {"suggestions": [o.model_dump() for o in answer.outcomes], "notes": answer.notes}
+
+
+class BacklogEdit(Body):
+    items: list[dict]
+    notes: str = ""
+    version: int
+
+
+class BacklogFeedback(Body):
+    feedback: str = ""
+
+
+class BacklogApproval(Body):
+    version: int
+    reason: str = ""
+
+
+def _backlog(key: str, action) -> dict:
+    """One backlog action in a transaction, then the backlog as the page shows it."""
+    from controller.app import backlog
+    try:
+        with session_scope() as session:
+            project = session.scalar(select(Project).where(Project.key == key))
+            if project is None:
+                raise HTTPException(404, "project not found")
+            result = action(session, project)
+            session.flush()
+            return result if isinstance(result, dict) else backlog.view(session, project)
+    except (backlog.BacklogError, services.DecisionError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.get("/projects/{key}/backlog")
+def project_backlog(key: str) -> dict:
+    """The user stories in delivery order, with their dependencies and each one's state."""
+    from controller.app import backlog
+    return _backlog(key, lambda s, p: backlog.view(s, p))
+
+
+@router.post("/projects/{key}/backlog/propose")
+def propose_backlog(key: str, body: BacklogFeedback) -> dict:
+    """The Tech Lead AI orders every story from the SRS and SDS; the result is a draft for the Tech Lead."""
+    from controller.app import backlog
+    context = _backlog(key, lambda s, p: backlog.proposal_context(s, p, body.feedback))
+    answer = get_team().order_backlog(context)
+    return _backlog(key, lambda s, p: backlog.store_proposal(s, p, answer, actor=operator(), feedback=body.feedback))
+
+
+@router.put("/projects/{key}/backlog")
+def edit_backlog(key: str, body: BacklogEdit) -> dict:
+    from controller.app import backlog
+    return _backlog(key, lambda s, p: backlog.save(s, p, body.items, body.notes, actor=operator(), version=body.version))
+
+
+@router.post("/projects/{key}/backlog/approve")
+def approve_backlog(key: str, body: BacklogApproval) -> dict:
+    from controller.app import backlog
+    return _backlog(key, lambda s, p: backlog.approve(s, p, actor=operator(), version=body.version, reason=body.reason))
+
+
+@router.post("/projects/{key}/backlog/{story}/start", status_code=201)
+def start_story(key: str, story: str) -> dict:
+    """Open the run of a ready story, with its outcomes drafted from the SRS and SDS."""
+    from controller.app import backlog
+    return _backlog(key, lambda s, p: views.run_summary(backlog.start(s, p, story, actor=operator()), p.key))
 
 
 @router.post("/intents/draft")

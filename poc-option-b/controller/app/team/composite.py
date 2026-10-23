@@ -48,6 +48,9 @@ class CompositeTeam:
     def suggest_outcomes(self, *args, **kwargs):
         return self.thinking.suggest_outcomes(*args, **kwargs)
 
+    def order_backlog(self, *args, **kwargs):
+        return self.thinking.order_backlog(*args, **kwargs)
+
     def extract_part(self, *args, **kwargs):
         return self.thinking.extract_part(*args, **kwargs)
 

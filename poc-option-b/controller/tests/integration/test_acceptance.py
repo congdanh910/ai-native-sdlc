@@ -215,6 +215,25 @@ def test_defect_notes_can_be_sent_as_written_against_the_sds(db, sample_repo):
     assert _fix_tasks(run_id) == ["QC (acceptance): AC-1: 422 CONTRADICTS-SDS"]
 
 
+def test_qc_notes_about_the_acceptance_tests_can_go_to_the_tests_instead_of_the_code(db, sample_repo):
+    from sqlalchemy import select
+    from controller.app.models import Approval
+    run_id = _at_the_qc_gate(sample_repo)
+    with session_scope() as session:
+        services.decide_acceptance(session, services.get_run(session, run_id), actor=OPERATOR, decision="reject",
+                                   reason="AC-1 needs its own browser test CONTRADICTS-SDS")
+    drain()
+    assert status(run_id) == RunStatus.NEEDS_HUMAN
+    with session_scope() as session:
+        services.resume(session, services.get_run(session, run_id), actor=OPERATOR, decision="defects_retest",
+                        reason="AC-1 needs its own browser test")
+        last = session.scalars(select(Approval).where(Approval.run_id == run_id)
+                               .order_by(Approval.created_at.desc())).first()
+        assert (last.stage, last.decision, last.reason) == ("acceptance", "retest", "AC-1 needs its own browser test")
+    drain()
+    assert _fix_tasks(run_id) == [] and status(run_id) == RunStatus.WAITING_ACCEPTANCE_APPROVAL
+
+
 def test_notes_no_code_change_can_satisfy_go_back_to_the_person(db, sample_repo):
     run_id = _at_the_qc_gate(sample_repo)
     with session_scope() as session:

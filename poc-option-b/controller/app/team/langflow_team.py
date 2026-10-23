@@ -299,6 +299,11 @@ class LangflowTeam(MockTeam):
         """Desired outcomes for a feature request, from what the SRS and SDS say about its story."""
         return self._ask("outcomes", story, Outcomes, lambda data: data, f"outcomes:{story.get('story', '')}")
 
+    def order_backlog(self, context: dict):
+        """Every user story in the order to deliver it, with the stories each one depends on."""
+        from controller.app.backlog import BacklogProposal, repair
+        return self._ask("backlog", context, BacklogProposal, repair, "backlog")
+
     def check_defects(self, context: RunContext, notes: str) -> DefectCheck:
         """The human's defect notes against the SDS, the SRS and the spec, before the team acts on them."""
         payload = {"notes": notes, "spec": (context.spec_md or "").split(NOTES_HEADING)[0], "agents_md": context.agents_md}

@@ -243,6 +243,16 @@ class MockTeam:
         lines = story.get("suggestions") or [{"text": story.get("statement") or "The story works", "source": "story"}]
         return Outcomes(outcomes=lines[:8], notes="mock")
 
+    def order_backlog(self, context):
+        """The SRS order; each story depends on the story before it in its feature."""
+        from controller.app.backlog import BacklogProposal
+        items, last = [], {}
+        for story in context["stories"]:
+            before = last.get(story["feature"])
+            items.append({"story": story["id"], "depends_on": [before] if before else [], "reason": "mock: SRS order"})
+            last[story["feature"]] = story["id"]
+        return BacklogProposal(items=items, notes="mock")
+
     def design_ui(self, context, brief):
         """One concept per preset, in order, with the customer's primary color when given."""
         from controller.app.ui import UiConcepts

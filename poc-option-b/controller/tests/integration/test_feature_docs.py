@@ -136,3 +136,39 @@ def test_the_feature_form_suggests_outcomes_from_the_srs_and_sds_of_the_story(db
     answered = client.post("/api/projects/task-board/stories/CIW-US-01/outcomes/ai").json()
     assert answered["suggestions"] and answered["notes"] == "mock"
     assert client.get("/api/projects/task-board/stories/XX-US-99/outcomes").status_code == 404
+
+
+def test_the_backlog_orders_the_stories_and_opens_a_ready_one(db, sample_repo):
+    srs = with_srs(sample_repo)
+    with_sds(sample_repo, srs)
+    post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
+    empty = client.get("/api/projects/task-board/backlog").json()
+    assert empty["status"] is None and [s["story"] for s in empty["not_in_backlog"]] == ["CIW-US-01", "ARF-US-01"]
+    drafted = client.post("/api/projects/task-board/backlog/propose", json={}).json()
+    assert drafted["status"] == "draft" and drafted["problems"] == [] and drafted["not_in_backlog"] == []
+    assert [(i["story"], i["state"], i["wave"]) for i in drafted["items"]] == [("CIW-US-01", "ready", 1),
+                                                                              ("ARF-US-01", "ready", 1)]
+    items = [{**{k: i[k] for k in ("story", "depends_on", "reason", "hold", "done")}} for i in drafted["items"]]
+    items[1]["depends_on"] = ["CIW-US-01"]
+    cyclic = [{**items[0], "depends_on": ["ARF-US-01"]}, items[1]]
+    saved = client.put("/api/projects/task-board/backlog", json={"items": cyclic, "version": drafted["version"]}).json()
+    assert saved["problems"] == ["dependency cycle: CIW-US-01 → ARF-US-01 → CIW-US-01"]
+    refused = client.post("/api/projects/task-board/backlog/approve", json={"version": saved["version"]})
+    assert refused.status_code == 409 and "dependency cycle" in refused.json()["detail"]
+    stale = client.put("/api/projects/task-board/backlog", json={"items": items, "version": drafted["version"]})
+    assert stale.status_code == 409 and "changed" in stale.json()["detail"]
+    saved = client.put("/api/projects/task-board/backlog", json={"items": items, "version": saved["version"]}).json()
+    assert [(i["story"], i["state"], i["wave"]) for i in saved["items"]] == [("CIW-US-01", "ready", 1),
+                                                                            ("ARF-US-01", "blocked", 2)]
+    approved = client.post("/api/projects/task-board/backlog/approve", json={"version": saved["version"]}).json()
+    assert approved["status"] == "approved" and approved["approved_by"]
+    assert client.post("/api/projects/task-board/backlog/ARF-US-01/start").status_code == 409  # waits for CIW-US-01
+    run = client.post("/api/projects/task-board/backlog/CIW-US-01/start")
+    assert run.status_code == 201
+    with session_scope() as session:
+        from controller.app.documents import latest_document
+        intent = latest_document(session, uuid.UUID(run.json()["id"]), "intent").data
+    assert intent["story"] == "CIW-US-01" and intent["outcome"].startswith("- ")
+    after = client.get("/api/projects/task-board/backlog").json()
+    assert after["items"][0]["state"] == "running" and after["items"][0]["run"]["id"] == run.json()["id"]
+    assert client.post("/api/projects/task-board/backlog/CIW-US-01/start").status_code == 409  # already running

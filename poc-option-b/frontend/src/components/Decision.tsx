@@ -563,6 +563,9 @@ function DefectCheckCard({ run, reason, onUse, post }: {
         <Button onClick={() => onUse(defects.reason)}>Edit my notes</Button>
         <ActionButton disabled={!reason.trim()} title="Check the revised notes in the box against the SDS again, then give them to the fix task" action={() => post("resume", { decision: "defects_revised", reason })}>Send revised notes</ActionButton>
         <ActionButton disabled={!reason.trim()} title="Give the notes as first written to the fix task; the reason box records why the design does not apply" action={() => post("resume", { decision: "defects_as_written", reason })}>Send as written</ActionButton>
+        {defects.who === "QC (acceptance)" ? (
+          <ActionButton title="The notes are about the acceptance tests, not the code: the QA Engineer rewrites the tests with them (the box, or the notes as first written) and they run again; no code changes" action={() => post("resume", { decision: "defects_retest", reason: reason.trim() || defects.reason })}>Run the acceptance tests again instead</ActionButton>
+        ) : null}
       </div>
     </div>
   );

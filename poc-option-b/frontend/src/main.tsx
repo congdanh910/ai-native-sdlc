@@ -13,6 +13,7 @@ import { NewRequestView } from "./views/NewRequest";
 import { RunsView } from "./views/Runs";
 import { RunView } from "./views/Run";
 import { ProjectsView } from "./views/Projects";
+import { BacklogView } from "./views/Backlog";
 import { EvalsView, EvalView } from "./views/Evals";
 import { ReportsView } from "./views/Reports";
 import { HealthView } from "./views/Health";
@@ -37,6 +38,7 @@ createRoot(document.getElementById("root")!).render(
             <Route path="/new"><NewRequestView /></Route>
             <Route path="/runs/:id">{(p) => <RunView key={p.id} id={p.id} />}</Route>
             <Route path="/runs"><RunsView /></Route>
+            <Route path="/projects/:key/backlog">{(p) => <BacklogView key={p.key} project={p.key} />}</Route>
             <Route path="/projects"><ProjectsView /></Route>
             <Route path="/evals/:id">{(p) => <EvalView key={p.id} id={p.id} />}</Route>
             <Route path="/evals"><EvalsView /></Route>

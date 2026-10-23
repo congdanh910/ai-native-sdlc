@@ -428,7 +428,7 @@ def resume(session: Session, run: Run, *, actor: str, decision: str, reason: str
     if decision == "already_built":
         _accept_as_built(session, run, actor=actor, reason=reason)
         return
-    if decision in ("defects_as_written", "defects_revised"):
+    if decision in ("defects_as_written", "defects_revised", "defects_retest"):
         _decide_defects(session, run, actor=actor, decision=decision, reason=reason)
         return
     target = RunStatus(run.resume_status or RunStatus.PREFLIGHT)
@@ -719,10 +719,21 @@ def _send_defects(session: Session, run: Run, *, actor: str, who: str, reason: s
 
 
 def _decide_defects(session: Session, run: Run, *, actor: str, decision: str, reason: str) -> None:
-    """After the SDS check found a conflict: send the notes as they were written (the person's call), or revised."""
+    """After the SDS check found a conflict: send the notes as they were written (the person's call), or revised; or,
+    for the QC's notes about the acceptance tests themselves, run those tests again with the notes for the QA
+    Engineer instead of changing the code."""
     if coordinator.DEFECTS_CONFLICT not in (run.status_reason or ""):
         raise DecisionError("no defect notes wait for a decision")
     defects = json.loads(coordinator.artifact(session, run.id, "pending_defects"))
+    if decision == "defects_retest":
+        if defects["who"] != "QC (acceptance)":
+            raise DecisionError("only the QC's notes from the acceptance gate can go to the acceptance tests")
+        notes = reason.strip() or defects["reason"]
+        _approval(session, run, "acceptance", "retest", actor, QC, reason=notes)
+        transition_run(session, run, RunStatus.ACCEPTANCE_TESTING, actor=actor, acting_role=QC,
+                       reason="the QC's notes are about the acceptance tests: they run again, rewritten")
+        coordinator.queue(session, run, "acceptance", key=f"retest:{datetime.now(timezone.utc).isoformat()}")
+        return
     transition_run(session, run, RunStatus.CODING, actor=actor, acting_role=TL, reason=reason)
     if decision == "defects_as_written":
         _add_fix_task(session, run, actor=actor, who=defects["who"], reason=defects["reason"])

@@ -277,3 +277,22 @@ class Decision(Base):
     new_text: Mapped[str | None] = mapped_column(Text)  # the requirement text when effect is changed
     created_at: Mapped[datetime] = _created()
     __table_args__ = (UniqueConstraint("run_id", "number", name="uq_decisions_run_number"),)
+
+
+class Backlog(Base):
+    """The order a project's user stories are delivered in: each item is {story, depends_on, reason, hold, done}.
+    Saving makes it a draft again; the Tech Lead approves it before stories open on their own."""
+    __tablename__ = "backlogs"
+    id: Mapped[uuid.UUID] = _id()
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), unique=True, nullable=False)
+    items: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    notes: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(16), nullable=False)  # draft / approved
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    srs_commit: Mapped[str | None] = mapped_column(String(40))
+    proposed_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    approved_by: Mapped[str | None] = mapped_column(String(64))
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = _created()
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(),
+                                                 onupdate=func.now(), nullable=False)

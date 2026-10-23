@@ -164,6 +164,10 @@ class ReadonlyTeam(LangflowTeam):
         self.client.cwd = None  # the excerpts are in the input; nothing to read
         return super().suggest_outcomes(story)
 
+    def order_backlog(self, context):
+        self.client.cwd = None  # the SRS and SDS excerpts are in the input
+        return super().order_backlog(context)
+
     @property
     def reads_files(self) -> bool:  # Claude Code's Read tool opens PDFs (20 pages a call) and images
         return self.engine == "claude-readonly"
