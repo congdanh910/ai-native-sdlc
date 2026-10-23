@@ -211,8 +211,10 @@ def _providers_view() -> dict:
     out = providers.limits()
     return {**providers.load(), "thinking_roles": list(providers.THINKING_ROLES), "doing_roles": list(providers.DOING_ROLES),
             "thinking_engines": list(providers.THINKING_ENGINES), "doing_engines": list(providers.DOING_ENGINES),
-            "env": settings.default_engines, "model_suggestions": providers.MODEL_SUGGESTIONS,
-            "efforts": [e for e in providers.EFFORTS if e],
+            "env": settings.default_engines, "codex_models": providers.codex_models(),
+            "model_suggestions": {**providers.MODEL_SUGGESTIONS,
+                                  "codex": [m["slug"] for m in providers.codex_models()] or providers.MODEL_SUGGESTIONS["codex"]},
+            "efforts": [e for e in providers.efforts() if e],
             "status": [{"provider": p, "limited_until": out[p]["until"].isoformat() if p in out else None,
                         "reason": out[p]["reason"] if p in out else ""} for p in ("codex", "claude")]}
 

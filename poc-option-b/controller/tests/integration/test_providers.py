@@ -69,3 +69,20 @@ def test_the_admin_chooses_a_model_per_role_and_provider(db):
         providers.save({"models": {"tech_lead": {"claude": {"model": "opus", "effort": "high"}}}}, actor="t")
     with pytest.raises(ValueError, match="not a model name"):
         providers.save({"models": {"tech_lead": {"codex": {"model": "gpt 6; rm -rf"}}}}, actor="t")
+
+
+def test_codex_models_and_their_efforts_come_from_the_codex_cache(db, tmp_path, monkeypatch):
+    import json
+    cache = tmp_path / "models_cache.json"
+    cache.write_text(json.dumps({"models": [
+        {"slug": "gpt-6-sol", "display_name": "GPT-6-Sol", "visibility": "list", "default_reasoning_level": "medium",
+         "supported_reasoning_levels": [{"effort": e} for e in ("low", "medium", "high", "xhigh", "max", "ultra")]},
+        {"slug": "gpt-6-luna", "display_name": "GPT-6-Luna", "visibility": "list",
+         "supported_reasoning_levels": [{"effort": e} for e in ("low", "medium", "high")]},
+        {"slug": "hidden", "visibility": "hide", "supported_reasoning_levels": []}]}))
+    monkeypatch.setattr(get_settings(), "sdlc_codex_models_cache", str(cache))
+    assert [m["slug"] for m in providers.codex_models()] == ["gpt-6-sol", "gpt-6-luna"]
+    assert providers.efforts() == ("", "low", "medium", "high", "xhigh", "max", "ultra")
+    providers.save({"models": {"developer": {"codex": {"model": "gpt-6-sol", "effort": "ultra"}}}}, actor="t")
+    with pytest.raises(ValueError, match="not one of low, medium, high"):
+        providers.save({"models": {"developer": {"codex": {"model": "gpt-6-luna", "effort": "ultra"}}}}, actor="t")

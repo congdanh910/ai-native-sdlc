@@ -9,6 +9,7 @@ type Models = Record<string, Record<string, { model: string; effort: string }>>;
 interface Providers {
   thinking: Record<string, string[]>; doing: Record<string, string[]>; fallback: boolean; models: Models;
   model_suggestions: Record<string, string[]>; efforts: string[];
+  codex_models: { slug: string; name: string; efforts: string[]; default_effort: string }[];
   thinking_roles: string[]; doing_roles: string[]; thinking_engines: string[]; doing_engines: string[];
   env: Record<string, string>;
   status: { provider: string; limited_until: string | null; reason: string }[];
@@ -28,22 +29,39 @@ export function ProvidersView() {
   const choice = (role: string, provider: string) => draft.models[role]?.[provider] ?? { model: "", effort: "" };
   const setChoice = (role: string, provider: string, change: Partial<{ model: string; effort: string }>) =>
     setDraft({ ...draft, models: { ...draft.models, [role]: { ...(draft.models[role] ?? {}), [provider]: { ...choice(role, provider), ...change } } } });
-  const modelCells = (r: string) => ["codex", "claude"].map((provider) => (
-    <td key={provider} className="p-2.5">
-      <div className="flex flex-wrap items-center gap-1.5">
-        <input aria-label={`${r} model on ${provider}`} list={`models-${provider}`} placeholder="default"
-          className="h-8 w-40 rounded-md border border-line bg-panel px-2 font-mono text-[12.5px]"
-          value={choice(r, provider).model} onChange={(e) => setChoice(r, provider, { model: e.target.value })} />
-        {provider === "codex" ? (
-          <Select aria-label={`${r} reasoning effort on codex`} className="h-8 w-auto text-sm" value={choice(r, provider).effort}
-            onChange={(e) => setChoice(r, provider, { effort: e.target.value })}>
-            <option value="">effort: default</option>
-            {d.efforts.map((e) => <option key={e} value={e}>{e}</option>)}
-          </Select>
-        ) : null}
-      </div>
-    </td>
-  ));
+  const modelCells = (r: string) => ["codex", "claude"].map((provider) => {
+    const current = choice(r, provider);
+    const codexModel = d.codex_models.find((m) => m.slug === current.model);
+    const levels = codexModel?.efforts ?? d.efforts;
+    return (
+      <td key={provider} className="p-2.5">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {provider === "codex" && d.codex_models.length ? (
+            <Select aria-label={`${r} model on codex`} className="h-8 w-auto text-sm" value={current.model}
+              onChange={(e) => {
+                const next = d.codex_models.find((m) => m.slug === e.target.value);
+                setChoice(r, provider, { model: e.target.value, effort: next && current.effort && !next.efforts.includes(current.effort) ? "" : current.effort });
+              }}>
+              <option value="">model: default</option>
+              {d.codex_models.map((m) => <option key={m.slug} value={m.slug}>{m.name}</option>)}
+              {current.model && !codexModel ? <option value={current.model}>{current.model}</option> : null}
+            </Select>
+          ) : (
+            <input aria-label={`${r} model on ${provider}`} list={`models-${provider}`} placeholder="default"
+              className="h-8 w-40 rounded-md border border-line bg-panel px-2 font-mono text-[12.5px]"
+              value={current.model} onChange={(e) => setChoice(r, provider, { model: e.target.value })} />
+          )}
+          {provider === "codex" ? (
+            <Select aria-label={`${r} reasoning effort on codex`} className="h-8 w-auto text-sm" value={current.effort}
+              onChange={(e) => setChoice(r, provider, { effort: e.target.value })}>
+              <option value="">effort: default{codexModel?.default_effort ? ` (${codexModel.default_effort})` : ""}</option>
+              {levels.map((e) => <option key={e} value={e}>{e}</option>)}
+            </Select>
+          ) : null}
+        </div>
+      </td>
+    );
+  });
   const setList = (kind: "thinking" | "doing", role: string, list: string[]) => setDraft({ ...draft, [kind]: { ...draft[kind], [role]: list } });
   const rows = (kind: "thinking" | "doing", roles: string[], engines: string[], fallbackFirst: (role: string) => string) => roles.map((r) => {
     const list = draft[kind][r] ?? [];
@@ -106,7 +124,7 @@ export function ProvidersView() {
         <h2 className="m-0 mt-2 text-base font-semibold">Doing roles</h2>
         <p className="m-0 text-sm text-muted">Sessions that write tests and code in the run's worktree. Only the executors a project allows in its .sdlc/project.yaml are used. Empty: the project's qa_executor / default_executor.</p>
         <div className="overflow-x-auto"><table className="w-full border-collapse">{head}<tbody>{rows("doing", d.doing_roles, d.doing_engines, () => "the project's executor")}</tbody></table></div>
-        <p className="m-0 text-xs text-muted">Model empty: the CLI's default (Codex: ~/.codex/config.toml; Claude: its configured model). Claude takes aliases such as opus, sonnet, haiku or a full model id; Codex takes its model names and a reasoning effort.</p>
+        <p className="m-0 text-xs text-muted">Model empty: the CLI's default (Codex: ~/.codex/config.toml; Claude: its configured model). Claude takes aliases such as opus, sonnet, haiku or a full model id; Codex lists the models your Codex login may use (from ~/.codex/models_cache.json, refreshed by the Codex CLI) with the reasoning efforts each one supports.</p>
         {Object.entries(d.model_suggestions).map(([provider, names]) => <datalist key={provider} id={`models-${provider}`}>{names.map((n) => <option key={n} value={n} />)}</datalist>)}
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={draft.fallback} onChange={(e) => setDraft({ ...draft, fallback: e.target.checked })} />

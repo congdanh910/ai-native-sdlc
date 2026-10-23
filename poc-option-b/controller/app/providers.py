@@ -23,11 +23,12 @@ THINKING_ENGINES = ("codex-readonly", "claude-readonly")
 DOING_ENGINES = ("codex", "claude")
 # "try again at 7:44 PM" (Codex), "resets 7:40pm (Asia/Saigon)" (Claude)
 MODEL = re.compile(r"^[A-Za-z0-9._:\-\[\]]{1,80}$")
-EFFORTS = ("", "minimal", "low", "medium", "high", "xhigh")  # Codex's model_reasoning_effort; empty: its default
+# Codex's model_reasoning_effort when its model cache cannot be read; empty: the model's default
+EFFORTS = ("", "low", "medium", "high", "xhigh", "max", "ultra")
 # what the page offers; any name the CLI accepts may be typed
 MODEL_SUGGESTIONS = {"claude": ["opus", "sonnet", "haiku", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5",
                                 "claude-fable-5-1"],
-                     "codex": ["gpt-6-sol"]}
+                     "codex": ["gpt-6-sol"]}  # when the Codex model cache cannot be read
 RESET_AT = re.compile(r"(?:try again at|resets(?: at)?)\s+(\d{1,2})(?::(\d{2}))?\s*([AP]M)?", re.IGNORECASE)
 
 
@@ -66,9 +67,13 @@ def save(data: dict, *, actor: str) -> dict:
             model, effort = str(choice.get("model", "")).strip(), str(choice.get("effort", "")).strip()
             if model and not MODEL.fullmatch(model):
                 raise ValueError(f"{role} on {provider}: {model!r} is not a model name")
-            if effort not in EFFORTS or (effort and provider != "codex"):
-                raise ValueError(f"{role} on {provider}: effort {effort!r} is not one of {', '.join(e for e in EFFORTS if e)}"
-                                 + ("" if provider == "codex" else " (Codex only)"))
+            allowed = efforts()
+            supported = next((m["efforts"] for m in codex_models() if m["slug"] == model), None)
+            if effort and provider != "codex":
+                raise ValueError(f"{role} on {provider}: a reasoning effort is for Codex only")
+            if effort and (effort not in allowed or (supported is not None and effort not in supported)):
+                raise ValueError(f"{role} on {provider}: effort {effort!r} is not one of "
+                                 f"{', '.join(supported or [e for e in allowed if e])}")
             if model or effort:
                 models.setdefault(role, {})[provider] = {"model": model, "effort": effort}
     value = {"thinking": thinking, "doing": doing, "fallback": bool(data.get("fallback", True)), "models": models}
@@ -154,6 +159,26 @@ def available(engines: list[str]) -> tuple[list[str], datetime | None]:
     free = [e for e in engines if provider_of(e) not in out]
     back = min((out[provider_of(e)]["until"] for e in engines if provider_of(e) in out), default=None)
     return free, back
+
+
+def codex_models() -> list[dict]:
+    """The models this Codex login may use, with the reasoning efforts each one supports, from the CLI's cache
+    (SDLC_CODEX_MODELS_CACHE); [] when it cannot be read."""
+    import json
+    from pathlib import Path
+    try:
+        data = json.loads(Path(get_settings().sdlc_codex_models_cache).expanduser().read_text())
+    except (OSError, ValueError):
+        return []
+    return [{"slug": m["slug"], "name": m.get("display_name") or m["slug"],
+             "efforts": [level.get("effort") for level in m.get("supported_reasoning_levels") or [] if level.get("effort")],
+             "default_effort": m.get("default_reasoning_level") or ""}
+            for m in data.get("models") or [] if isinstance(m, dict) and m.get("slug") and m.get("visibility") != "hide"]
+
+
+def efforts() -> tuple[str, ...]:
+    known = {e for m in codex_models() for e in m["efforts"]}
+    return ("",) + tuple(sorted(known, key=lambda e: list(EFFORTS).index(e) if e in EFFORTS else 99)) if known else EFFORTS
 
 
 def model_for(role: str, engine: str) -> tuple[str, str]:

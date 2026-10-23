@@ -105,6 +105,8 @@ class Settings(BaseSettings):
     # Worker processes that run jobs side by side (one job per run at a time). Each validation and preview takes
     # Docker memory: raise it only when Docker has room (BACKLOG 3.18).
     sdlc_worker_concurrency: int = Field(default=1, ge=1, le=8)
+    # the models a Codex login may use, as the Codex CLI caches them (the AI providers page offers them)
+    sdlc_codex_models_cache: str = "~/.codex/models_cache.json"
     claim_candidates: int = Field(default=20, ge=1)  # queued jobs a worker looks through for a run that is free
 
     @field_validator("sdlc_db_port", "langflow_port", "sdlc_api_port", "ollama_tunnel_port",
