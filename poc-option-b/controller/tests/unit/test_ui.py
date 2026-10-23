@@ -70,7 +70,7 @@ def test_the_request_form_previews_a_default_concept_in_the_brand_typed_so_far()
 
 def test_each_default_concept_is_a_different_kind_of_interface():
     from controller.app.ui import TEMPLATES, presets, preview_concept, render
-    marks = {"workspace": "class='kpis'", "console": "class='rail'", "enterprise": "class='filters'",
+    marks = {"workspace": "card kpis'", "console": "class='rail'", "enterprise": "class='filters'",
              "portal": "class='hero'", "service": "class='gov'"}
     seen = set()
     for preset in presets():
