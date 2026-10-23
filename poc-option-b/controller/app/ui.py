@@ -94,6 +94,8 @@ class Concept(Contract):
     name: str = Field(min_length=1)
     preset: str = ""  # the platform preset it starts from, or empty when it follows the customer's design
     layout: Literal["sidebar", "topnav", "mobile"]
+    # the kind of interface (render.TEMPLATES): workspace, console, enterprise, portal or service; empty: from the preset
+    template: Literal["", "workspace", "console", "enterprise", "portal", "service"] = ""
     density: Literal["compact", "comfortable"] = "comfortable"
     rationale: str = Field(min_length=1)
     tokens: Tokens
@@ -416,54 +418,398 @@ def _is_sign_in(screen: Screen) -> bool:
     return any("password" in f for f in fields) and len(screen.blocks) <= 4
 
 
+# Five page templates: the structure of the app (navigation, page header, how numbers, records, forms, sign-in and
+# empty states are laid out). Tokens give the look; the template gives the kind of interface.
+TEMPLATES = ("workspace", "console", "enterprise", "portal", "service")
+PRESET_TEMPLATES = {"clean-saas": "workspace", "midnight-console": "console", "ocean-enterprise": "enterprise",
+                    "warm-friendly": "portal", "clear-public": "service"}
+
+
+def template_of(concept: Concept) -> str:
+    if concept.template:
+        return concept.template
+    return PRESET_TEMPLATES.get(concept.preset) or ("portal" if concept.layout == "topnav" else "workspace")
+
+
+def _nav_links(concept: Concept, size: int = 18, limit: int | None = None, labels: bool = True) -> str:
+    items = concept.navigation[:limit] if limit else concept.navigation
+    return "".join(f"<a href='#' class='{'on' if n == 0 else ''}' title='{escape(item)}'>{icon(nav_icon(item), size)}"
+                   f"{'<span>' + escape(item) + '</span>' if labels else ''}</a>" for n, item in enumerate(items))
+
+
+def _short_labels(navigation: list[str], limit: int = 4) -> list[str]:
+    shorts: list[str] = []
+    for item in navigation[:limit]:  # one word each, never the same twice (Face Enrollment, Face Recognition)
+        words = [w for w in re.split(r"[\s/&-]+", item) if w]
+        shorts.append(next((w for w in words if w not in shorts), item)[:12])
+    return shorts
+
+
+def _bottom_nav(concept: Concept) -> str:
+    return "<nav class='bottom'>" + "".join(
+        f"<a href='#' class='{'on' if n == 0 else ''}'>{icon(nav_icon(item), 22)}{escape(short)}</a>"
+        for n, (item, short) in enumerate(zip(concept.navigation[:4], _short_labels(concept.navigation)))) + "</nav>"
+
+
+def _stats_variant(block: Block, template: str) -> str:
+    items = [(i.partition(":")[0].strip(), i.partition(":")[2].strip()) for i in block.items]
+    if template == "workspace":  # one strip of KPIs split by rules
+        cells = "".join(f"<div class='kpi'><span class='muted'>{escape(k)}</span><b>{escape(v)}</b>"
+                        f"<span class='delta {'up' if n % 3 != 2 else 'down'}'>{'+' if n % 3 != 2 else '−'}{(n * 7 + 4) % 19 + 2}%</span></div>"
+                        for n, (k, v) in enumerate(items))
+        return f"<div class='card kpis'>{cells}</div>"
+    if template == "console":  # compact tiles, mono numbers, status bar
+        cells = "".join(f"<div class='tile'><div class='muted tiny'>{escape(k).upper()}</div><div class='mono big'>{escape(v)}</div>"
+                        f"<div class='meter'><span style='width:{30 + (n * 23) % 60}%'></span></div></div>" for n, (k, v) in enumerate(items))
+        return f"<div class='grid'>{cells}</div>"
+    if template == "enterprise":  # cards with a colored edge
+        tones = ("primary", "accent", "warning", "success")
+        cells = "".join(f"<div class='card edge' style='border-left-color:var(--{tones[n % 4]})'><span class='muted'>{escape(k)}</span>"
+                        f"<b class='num'>{escape(v)}</b><small class='muted'>vs last week {'+' if n % 3 != 2 else '−'}{(n * 7 + 4) % 19 + 2}%</small></div>"
+                        for n, (k, v) in enumerate(items))
+        return f"<div class='grid'>{cells}</div>"
+    if template == "portal":  # pastel tiles with round icons
+        tones = ("primary", "accent", "success", "warning")
+        cells = "".join(f"<div class='pastel' style='--tone:var(--{tones[n % 4]})'><span class='round'>{icon(nav_icon(k), 22)}</span>"
+                        f"<div><b class='num'>{escape(v)}</b><div class='muted'>{escape(k)}</div></div></div>" for n, (k, v) in enumerate(items))
+        return f"<div class='grid'>{cells}</div>"
+    rows = "".join(f"<div class='summary-row'><dt>{escape(k)}</dt><dd>{escape(v)}</dd><a href='#'>View</a></div>" for k, v in items)
+    return f"<h2>At a glance</h2><dl class='summary'>{rows}</dl>"
+
+
+def _table_variant(block: Block, template: str) -> str:
+    if template == "portal":  # records as cards
+        cards = []
+        for row in block.rows:
+            tone = next((_status(v) for v in row if _status(v)), None)
+            status = next((v for v in row if _status(v)), "")
+            meta = " · ".join(escape(v) for v in row[1:] if v != status)
+            pill = f"<span class='pill {tone}'>{escape(status)}</span>" if tone else ""
+            cards.append(f"<div class='rec'><span class='avatar'>{escape(_initials(row[0]))}</span><div class='grow'><b>{escape(row[0])}</b>"
+                         f"<div class='muted'>{meta}</div></div>{pill}"
+                         f"<span class='chev'>›</span></div>")
+        return f"<div class='card'><div class='cardhead'><h2>{escape(block.title)}</h2><span class='spacer'></span><a href='#'>See all</a></div>{''.join(cards)}</div>"
+    head = "".join(f"<th>{escape(c)}</th>" for c in block.columns)
+    rows = []
+    for r, row in enumerate(block.rows):
+        cells = []
+        for i, value in enumerate(row):
+            tone = _status(value)
+            if i == 0 and template == "console":
+                cells.append(f"<td class='mono'>#{1040 + r} <span class='dim'>{escape(value)}</span></td>")
+            elif i == 0 and template != "service":
+                cells.append(f"<td><span class='who'><span class='avatar'>{escape(_initials(value))}</span>{escape(value)}</span></td>")
+            elif tone and template == "console":
+                cells.append(f"<td><span class='dotted {tone}'>{escape(value).lower()}</span></td>")
+            elif tone and template == "service":
+                cells.append(f"<td><strong class='tag {tone}'>{escape(value).upper()}</strong></td>")
+            elif tone:
+                cells.append(f"<td><span class='pill {tone}'>{escape(value)}</span></td>")
+            else:
+                cells.append(f"<td>{escape(value)}</td>")
+        check = "<td class='cb'><input type='checkbox' aria-label='select'></td>" if template == "enterprise" else ""
+        rows.append(f"<tr>{check}{''.join(cells)}</tr>")
+    checkhead = "<th class='cb'><input type='checkbox' aria-label='select all'></th>" if template == "enterprise" else ""
+    table = f"<div class='tablewrap'><table><thead><tr>{checkhead}{head}</tr></thead><tbody>{''.join(rows)}</tbody></table></div>"
+    if template == "service":
+        return f"<h2>{escape(block.title)}</h2>{table}"
+    if template == "enterprise":
+        filters = ("<div class='filters'><span class='select'>Status: All ▾</span><span class='select'>Owner: Anyone ▾</span>"
+                   f"<span class='select'>21–23 Oct 2026 ▾</span><span class='spacer'></span><button class='ghost'>Export</button>"
+                   f"<button>{icon('plus', 16)}New</button></div>")
+        pager = ("<div class='pager'><span class='muted'>Showing 1–5 of 128</span><span class='spacer'></span>"
+                 "<span class='pg'>‹</span><span class='pg on'>1</span><span class='pg'>2</span><span class='pg'>3</span><span class='pg'>›</span></div>")
+        return f"<div class='card flush'><div class='cardhead pad'><h2>{escape(block.title)}</h2></div>{filters}{table}{pager}</div>"
+    if template == "console":
+        return (f"<div class='card'><div class='cardhead'><h2>{escape(block.title)}</h2><span class='spacer'></span>"
+                f"<span class='kbd'>F</span><span class='muted tiny'>filter</span></div>{table}</div>")
+    chips = "<span class='chip on'>All</span><span class='chip'>Active</span><span class='chip'>Pending</span>"
+    return (f"<div class='card'><div class='cardhead'><h2>{escape(block.title)}</h2><span class='spacer'></span>{chips}"
+            f"<button class='ghost'>{icon('search', 16)}Filter</button></div>{table}</div>")
+
+
+def _form_variant(block: Block, template: str) -> str:
+    fields = []
+    for n, f in enumerate(block.fields):
+        kind = "password" if "password" in f.lower() else "email" if "email" in f.lower() else "text"
+        low = f.lower()
+        said = ("Use the email address you sign in to work with" if "email" in low else "" if "password" in low
+                else "For example, Lan Nguyen" if "name" in low or "owner" in low else "For example, 27 3 2026" if "date" in low
+                else "Optional" if "note" in low else "")
+        hint = f"<span class='fieldhint'>{said}</span>" if template == "service" and said else ""
+        cls = "focus" if n == 0 else ""
+        if template == "enterprise":
+            fields.append(f"<label class='row'><span>{escape(f)}</span><input type='{kind}' class='{cls}' placeholder='{escape(f)}'></label>")
+        else:
+            fields.append(f"<label>{escape(f)}{hint}<input type='{kind}' class='{cls}' placeholder='{'' if template == 'service' else escape(f)}'></label>")
+    buttons = "".join(f"<button{' class=ghost' if n else ''}>{escape(b)}</button>" for n, b in enumerate(block.items or ["Save"]))
+    body = f"<form onsubmit='return false'><div class='fields'>{''.join(fields)}</div><div class='buttons'>{buttons}</div></form>"
+    if template == "service":
+        return body
+    if template == "workspace":
+        return (f"<div class='card'><div class='section'><div><h2>Details</h2><p class='muted'>What people see in lists and "
+                f"reports.</p></div>{body}</div></div>")
+    return f"<div class='card'>{body}</div>"
+
+
+def _empty_variant(block: Block, template: str) -> str:
+    if template == "service":
+        return (f"<h2>{escape(block.title)}</h2><p>{escape(block.text)}</p>")
+    if template == "console":
+        return (f"<div class='card empty'><div class='mono dim'>$ list --all</div><div class='mono'>0 results</div>"
+                f"<h2>{escape(block.title)}</h2><p>{escape(block.text)}</p></div>")
+    return _block(block)
+
+
+def _alert_variant(block: Block, template: str) -> str:
+    if template == "service" and block.tone == "danger":
+        return (f"<div class='errsum' role='alert'><h2>There is a problem</h2><a href='#'>{escape(block.text or block.title)}</a></div>")
+    return _block(block)
+
+
+def _blocks(screen: Screen, template: str) -> str:
+    out = []
+    for n, block in enumerate(screen.blocks):
+        if block.type == "stats":
+            out.append(_stats_variant(block, template))
+        elif block.type == "table":
+            out.append(_table_variant(block, template))
+        elif block.type == "form":
+            out.append(_form_variant(block, template))
+        elif block.type == "empty":
+            out.append(_empty_variant(block, template))
+        elif block.type == "alert":
+            out.append(_alert_variant(block, template))
+        elif block.type == "heading" and n == 0:
+            out.append(_heading_variant(block, template))
+        else:
+            out.append(_block(block))
+    return "".join(out)
+
+
+def _heading_variant(block: Block, template: str) -> str:
+    title, text = escape(block.title), escape(block.text)
+    if template == "workspace":
+        return (f"<div class='pagehead'><div><h1>{title}</h1>{'<div class=sub>' + text + '</div>' if text else ''}</div>"
+                f"<span class='spacer'></span><button class='ghost'>Share</button><button>{icon('plus', 16)}New</button></div>"
+                f"<div class='tabs'><a class='on'>Overview</a><a>Activity</a><a>Reports</a><a>Settings</a></div>")
+    if template == "console":
+        return (f"<div class='pagehead'><div><div class='mono dim tiny'>~/{slug(block.title)}</div><h1>{title}</h1></div>"
+                f"<span class='spacer'></span><span class='live'><i></i>Live</span></div>")
+    if template == "enterprise":
+        return (f"<div class='pagehead'><div><div class='crumbs'>Home › Workspace › {title}</div><h1>{title}</h1>"
+                f"{'<div class=sub>' + text + '</div>' if text else ''}</div></div>"
+                f"<div class='tabs'><a class='on'>All records</a><a>Assigned to me</a><a>Archived</a></div>")
+    if template == "portal":
+        return (f"<div class='hero'><div><div class='hello'>Good morning, Lan 👋</div><h1>{title}</h1>"
+                f"{'<p>' + text + '</p>' if text else ''}</div><button class='light'>{icon('plus', 16)}Quick action</button></div>")
+    return f"<span class='caption'>Workspace</span><h1 class='xl'>{title}</h1>{'<p class=lead>' + text + '</p>' if text else ''}"
+
+
+def _sign_in(concept: Concept, screen: Screen, template: str, name: str, mark: str) -> str:
+    form = "".join(_form_variant(b, template) if b.type == "form" else _alert_variant(b, template)
+                   for b in screen.blocks if b.type in ("form", "alert"))
+    form = form.replace("<div class='card'>", "<div>", 1)
+    if template == "workspace":
+        return (f"<div class='center'><div class='authcard'><div class='brand'>{mark}<span>{name}</span></div><h1>Sign in</h1>"
+                f"<p class='muted'>Welcome back. Enter your details.</p>{form}<div class='or'><span>or</span></div>"
+                f"<button class='ghost wide'>{icon('shield', 16)}Continue with SSO</button></div></div>")
+    if template == "console":
+        return (f"<div class='center glow'><div class='authcard glass'><div class='brand'>{mark}<span>{name}</span></div>"
+                f"<h1>Welcome back</h1><p class='muted'>Sign in to the control room.</p>{form}"
+                f"<p class='muted tiny'>Protected by single sign-on · v2.4</p></div></div>")
+    if template == "portal":
+        art = ("<svg width='220' height='120' viewBox='0 0 220 120' aria-hidden='true'><circle cx='60' cy='60' r='50' fill='var(--tint)'/>"
+               "<circle cx='160' cy='50' r='34' fill='color-mix(in srgb, var(--accent) 22%, var(--surface))'/>"
+               "<rect x='70' y='40' width='80' height='60' rx='14' fill='var(--surface)' stroke='var(--border)' stroke-width='2'/>"
+               "<circle cx='110' cy='62' r='10' fill='var(--primary)'/><rect x='92' y='80' width='36' height='8' rx='4' fill='var(--border)'/></svg>")
+        return (f"<div class='center warm'><div class='authcard soft'>{art}<h1>Hi there!</h1>"
+                f"<p class='muted'>Sign in to {name} with your work email.</p>{form}</div></div>")
+    if template == "service":
+        return (f"<header class='gov'><div class='wrap'><b>{name}</b></div></header><div class='phase'><div class='wrap'>"
+                f"<strong class='tag'>BETA</strong> This is a new service. Your feedback will help us improve it.</div></div>"
+                f"<main class='narrow'><h1 class='xl'>Sign in to {name}</h1>{form}<p><a href='#'>Problems signing in</a></p></main>")
+    return (f"<div class='auth'><div class='hero2'><div class='brand'>{mark}<span>{name}</span></div><div><h1>Welcome back to {name}</h1>"
+            f"<p>Everything your team needs, in one place. Sign in with the account your administrator gave you.</p></div>"
+            f"<small>© {name}</small></div><div class='panel'><div class='box'><div><h1>Sign in</h1>"
+            f"<p class='muted' style='margin:6px 0 0'>Enter your details to continue.</p></div>{form}</div></div></div>")
+
+
 def render(concept: Concept, screen: Screen, device: str = "desktop", product: str = "", logo: str = "") -> str:
-    """One prototype screen, self-contained (no script, no external request), in the concept's tokens and layout."""
+    """One prototype screen, self-contained (no script, no external request), in the concept's tokens and template."""
     width = DEVICES.get(device, 1280)
-    layout = "mobile" if device == "mobile" else concept.layout
+    template = template_of(concept)
+    mobile = device == "mobile"
     name = escape(product or concept.name)
     mark = f"<img src='{escape(logo)}' alt=''>" if logo else f"<span class='mark'>{escape(_initials(product or concept.name))}</span>"
     brand = f"<div class='brand'>{mark}<span>{name}</span></div>"
     if _is_sign_in(screen):
-        form = "".join(_block(b) for b in screen.blocks if b.type in ("form", "alert"))
-        form = form.replace("<div class='card'>", "<div>", 1)
-        frame = (f"<div class='auth'><div class='hero'>{brand.replace('mark', 'mark')}<div><h1>Welcome back to {name}</h1>"
-                 f"<p>Everything your team needs, in one place. Sign in with the account your administrator gave you.</p></div>"
-                 f"<small>© {name}</small></div><div class='panel'><div class='box'><div><h1>Sign in</h1>"
-                 f"<p class='muted' style='margin:6px 0 0'>Enter your details to continue.</p></div>{form}</div></div></div>")
-        return _page(concept, screen, width, frame)
-    body = "".join(_block(b, n == 0) for n, b in enumerate(screen.blocks))
-    user = "<span class='avatar'>LN</span>"
-    tools = (f"<span class='iconbtn'>{icon('bell')}<span class='dot'></span></span>{user}")
-    if layout == "sidebar":
-        links = "".join(f"<a href='#' class='{'on' if n == 0 else ''}'>{icon(nav_icon(item))}<span>{escape(item)}</span></a>"
-                        for n, item in enumerate(concept.navigation))
-        frame = (f"<div class='app'><aside class='side'>{brand}<div class='navlabel'>Menu</div>{links}"
-                 f"<div class='foot'>{icon('settings')}<span>Settings</span></div></aside>"
-                 f"<div class='col'><header class='topbar'><span class='search'>{icon('search', 16)}Search…</span>"
-                 f"<span class='spacer'></span>{tools}</header><main>{body}</main></div></div>")
-    elif layout == "topnav":
-        links = "".join(f"<a href='#' class='{'on' if n == 0 else ''}'>{icon(nav_icon(item), 16)}{escape(item)}</a>"
-                        for n, item in enumerate(concept.navigation[:4]))
-        frame = (f"<div class='app stack'><header class='topbar brandbar'>{brand.replace('brand', 'brand', 1)}"
-                 f"<nav class='links'>{links}</nav><span class='spacer'></span>"
-                 f"<span class='search' style='max-width:220px'>{icon('search', 16)}Search…</span>{tools}</header>"
-                 f"<main style='margin:0 auto'>{body}</main></div>")
-    else:
-        shorts: list[str] = []
-        for item in concept.navigation[:4]:  # one word each, never the same twice (Face Enrollment, Face Recognition)
-            words = [w for w in re.split(r"[\s/&-]+", item) if w]
-            shorts.append(next((w for w in words if w not in shorts), item)[:12])
-        tabs = "".join(f"<a href='#' class='{'on' if n == 0 else ''}'>{icon(nav_icon(item), 22)}{escape(short)}</a>"
-                       for n, (item, short) in enumerate(zip(concept.navigation[:4], shorts)))
+        return _page(concept, screen, width, _sign_in(concept, screen, template, name, mark), template)
+    body = _blocks(screen, template)
+    tools = f"<span class='iconbtn'>{icon('bell')}<span class='dot'></span></span><span class='avatar'>LN</span>"
+    if mobile:
         frame = (f"<div class='app stack'><header class='topbar'>{brand}<span class='spacer'></span>{tools}</header>"
-                 f"<main>{body}</main><nav class='bottom'>{tabs}</nav></div>")
-    return _page(concept, screen, width, frame)
+                 f"<main>{body}</main>{_bottom_nav(concept)}</div>")
+    elif template == "workspace":
+        frame = (f"<div class='app'><aside class='side'>{brand}<div class='navlabel'>Workspace</div>{_nav_links(concept, limit=4)}"
+                 f"<div class='navlabel'>More</div>{_nav_links_rest(concept, 4)}<div class='foot'><span class='avatar'>LN</span>"
+                 f"<span>Lan Nguyen<br><small class='muted'>HR Admin</small></span></div></aside>"
+                 f"<div class='col'><header class='topbar'><span class='search'>{icon('search', 16)}Search…<span class='kbd'>⌘K</span></span>"
+                 f"<span class='spacer'></span>{tools}</header><main>{body}</main></div></div>")
+    elif template == "console":
+        frame = (f"<div class='app'><aside class='rail'>{mark}{_nav_links(concept, 20, labels=False)}<span class='spacer'></span>"
+                 f"{icon('settings', 20)}</aside><div class='col'><header class='topbar'><b>{name}</b><span class='dim'>/</span>"
+                 f"<span>{escape(concept.navigation[0])}</span><span class='spacer'></span><span class='cmd'>{icon('search', 15)}"
+                 f"Type a command<span class='kbd'>⌘K</span></span>{tools}</header><main>{body}</main></div></div>")
+    elif template == "enterprise":
+        frame = (f"<div class='app'><aside class='side'>{brand}{_nav_links(concept)}<div class='foot'>{icon('settings')}"
+                 f"<span>Administration</span></div></aside><div class='col'><header class='topbar'>"
+                 f"<span class='search'>{icon('search', 16)}Search records, people, settings</span><span class='spacer'></span>"
+                 f"<span class='muted'>Head office ▾</span>{tools}</header><main>{body}</main></div></div>")
+    elif template == "portal":
+        frame = (f"<div class='app stack'><header class='topbar'>{brand}<nav class='pills'>{_nav_links(concept, 16, limit=4)}</nav>"
+                 f"<span class='spacer'></span>{tools}</header><main class='centered'>{body}</main></div>")
+    else:
+        links = "".join(f"<a href='#' class='{'on' if n == 0 else ''}'>{escape(item)}</a>" for n, item in enumerate(concept.navigation[:4]))
+        frame = (f"<header class='gov'><div class='wrap'><b>{name}</b><span class='spacer'></span><a href='#'>Sign out</a></div></header>"
+                 f"<div class='phase'><div class='wrap'><strong class='tag'>BETA</strong> This is a new service. Your feedback will "
+                 f"help us improve it.</div></div><nav class='govnav'><div class='wrap'>{links}</div></nav>"
+                 f"<main class='narrow'>{body}</main><footer class='govfoot'><div class='wrap'>Help · Cookies · Accessibility "
+                 f"statement · Contact</div></footer>")
+    return _page(concept, screen, width, frame, template)
 
 
-def _page(concept: Concept, screen: Screen, width: int, frame: str) -> str:
+def _nav_links_rest(concept: Concept, start: int) -> str:
+    rest = concept.navigation[start:] or ["Reports", "Settings"]
+    return "".join(f"<a href='#' title='{escape(item)}'>{icon(nav_icon(item))}<span>{escape(item)}</span></a>" for item in rest)
+
+
+def _template_css(template: str, width: int) -> str:
+    wide = width > 600
+    common = """
+.kbd { font: 11px/1 ui-monospace, Menlo, monospace; padding: 3px 6px; border-radius: 5px; border: 1px solid var(--border); color: var(--muted); margin-left: auto; }
+.mono { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; } .tiny { font-size: 11px; } .dim { opacity: .55; }
+.tabs { display: flex; gap: 22px; border-bottom: 1px solid var(--border); margin-top: -6px; }
+.tabs a { padding: 10px 0; color: var(--muted); font-weight: 600; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tabs a.on { color: var(--text); border-color: var(--primary); }
+.center { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+.authcard { width: 100%; max-width: 400px; display: flex; flex-direction: column; gap: 14px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius); padding: 32px; box-shadow: 0 12px 40px rgba(0,0,0,.08); }
+.authcard .brand { padding: 0; } .authcard form .fields { grid-template-columns: 1fr; } .authcard button { width: 100%; justify-content: center; }
+.authcard h1 { font-size: 1.5em; } .authcard p { margin: 0; }
+.or { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: .85em; }
+.or::before, .or::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+.wide { width: 100%; justify-content: center; }
+.auth .hero2 { background: linear-gradient(140deg, var(--primary), color-mix(in srgb, var(--primary) 45%, var(--accent)));
+  color: var(--on-primary); padding: 48px; display: flex; flex-direction: column; justify-content: space-between; }
+.auth .hero2 h1 { font-size: 2.2em; max-width: 420px; line-height: 1.15; } .auth .hero2 p { opacity: .85; max-width: 380px; }
+.auth .hero2 .mark { background: var(--on-primary); color: var(--primary); }
+"""
+    css = {
+        "workspace": """
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); padding: 0; }
+.kpi { padding: 20px 24px; display: flex; flex-direction: column; gap: 4px; border-left: 1px solid var(--border); }
+.kpi:first-child { border-left: 0; } .kpi b { font-size: 1.9em; letter-spacing: -0.03em; } .kpi .delta { align-self: flex-start; }
+.section { display: grid; grid-template-columns: 240px 1fr; gap: 32px; } .section p { margin: 4px 0 0; }
+.side a.on { background: var(--surface); box-shadow: 0 1px 2px rgba(0,0,0,.06); color: var(--text); }
+.search { border: 1px solid var(--border); background: var(--surface); min-width: 280px; }
+""",
+        "console": """
+.rail { width: 64px; background: var(--sidebar); display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 14px 0;
+  border-right: 1px solid var(--border); color: var(--on-sidebar); }
+.rail a { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 10px; color: inherit; opacity: .7; }
+.rail a.on { background: color-mix(in srgb, var(--primary) 22%, transparent); color: var(--primary); opacity: 1;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 40%, transparent), 0 0 18px color-mix(in srgb, var(--primary) 35%, transparent); }
+.rail .mark { margin-bottom: 14px; }
+.topbar { gap: 10px; } .cmd { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border: 1px solid var(--border);
+  border-radius: 8px; color: var(--muted); min-width: 260px; font-size: .9em; }
+.tile { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
+.tile .big { font-size: 2em; font-weight: 700; margin: 4px 0 10px; color: var(--text); }
+.meter { height: 4px; border-radius: 4px; background: var(--border); } .meter span { display: block; height: 100%; border-radius: 4px;
+  background: linear-gradient(90deg, var(--primary), var(--accent)); box-shadow: 0 0 10px var(--accent); }
+td { font-size: .92em; } .dotted::before { content: "● "; } .dotted.success { color: var(--success); } .dotted.warning { color: var(--warning); }
+.dotted.neutral { color: var(--muted); } .dotted.danger { color: var(--danger); }
+.live { display: inline-flex; align-items: center; gap: 8px; font-size: .85em; color: var(--success); }
+.live i { width: 8px; height: 8px; border-radius: 8px; background: var(--success); box-shadow: 0 0 10px var(--success); }
+.glow { background: radial-gradient(600px 400px at 50% 30%, color-mix(in srgb, var(--primary) 35%, transparent), transparent 70%), var(--background); }
+.glass { background: color-mix(in srgb, var(--surface) 75%, transparent); backdrop-filter: blur(10px);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 25%, transparent), 0 30px 80px rgba(0,0,0,.5); }
+""",
+        "enterprise": """
+.edge { border-left: 4px solid var(--primary); display: flex; flex-direction: column; gap: 4px; } .edge .num { font-size: 1.7em; }
+.card.flush { padding: 0; overflow: hidden; } .pad { padding: 18px 20px 0; }
+.filters { display: flex; gap: 8px; align-items: center; padding: 12px 20px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.select { padding: 7px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); font-size: .9em; }
+th { border-radius: 0 !important; } .cb { width: 36px; } tbody tr:nth-child(even) td { background: color-mix(in srgb, var(--text) 2.5%, var(--surface)); }
+td:first-child, th:first-child { padding-left: 20px; }
+.pager { display: flex; align-items: center; gap: 6px; padding: 12px 20px; border-top: 1px solid var(--border); }
+.pg { min-width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.pg.on { background: var(--primary); color: var(--on-primary); border-color: var(--primary); }
+label.row { display: grid; grid-template-columns: 160px 1fr; align-items: center; } form .fields:has(label.row) { grid-template-columns: 1fr; }
+""",
+        "portal": """
+.topbar { background: var(--surface); padding: 14px 32px; }
+.pills { display: flex; gap: 4px; padding: 4px; border-radius: 999px; background: color-mix(in srgb, var(--primary) 7%, var(--surface)); margin-left: 24px; }
+.pills a { display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 999px; color: var(--muted); font-weight: 600;
+  white-space: nowrap; max-width: 170px; overflow: hidden; text-overflow: ellipsis; flex: none; }
+.pills { min-width: 0; overflow: hidden; }
+.pills a.on { background: var(--surface); color: var(--primary); box-shadow: 0 2px 8px rgba(0,0,0,.06); }
+main.centered { margin: 0 auto; max-width: 1080px; }
+.hero { display: flex; align-items: center; gap: 24px; padding: 28px 32px; border-radius: calc(var(--radius) + 8px); color: var(--on-primary);
+  background: linear-gradient(120deg, var(--primary), color-mix(in srgb, var(--primary) 50%, var(--accent))); }
+.hero h1 { font-size: 2em; } .hero p { margin: 6px 0 0; opacity: .9; } .hero > div { flex: 1; } .hello { opacity: .9; margin-bottom: 6px; }
+button.light { background: var(--surface); color: var(--primary); }
+.pastel { display: flex; align-items: center; gap: 16px; padding: 22px; border-radius: var(--radius);
+  background: color-mix(in srgb, var(--tone) 9%, var(--surface)); border: 1px solid color-mix(in srgb, var(--tone) 18%, transparent); }
+.round { width: 52px; height: 52px; border-radius: 999px; display: grid; place-items: center; background: color-mix(in srgb, var(--tone) 18%, var(--surface)); color: var(--tone); }
+.pastel .num { font-size: 1.8em; display: block; }
+.rec { display: flex; align-items: center; gap: 14px; padding: 14px; border-radius: calc(var(--radius) - 4px); }
+.rec:hover { background: var(--hover); } .rec + .rec { border-top: 1px solid var(--border); } .grow { flex: 1; min-width: 0; }
+.chev { font-size: 1.6em; color: var(--muted); } .rec .avatar { width: 42px; height: 42px; background: var(--tint); color: var(--primary); }
+input { border-radius: 999px; padding-left: 18px; } button { border-radius: 999px; padding-left: 22px; padding-right: 22px; }
+.warm { background: radial-gradient(500px 300px at 20% 10%, var(--tint), transparent 70%), var(--background); }
+.authcard.soft { border-radius: 28px; align-items: center; text-align: center; }
+.authcard.soft > div, .authcard.soft form { width: 100%; text-align: left; }
+""",
+        "service": f"""
+body {{ background: var(--background); }}
+.wrap {{ max-width: 960px; margin: 0 auto; padding: 0 {30 if wide else 15}px; display: flex; align-items: center; gap: 16px; }}
+header.gov {{ background: #0B0C0C; color: #FFFFFF; padding: 14px 0; border-bottom: 10px solid var(--primary); font-size: 1.15em; }}
+header.gov a {{ color: #FFFFFF; font-size: .85em; text-decoration: underline; }}
+.phase {{ padding: 10px 0; border-bottom: 1px solid var(--border); font-size: .9em; }}
+.tag {{ display: inline-block; padding: 3px 8px; background: var(--primary); color: var(--on-primary); font-size: .8em; letter-spacing: .05em; margin-right: 8px; }}
+.tag.success {{ background: color-mix(in srgb, var(--success) 18%, #fff); color: var(--success); }}
+.tag.warning {{ background: color-mix(in srgb, var(--warning) 18%, #fff); color: var(--warning); }}
+.tag.neutral {{ background: #F3F2F1; color: #383F43; }} .tag.danger {{ background: color-mix(in srgb, var(--danger) 15%, #fff); color: var(--danger); }}
+.govnav {{ border-bottom: 1px solid var(--border); }} .govnav .wrap {{ gap: 24px; }}
+.govnav a {{ white-space: nowrap; padding: 14px 0; color: var(--primary); text-decoration: underline; font-weight: 700; border-bottom: 4px solid transparent; }}
+.govnav a.on {{ border-color: var(--primary); text-decoration: none; }}
+main.narrow {{ max-width: 960px; margin: 0 auto; padding: 40px {30 if wide else 15}px; gap: 24px; }}
+.caption {{ color: var(--muted); font-size: 1.15em; }} h1.xl {{ font-size: {2.6 if wide else 1.9}em; line-height: 1.1; margin-top: -14px; }}
+.lead {{ font-size: 1.25em; margin: 0; }} h2 {{ font-size: 1.5em; }}
+.summary {{ margin: 0; border-top: 1px solid var(--border); }}
+.summary-row {{ display: grid; grid-template-columns: 1fr 1fr auto; gap: 20px; padding: 12px 0; border-bottom: 1px solid var(--border); }}
+.summary dt {{ font-weight: 700; }} .summary dd {{ margin: 0; }} a {{ text-decoration: underline; }}
+table th {{ background: transparent; text-transform: none; letter-spacing: 0; font-size: 1em; color: var(--text); font-weight: 700;
+  border-bottom: 1px solid var(--border); }} td, th {{ padding: 12px 20px 12px 0 !important; }} tbody tr:hover td {{ background: transparent; }}
+button {{ background: var(--success); color: #FFFFFF; border-radius: 0; box-shadow: 0 2px 0 #002D18; padding: 10px 18px; font-size: 1.05em; }}
+button.ghost {{ background: #F3F2F1; color: var(--text); box-shadow: 0 2px 0 #929191; border: 0; }}
+label {{ font-size: 1.15em; font-weight: 700; }} .fieldhint {{ font-weight: 400; color: var(--muted); font-size: .85em; }}
+input {{ border: 2px solid var(--text); border-radius: 0; max-width: 480px; background: #FFFFFF; }}
+input.focus {{ outline: 3px solid var(--accent); outline-offset: 0; box-shadow: inset 0 0 0 2px var(--text); border-color: var(--text); }}
+form .fields {{ grid-template-columns: 1fr; }}
+.errsum {{ border: 5px solid var(--danger); padding: 20px; }} .errsum a {{ color: var(--danger); font-weight: 700; }}
+.govfoot {{ border-top: 1px solid var(--border); background: #F3F2F1; padding: 30px 0; color: var(--muted); margin-top: 40px; }}
+.empty, .card {{ box-shadow: none; }}
+""",
+    }[template]
+    return common + css
+
+
+def _page(concept: Concept, screen: Screen, width: int, frame: str, template: str = "workspace") -> str:
     return (f"<!doctype html><html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width={width}'>"
-            f"<title>{escape(concept.name)}: {escape(screen.name)}</title><style>{_css(concept, width)}</style></head>"
-            f"<body>{frame}</body></html>")
+            f"<title>{escape(concept.name)}: {escape(screen.name)}</title><style>{_css(concept, width)}"
+            f"{_template_css(template, width)}</style></head><body class='t-{template}'>{frame}</body></html>")
 
 
 def slug(text: str) -> str:
@@ -585,6 +931,7 @@ def preview_concept(preset: dict, colors: list[str], fonts: list[str], navigatio
         tokens["heading_font"] = tokens["font_family"]
     nav = navigation[:6] or ["Overview", "Records", "Reports", "Settings"]
     return Concept(id=preset["id"], name=preset["name"], preset=preset["id"], layout=preset["layout"],
+                   template=preset.get("template", ""),
                    density=preset.get("density", "comfortable"), rationale=preset.get("best_for", "") or "preset",
                    tokens=Tokens.model_validate(tokens), navigation=nav, screens=preview_screens(nav))
 

@@ -2,6 +2,7 @@
   "id": "clear-public",
   "name": "Clear public service",
   "layout": "topnav",
+  "template": "service",
   "density": "comfortable",
   "best_for": "public sector and strict accessibility: large text, strong contrast, clear focus (in the style of the GOV.UK Design System)",
   "tokens": {

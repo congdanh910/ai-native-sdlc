@@ -14,6 +14,7 @@ Output keys:
   - name: a short name.
   - preset: the id of the preset it starts from, or empty when it follows the customer's Figma.
   - layout: sidebar, topnav or mobile.
+  - template: the kind of interface, one per concept, never the same twice: workspace (light sidebar in groups, page tabs, a strip of KPIs, a centered sign-in card), console (icon rail, command bar, dense dark tiles and mono ids), enterprise (navy sidebar, filter bar, tables with selection and paging, horizontal forms, split sign-in), portal (pill top navigation, greeting banner, pastel tiles, records as cards) or service (public-service style: black header, one centered column, summary lists, large plain forms). Usually the template of the preset it starts from.
   - density: compact or comfortable.
   - rationale: two or three sentences: who it suits among the SRS roles and devices, and what it trades off.
   - tokens: object with keys colors (object with keys primary, on_primary, accent, background, surface, text, muted, border, success, warning, danger, each #RRGGBB; optionally sidebar and on_sidebar for a dark or colored sidebar), font_family (a CSS font stack), heading_font, base_size (pixels, 12 to 22), radius (pixels, 0 to 24), spacing (pixels, 4 to 16), shadow (a CSS box-shadow or none).

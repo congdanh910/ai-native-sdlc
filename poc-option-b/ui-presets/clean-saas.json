@@ -2,6 +2,7 @@
   "id": "clean-saas",
   "name": "Clean SaaS",
   "layout": "sidebar",
+  "template": "workspace",
   "density": "comfortable",
   "best_for": "back-office products: crisp, neutral, content first (in the style of shadcn/ui)",
   "tokens": {

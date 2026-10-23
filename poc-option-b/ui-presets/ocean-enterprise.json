@@ -2,6 +2,7 @@
   "id": "ocean-enterprise",
   "name": "Ocean enterprise",
   "layout": "sidebar",
+  "template": "enterprise",
   "density": "compact",
   "best_for": "ERP and HR systems with many records: navy sidebar, dense tables (in the style of Fluent and Ant Design)",
   "tokens": {

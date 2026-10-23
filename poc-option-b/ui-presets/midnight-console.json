@@ -2,6 +2,7 @@
   "id": "midnight-console",
   "name": "Midnight console",
   "layout": "sidebar",
+  "template": "console",
   "density": "compact",
   "best_for": "control rooms and monitoring: dark, dense, glowing accents (in the style of Linear)",
   "tokens": {

@@ -38,7 +38,12 @@ Mỗi preset là một bộ token (màu, chữ, spacing, radius, bóng), quy t�
 4. **Warm friendly** (phong cách Material 3): màu ấm, thẻ bo tròn, nhiều khoảng trắng, menu trên. Hợp cổng nhân viên, khách hàng.
 5. **Clear public service** (phong cách GOV.UK Design System): chữ lớn, tương phản mạnh, focus vàng, không bo. Hợp khu vực công, yêu cầu accessibility cao.
 
-Chỉ lấy phong cách (màu, mật độ, bo góc, kiểu điều hướng) của các design system mở, không chép template. Cả 5 đạt
+Chỉ lấy phong cách (màu, mật độ, bo góc, kiểu điều hướng) của các design system mở, không chép template.
+Mỗi preset có **template** riêng (trường `template` của concept), khác nhau về cấu trúc chứ không chỉ màu: workspace
+(sidebar sáng chia nhóm, tab trang, dải KPI, đăng nhập thẻ giữa có SSO), console (thanh icon, thanh lệnh ⌘K, ô số mono,
+đăng nhập tối có quầng sáng), enterprise (sidebar navy, thanh lọc, bảng có chọn dòng và phân trang, form nhãn trái,
+đăng nhập chia đôi), portal (menu viên thuốc, banner chào, ô pastel, bản ghi dạng thẻ, đăng nhập có hình), service
+(header đen, một cột, danh sách tóm tắt, form lớn có gợi ý, nút xanh lá). UX Designer chọn template cho mỗi concept. Cả 5 đạt
 tương phản WCAG AA. Bộ vẽ (23/10, viết lại vì bản đầu quá thô): thanh trên có tìm kiếm và avatar, sidebar có icon, thẻ
 số liệu có tăng/giảm và sparkline, bảng có avatar và badge trạng thái, biểu đồ cột, màn đăng nhập chia đôi, trạng thái
 rỗng có hình; màn hình mobile dùng điều hướng dưới với mọi preset.

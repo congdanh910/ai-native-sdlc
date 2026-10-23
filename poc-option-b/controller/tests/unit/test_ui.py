@@ -66,3 +66,18 @@ def test_the_request_form_previews_a_default_concept_in_the_brand_typed_so_far()
     assert [s.name for s in concept.screens] == ["overview", "form", "sign-in", "empty"]
     page = render(concept, concept.screens[0], "mobile", "Attendance")
     assert "<script" not in page and "Attendance" in page and "Employee Management item 1" in page
+
+
+def test_each_default_concept_is_a_different_kind_of_interface():
+    from controller.app.ui import TEMPLATES, presets, preview_concept, render
+    marks = {"workspace": "class='kpis'", "console": "class='rail'", "enterprise": "class='filters'",
+             "portal": "class='hero'", "service": "class='gov'"}
+    seen = set()
+    for preset in presets():
+        concept = preview_concept(preset, [], [], ["Employees", "Shifts"])
+        page = render(concept, concept.screens[0], "desktop", "Attendance")
+        assert marks[preset["template"]] in page and "<script" not in page
+        seen.add(preset["template"])
+        sign_in = render(concept, concept.screens[2], "desktop", "Attendance")
+        assert "type='password'" in sign_in
+    assert seen == set(TEMPLATES)

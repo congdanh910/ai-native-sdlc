@@ -2,6 +2,7 @@
   "id": "warm-friendly",
   "name": "Warm friendly",
   "layout": "topnav",
+  "template": "portal",
   "density": "comfortable",
   "best_for": "employee and customer portals: warm colors, rounded cards, generous space (in the style of Material 3)",
   "tokens": {
