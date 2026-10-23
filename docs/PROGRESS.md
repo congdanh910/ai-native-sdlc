@@ -16,7 +16,7 @@ job `update_branch` ở các cổng (`delivery.update_with_main`), task Tn+1 "Re
 `diff_base` cho các diff của run, `--first-parent` khi tìm commit của task, khung "Updated with the default branch".
 Sửa thêm: project check chạy lại setup trên checkout mới (attendance bị not ready, exit 127, a11fea2).
 Chưa làm: đánh lại số TC trùng giữa story (chỉ ghi chú), migration ngoài Alembic. Chưa chạy B2/B3 trên dự án thật.
-Test: 327 passed; `test_team_loop.py::test_a_code_task_whose_job_breaks_is_started_again_on_resume` chập chờn (fail 2
+Test: 329 passed (23/10 chiều); `test_team_loop.py::test_a_code_task_whose_job_breaks_is_started_again_on_resume` chập chờn (fail 2
 trong khoảng 25 lần, chưa bắt lại được trong 12 lần chạy liên tiếp; chưa rõ có do khoá run khi nhận job của B2 không).
 
 Run List Employees `31d224b9`: ghi chú "đặt test vào `test.describe('EMP-US-02')`" bị gửi bằng Send defects, đối chiếu
