@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Brain, Hammer, Lightbulb, Plus, X } from "lucide-react";
 import { ActionButton, Badge, Button, Card, ErrorBox, Loading, Mono, PageHeader, Select } from "../components/ui";
 import { api } from "../lib/api";
-import { role as roleLabel } from "../lib/utils";
+import { cn, role as roleLabel } from "../lib/utils";
 
-type Models = Record<string, Record<string, { model: string; effort: string }>>;
+type Choice = { model: string; effort: string };
+type Models = Record<string, Record<string, Choice>>;
+type Kind = "thinking" | "doing";
 interface Providers {
   thinking: Record<string, string[]>; doing: Record<string, string[]>; fallback: boolean; models: Models;
   model_suggestions: Record<string, string[]>; efforts: string[];
@@ -15,18 +17,34 @@ interface Providers {
   env: Record<string, string>;
   status: { provider: string; limited_until: string | null; reason: string }[];
 }
+type Draft = Pick<Providers, "thinking" | "doing" | "fallback" | "models">;
 
-/** Platform Admin: each role's engines in order of preference. A provider out of its subscription window is marked
- * limited and the role moves to its next engine in the same job; Mark available when the quota was reset. */
+const PURPOSE: Record<string, string> = {
+  business_analyst: "Specs, SRS, discovery",
+  tech_lead: "Plans, SDS, architecture, onboarding, UI concepts",
+  qa_analyst: "Test case design",
+  code_reviewer: "Reviews, briefs, settles disputes",
+  qa_engineer: "Writes test code and acceptance tests",
+  developer: "Writes the code",
+};
+const providerOf = (engine: string) => engine.replace("-readonly", "");
+const PROVIDER_NAME: Record<string, string> = { codex: "Codex", claude: "Claude" };
+const pick = (p: Providers): Draft => ({ thinking: p.thinking, doing: p.doing, fallback: p.fallback, models: p.models });
+
+/** Platform Admin: each role's providers in order of preference, with the model each one uses. A provider out of its
+ * subscription window is marked limited and the role moves to its next provider in the same job. */
 export function ProvidersView() {
   const client = useQueryClient();
   const data = useQuery({ queryKey: ["providers"], queryFn: () => api<Providers>("/api/admin/providers"), refetchInterval: 20000 });
-  const [draft, setDraft] = useState<Pick<Providers, "thinking" | "doing" | "fallback" | "models"> | null>(null);
-  useEffect(() => { if (data.data && !draft) setDraft({ thinking: data.data.thinking, doing: data.data.doing, fallback: data.data.fallback, models: data.data.models }); }, [data.data, draft]);
+  const [draft, setDraft] = useState<Draft | null>(null);
+  useEffect(() => { if (data.data && !draft) setDraft(pick(data.data)); }, [data.data, draft]);
   if (data.isLoading || !draft) return <Loading />;
   if (data.error) return <ErrorBox error={data.error} />;
   const d = data.data!;
-  const store = (fresh: Providers) => { client.setQueryData(["providers"], fresh); setDraft({ thinking: fresh.thinking, doing: fresh.doing, fallback: fresh.fallback, models: fresh.models }); };
+  const dirty = JSON.stringify(draft) !== JSON.stringify(pick(d));
+  const store = (fresh: Providers) => { client.setQueryData(["providers"], fresh); setDraft(pick(fresh)); };
+  const limited = Object.fromEntries(d.status.map((s) => [s.provider, s.limited_until]));
+
   const suggested = (role: string, models: Models): Models => {
     const rec = d.recommendations[role];
     if (!rec) return models;
@@ -36,127 +54,151 @@ export function ProvidersView() {
       ...(rec.claude ? { claude: { model: rec.claude.model, effort: "" } } : {}),
     } };
   };
-  const applySuggestion = (role: string) => setDraft({ ...draft, models: suggested(role, draft.models) });
-  const applyAllSuggestions = () => setDraft({ ...draft, models: [...d.thinking_roles, ...d.doing_roles].reduce((m, r) => suggested(r, m), draft.models) });
-  const choice = (role: string, provider: string) => draft.models[role]?.[provider] ?? { model: "", effort: "" };
-  const setChoice = (role: string, provider: string, change: Partial<{ model: string; effort: string }>) =>
+  const chainOf = (kind: Kind, role: string): string[] => {
+    const listed = draft[kind][role] ?? [];
+    return listed.length ? listed : [kind === "thinking" ? d.env[role] ?? "codex-readonly" : "codex"];
+  };
+  const setChain = (kind: Kind, role: string, list: string[]) => setDraft({ ...draft, [kind]: { ...draft[kind], [role]: list } });
+  const choice = (role: string, provider: string): Choice => draft.models[role]?.[provider] ?? { model: "", effort: "" };
+  const setChoice = (role: string, provider: string, change: Partial<Choice>) =>
     setDraft({ ...draft, models: { ...draft.models, [role]: { ...(draft.models[role] ?? {}), [provider]: { ...choice(role, provider), ...change } } } });
-  const modelCells = (r: string) => ["codex", "claude"].map((provider) => {
-    const current = choice(r, provider);
-    const codexModel = d.codex_models.find((m) => m.slug === current.model);
-    const levels = codexModel?.efforts ?? d.efforts;
+
+  // render functions, not components: a component defined here would remount on every keystroke
+  const modelControls = (role: string, provider: string) => {
+    const current = choice(role, provider);
+    if (provider === "claude") {
+      return (
+        <input aria-label={`${role} model on Claude`} list="models-claude" placeholder="default model"
+          className="h-9 w-44 rounded-lg border border-line bg-panel px-2.5 font-mono text-[12.5px]"
+          value={current.model} onChange={(e) => setChoice(role, provider, { model: e.target.value })} />
+      );
+    }
+    const model = d.codex_models.find((m) => m.slug === current.model);
     return (
-      <td key={provider} className="p-2.5">
-        <div className="flex flex-wrap items-center gap-1.5">
-          {provider === "codex" && d.codex_models.length ? (
-            <Select aria-label={`${r} model on codex`} className="h-8 w-auto text-sm" value={current.model}
-              onChange={(e) => {
-                const next = d.codex_models.find((m) => m.slug === e.target.value);
-                setChoice(r, provider, { model: e.target.value, effort: next && current.effort && !next.efforts.includes(current.effort) ? "" : current.effort });
-              }}>
-              <option value="">model: default</option>
-              {d.codex_models.map((m) => <option key={m.slug} value={m.slug}>{m.name}</option>)}
-              {current.model && !codexModel ? <option value={current.model}>{current.model}</option> : null}
-            </Select>
-          ) : (
-            <input aria-label={`${r} model on ${provider}`} list={`models-${provider}`} placeholder="default"
-              className="h-8 w-40 rounded-md border border-line bg-panel px-2 font-mono text-[12.5px]"
-              value={current.model} onChange={(e) => setChoice(r, provider, { model: e.target.value })} />
-          )}
-          {provider === "codex" ? (
-            <Select aria-label={`${r} reasoning effort on codex`} className="h-8 w-auto text-sm" value={current.effort}
-              onChange={(e) => setChoice(r, provider, { effort: e.target.value })}>
-              <option value="">effort: default{codexModel?.default_effort ? ` (${codexModel.default_effort})` : ""}</option>
-              {levels.map((e) => <option key={e} value={e}>{e}</option>)}
-            </Select>
-          ) : null}
-        </div>
-      </td>
+      <div className="flex flex-wrap gap-1.5">
+        <Select aria-label={`${role} model on Codex`} className="h-9 w-40 text-sm" value={current.model}
+          onChange={(e) => {
+            const next = d.codex_models.find((m) => m.slug === e.target.value);
+            setChoice(role, provider, { model: e.target.value, effort: next && current.effort && !next.efforts.includes(current.effort) ? "" : current.effort });
+          }}>
+          <option value="">default model</option>
+          {d.codex_models.map((m) => <option key={m.slug} value={m.slug}>{m.name}</option>)}
+          {current.model && !model ? <option value={current.model}>{current.model}</option> : null}
+        </Select>
+        <Select aria-label={`${role} reasoning effort on Codex`} className="h-9 w-40 text-sm" value={current.effort}
+          onChange={(e) => setChoice(role, provider, { effort: e.target.value })}>
+          <option value="">effort: default{model?.default_effort ? ` (${model.default_effort})` : ""}</option>
+          {(model?.efforts ?? d.efforts).map((e) => <option key={e} value={e}>effort: {e}</option>)}
+        </Select>
+      </div>
     );
-  });
-  const setList = (kind: "thinking" | "doing", role: string, list: string[]) => setDraft({ ...draft, [kind]: { ...draft[kind], [role]: list } });
-  const rows = (kind: "thinking" | "doing", roles: string[], engines: string[], fallbackFirst: (role: string) => string) => roles.map((r) => {
-    const list = draft[kind][r] ?? [];
-    const shown = list.length ? list : [fallbackFirst(r)];
-    const rest = engines.filter((e) => !list.includes(e));
+  };
+
+  const roleCard = (kind: Kind, role: string) => {
+    const listed = (draft[kind][role] ?? []).length > 0;
+    const chain = chainOf(kind, role);
+    const every = kind === "thinking" ? d.thinking_engines : d.doing_engines;
+    const rest = every.filter((e) => !chain.includes(e));
+    const rec = d.recommendations[role];
+    const move = (i: number, by: number) => { const n = [...chain]; [n[i], n[i + by]] = [n[i + by], n[i]]; setChain(kind, role, n); };
     return (
-      <tr key={r} className="border-b border-line align-top last:border-0">
-        <td className="p-2.5 font-medium">
-          {roleLabel(r)}
-          {d.recommendations[r] ? (
-            <div className="mt-1 max-w-[260px] text-xs font-normal text-muted">
-              Suggested: Codex <Mono>{d.recommendations[r].codex?.model}</Mono>{d.recommendations[r].codex?.effort ? ` · ${d.recommendations[r].codex?.effort}` : ""}, Claude <Mono>{d.recommendations[r].claude?.model}</Mono>
-              {d.recommendations[r].why ? <span className="block">{d.recommendations[r].why}</span> : null}
-              <button type="button" className="mt-0.5 font-semibold text-accent-ink hover:underline" onClick={() => applySuggestion(r)}>Use suggestion</button>
-            </div>
-          ) : null}
-        </td>
-        <td className="p-2.5">
-          <div className="flex flex-wrap items-center gap-1.5">
-            {list.length ? list.map((e, i) => (
-              <span key={e} className="inline-flex items-center gap-1 rounded-full border border-line bg-panel py-0.5 pl-2.5 pr-1 text-sm">
-                <span className="text-xs text-muted">{i + 1}.</span><Mono>{e}</Mono>
-                <button type="button" aria-label={`Move ${e} earlier`} disabled={i === 0} className="p-0.5 disabled:opacity-30" onClick={() => { const n = [...list]; [n[i - 1], n[i]] = [n[i], n[i - 1]]; setList(kind, r, n); }}><ArrowUp className="size-3" /></button>
-                <button type="button" aria-label={`Move ${e} later`} disabled={i === list.length - 1} className="p-0.5 disabled:opacity-30" onClick={() => { const n = [...list]; [n[i + 1], n[i]] = [n[i], n[i + 1]]; setList(kind, r, n); }}><ArrowDown className="size-3" /></button>
-                <button type="button" aria-label={`Remove ${e}`} className="p-0.5" onClick={() => setList(kind, r, list.filter((x) => x !== e))}><X className="size-3" /></button>
-              </span>
-            )) : <span className="text-sm text-muted">as configured: <Mono>{shown[0]}</Mono></span>}
-            {rest.length ? (
-              <Select aria-label={`Add an engine for ${r}`} className="h-8 w-auto text-sm" value="" onChange={(e) => e.target.value && setList(kind, r, [...list, e.target.value])}>
-                <option value="">+ add</option>
-                {rest.map((e) => <option key={e} value={e}>{e}</option>)}
-              </Select>
-            ) : null}
+      <Card key={role} className="flex flex-col gap-3 p-4">
+        <div className="flex items-start gap-2">
+          <div className="min-w-0 flex-1">
+            <h3 className="m-0 text-[15px] font-semibold">{roleLabel(role)}</h3>
+            <p className="m-0 text-xs text-muted">{PURPOSE[role]}</p>
           </div>
-        </td>
-        {modelCells(r)}
-      </tr>
+          {!listed ? <Badge tone="neutral">from {kind === "thinking" ? ".env" : "project.yaml"}</Badge> : null}
+        </div>
+        <ol className="m-0 flex list-none flex-col gap-2 p-0">
+          {chain.map((engine, i) => {
+            const provider = providerOf(engine);
+            return (
+              <li key={engine} className="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-sunken/40 p-2">
+                <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-panel text-xs font-semibold text-muted" title={i === 0 ? "first choice" : "fallback"}>{i + 1}</span>
+                <span className="w-14 shrink-0 font-semibold">{PROVIDER_NAME[provider]}</span>
+                {limited[provider] ? <Badge tone="bad">out of quota</Badge> : null}
+                <div className="flex-1">{modelControls(role, provider)}</div>
+                <div className="flex items-center gap-0.5">
+                  <button type="button" aria-label={`Move ${provider} earlier`} disabled={i === 0} onClick={() => move(i, -1)} className="rounded p-1 text-muted hover:bg-panel disabled:opacity-25"><ArrowUp className="size-3.5" /></button>
+                  <button type="button" aria-label={`Move ${provider} later`} disabled={i === chain.length - 1} onClick={() => move(i, 1)} className="rounded p-1 text-muted hover:bg-panel disabled:opacity-25"><ArrowDown className="size-3.5" /></button>
+                  <button type="button" aria-label={`Remove ${provider}`} disabled={chain.length === 1} onClick={() => setChain(kind, role, chain.filter((e) => e !== engine))} className="rounded p-1 text-muted hover:bg-panel disabled:opacity-25"><X className="size-3.5" /></button>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+        {rest.length ? (
+          <div className="flex flex-wrap gap-2">
+            {rest.map((engine) => (
+              <Button key={engine} className="h-8 text-xs" onClick={() => setChain(kind, role, [...chain, engine])}>
+                <Plus className="size-3.5" />Add {PROVIDER_NAME[providerOf(engine)]} as fallback
+              </Button>
+            ))}
+          </div>
+        ) : null}
+        {rec ? (
+          <div className="flex items-start gap-2 rounded-lg bg-accent-soft/40 p-2.5 text-xs">
+            <Lightbulb className="mt-0.5 size-3.5 shrink-0 text-accent-ink" aria-hidden />
+            <div className="min-w-0 flex-1">
+              <div><b>Suggested:</b> Codex <Mono>{rec.codex?.model}</Mono>{rec.codex?.effort ? ` · ${rec.codex.effort}` : ""} · Claude <Mono>{rec.claude?.model}</Mono></div>
+              {rec.why ? <div className="text-muted">{rec.why}</div> : null}
+            </div>
+            <button type="button" className="shrink-0 font-semibold text-accent-ink hover:underline" onClick={() => setDraft({ ...draft, models: suggested(role, draft.models) })}>Use</button>
+          </div>
+        ) : null}
+      </Card>
     );
-  });
-  const head = (
-    <thead><tr className="text-left text-xs text-muted">
-      <th scope="col" className="p-2.5">Role</th><th scope="col" className="p-2.5">Engines in order</th>
-      <th scope="col" className="p-2.5">Model on Codex</th><th scope="col" className="p-2.5">Model on Claude</th>
-    </tr></thead>
+  };
+
+  const section = (kind: Kind, Icon: typeof Brain, title: string, text: string, roles: string[]) => (
+    <section className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-baseline gap-2">
+        <Icon className="size-4 self-center text-muted" aria-hidden />
+        <h2 className="m-0 text-base font-semibold">{title}</h2>
+        <span className="text-sm text-muted">{text}</span>
+      </div>
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">{roles.map((r) => roleCard(kind, r))}</div>
+    </section>
   );
+
   return (
     <>
-      <PageHeader title="AI providers" subtitle="As Platform Admin. Each role's engines in order of preference. When a provider's subscription window is used up, the role moves to its next engine in the same job; it waits only when every engine is out of quota." />
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+      <PageHeader title="AI providers" subtitle="As Platform Admin. For each role, the providers to use in order and the model each one runs. When a provider's quota runs out, the role moves to the next provider in the same job. Applies to the next AI call of every run." />
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         {d.status.map((s) => (
-          <Card key={s.provider} className="flex flex-col gap-2 p-4">
-            <div className="flex items-center gap-2">
-              <b className="text-base capitalize">{s.provider}</b>
-              {s.limited_until ? <Badge tone="bad" dot>out of quota until {new Date(s.limited_until).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</Badge> : <Badge tone="good" dot>available</Badge>}
-              {s.limited_until ? (
-                <ActionButton className="ml-auto" success={`${s.provider} available again; waiting jobs run now`}
-                  title="The quota was reset (a new window or more credits): use it again now and run the jobs that waited for it"
-                  action={async () => store(await api<Providers>(`/api/admin/providers/${s.provider}/available`, { method: "POST" }))}>Mark available</ActionButton>
-              ) : null}
+          <Card key={s.provider} className={cn("flex items-center gap-3 p-4", s.limited_until ? "border-bad/40" : "")}>
+            <span className={cn("size-2.5 rounded-full", s.limited_until ? "bg-bad" : "bg-good")} aria-hidden />
+            <div className="min-w-0 flex-1">
+              <b className="text-base">{PROVIDER_NAME[s.provider]}</b>
+              <div className="text-xs text-muted">{s.limited_until ? `Out of quota until ${new Date(s.limited_until).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}` : "Available"}</div>
             </div>
-            {s.reason ? <p className="m-0 text-xs text-muted">{s.reason.slice(-240)}</p> : null}
+            {s.limited_until ? (
+              <ActionButton success={`${PROVIDER_NAME[s.provider]} available again; waiting jobs run now`}
+                title="The quota was reset (a new window or more credits): use it again now and run the jobs that waited for it"
+                action={async () => store(await api<Providers>(`/api/admin/providers/${s.provider}/available`, { method: "POST" }))}>Mark available</ActionButton>
+            ) : null}
           </Card>
         ))}
       </div>
-      <Card className="flex flex-col gap-3 p-5">
-        <h2 className="m-0 text-base font-semibold">Thinking roles</h2>
-        <p className="m-0 text-sm text-muted">Read-only sessions that write specs, plans, test cases, reviews and briefs. Empty: the engine of SDLC_ENGINES in .env.</p>
-        <div className="overflow-x-auto"><table className="w-full border-collapse">{head}<tbody>{rows("thinking", d.thinking_roles, d.thinking_engines, (r) => d.env[r] ?? "")}</tbody></table></div>
-        <h2 className="m-0 mt-2 text-base font-semibold">Doing roles</h2>
-        <p className="m-0 text-sm text-muted">Sessions that write tests and code in the run's worktree. Only the executors a project allows in its .sdlc/project.yaml are used. Empty: the project's qa_executor / default_executor.</p>
-        <div className="overflow-x-auto"><table className="w-full border-collapse">{head}<tbody>{rows("doing", d.doing_roles, d.doing_engines, () => "the project's executor")}</tbody></table></div>
-        <p className="m-0 text-xs text-muted">Model empty: the CLI's default (Codex: ~/.codex/config.toml; Claude: its configured model). Claude takes aliases such as opus, sonnet, haiku or a full model id; Codex lists the models your Codex login may use (from ~/.codex/models_cache.json, refreshed by the Codex CLI) with the reasoning efforts each one supports.</p>
-        {Object.entries(d.model_suggestions).map(([provider, names]) => <datalist key={provider} id={`models-${provider}`}>{names.map((n) => <option key={n} value={n} />)}</datalist>)}
-        <label className="flex items-center gap-2 text-sm">
+      {section("thinking", Brain, "Thinking roles", "read-only sessions", d.thinking_roles)}
+      {section("doing", Hammer, "Doing roles", "write tests and code; only the executors a project allows", d.doing_roles)}
+      <Card className="flex flex-col gap-2 p-4 text-sm">
+        <label className="flex items-center gap-2">
           <input type="checkbox" checked={draft.fallback} onChange={(e) => setDraft({ ...draft, fallback: e.target.checked })} />
-          After the listed engines, fall back to any other provider (Codex, Claude) rather than wait
+          <span>After the listed providers, also try any other provider rather than wait</span>
         </label>
-        <div className="flex gap-2">
-          <ActionButton variant="primary" success="AI providers saved; the next calls use them" action={async () => store(await api<Providers>("/api/admin/providers", { method: "PUT", body: draft }))}>Save</ActionButton>
-          <Button onClick={applyAllSuggestions} title="Fill every role's models with the suggestions; nothing is saved until Save">Apply all suggestions</Button>
-          <Button onClick={() => setDraft({ thinking: d.thinking, doing: d.doing, fallback: d.fallback, models: d.models })}>Discard</Button>
-        </div>
+        <p className="m-0 text-xs text-muted">Empty model: the CLI's default (Codex: ~/.codex/config.toml). Codex models are the ones your Codex login may use (~/.codex/models_cache.json). Claude takes opus, sonnet, haiku or a full model id. Eval runs keep their pinned engines.</p>
       </Card>
+      <div className={cn("sticky bottom-0 z-10 flex flex-wrap items-center gap-2 rounded-xl border p-3 shadow-sm", dirty ? "border-accent/50 bg-panel" : "border-line bg-panel/90")}>
+        <span className={cn("text-sm", dirty ? "font-semibold text-accent-ink" : "text-muted")}>{dirty ? "Unsaved changes" : "All changes saved"}</span>
+        <span className="flex-1" />
+        <Button onClick={() => setDraft({ ...draft, models: [...d.thinking_roles, ...d.doing_roles].reduce((m, r) => suggested(r, m), draft.models) })}>Apply all suggestions</Button>
+        <Button disabled={!dirty} onClick={() => setDraft(pick(d))}>Discard</Button>
+        <ActionButton variant="primary" disabled={!dirty} success="AI providers saved; the next AI calls use them"
+          action={async () => store(await api<Providers>("/api/admin/providers", { method: "PUT", body: draft }))}>Save</ActionButton>
+      </div>
+      <datalist id="models-claude">{(d.model_suggestions.claude ?? []).map((n) => <option key={n} value={n} />)}</datalist>
     </>
   );
 }
