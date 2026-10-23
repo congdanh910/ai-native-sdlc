@@ -2,24 +2,29 @@ import { Fragment, useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Play } from "lucide-react";
 import { Link, useLocation } from "wouter";
-import { ActionButton, Badge, Button, Card, ErrorBox, Input, Loading, Markdown, Mono, PageHeader, StatusBadge, Textarea } from "../components/ui";
+import { toast } from "sonner";
+import { ActionButton, Badge, Button, Card, ErrorBox, Input, Loading, Markdown, Mono, PageHeader, Select, StatusBadge, Textarea } from "../components/ui";
 import { api, ApiError, type RunSummary } from "../lib/api";
-import { short } from "../lib/utils";
+import { ACTION_LABEL, short } from "../lib/utils";
 
 interface Item {
   story: string; depends_on: string[]; reason: string; hold: boolean; done: string;
   title: string; actors: string; feature: string; statement: string; in_srs: boolean; wave: number | null;
-  state: "delivered" | "running" | "held" | "blocked" | "ready"; detail: string; run: { id: string; status: string } | null;
+  state: "delivered" | "open" | "held" | "blocked" | "ready"; detail: string;
+  run: { id: string; status: string; opened_automatically: boolean } | null;
 }
 interface Backlog {
   project: string; commit: string | null; status: "draft" | "approved" | null; version: number; notes: string;
   approved_by: string | null; approved_at: string | null; srs_commit: string | null;
-  delivery: { auto_start: boolean; max_open_runs: number | null; open_runs: number; config_valid: boolean };
+  delivery: {
+    auto_start: boolean; max_open_runs: number | null; open_runs: number; config_valid: boolean;
+    config_auto_start: boolean; override: boolean | null; would_open: string[];
+  };
   items: Item[]; not_in_backlog: { story: string; title: string; actors: string; feature: string }[]; problems: string[];
 }
 type Edit = Pick<Item, "story" | "depends_on" | "reason" | "hold" | "done">;
 
-const STATE_TONE = { delivered: "good", running: "accent", held: "neutral", blocked: "warn", ready: "violet" } as const;
+const STATE_TONE = { delivered: "good", open: "accent", held: "neutral", blocked: "warn", ready: "violet" } as const;
 const pick = (i: Edit): Edit => ({ story: i.story, depends_on: i.depends_on, reason: i.reason, hold: i.hold, done: i.done });
 
 /** The project's user stories in delivery order. The Tech Lead AI proposes the order and dependencies from the SRS and
@@ -57,15 +62,30 @@ export function BacklogView({ project }: { project: string }) {
         actions={data.status ? <Badge tone={data.status === "approved" ? "good" : "warn"} dot>{data.status === "approved" ? `approved by ${data.approved_by}` : `draft v${data.version}`}</Badge> : null} />
       <Card className="flex flex-col gap-3 p-5">
         <div className="flex flex-wrap gap-2 text-sm">
-          {(["ready", "running", "blocked", "held", "delivered"] as const).map((s) => <Badge key={s} tone={STATE_TONE[s]}>{counts[s] ?? 0} {s}</Badge>)}
+          {(["ready", "open", "blocked", "held", "delivered"] as const).map((s) => <Badge key={s} tone={STATE_TONE[s]}>{counts[s] ?? 0} {s}</Badge>)}
           <span className="text-muted">SRS at <Mono>{short(data.commit ?? "", 10)}</Mono>{data.srs_commit && data.srs_commit !== data.commit ? <> · backlog made at <Mono>{short(data.srs_commit, 10)}</Mono></> : null}</span>
         </div>
-        <p className="m-0 text-sm text-muted">
-          {!data.delivery.config_valid ? ".sdlc/project.yaml does not parse: stories do not open on their own."
-            : data.delivery.auto_start
-              ? <>Once approved, the next ready story opens on its own while fewer than <b>{data.delivery.max_open_runs}</b> feature runs are open (now {data.delivery.open_runs}); <Mono>delivery</Mono> in .sdlc/project.yaml. A story opens on its own once; after a run that did not merge, start it here.</>
-              : <>Stories open only with Start (<Mono>delivery.auto_start: false</Mono>); {data.delivery.open_runs} feature run(s) open.</>}
-        </p>
+        {data.status ? (
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <label htmlFor="auto-start" className="font-semibold">Open stories on their own</label>
+            <Select id="auto-start" className="w-auto" value={data.delivery.override === null ? "config" : data.delivery.override ? "on" : "off"}
+              onChange={async (e) => {
+                const enabled = e.target.value === "config" ? null : e.target.value === "on";
+                try { store(await api<Backlog>(`${path}/auto-start`, { method: "POST", body: { enabled } })); }
+                catch (error) { toast.error(error instanceof Error ? error.message : String(error)); }
+              }}>
+              <option value="config">As .sdlc/project.yaml ({data.delivery.config_auto_start ? "on" : "off"})</option>
+              <option value="on">On</option>
+              <option value="off">Off: only with Start</option>
+            </Select>
+            <span className="text-muted">
+              {!data.delivery.config_valid ? ".sdlc/project.yaml does not parse."
+                : data.delivery.auto_start
+                  ? <>When the backlog is approved, the next ready story opens while fewer than <b>{data.delivery.max_open_runs}</b> feature runs are open (now {data.delivery.open_runs}). Each story opens on its own once.</>
+                  : <>Stories open only with Start; {data.delivery.open_runs} feature run(s) open.</>}
+            </span>
+          </div>
+        ) : null}
         <Textarea rows={2} placeholder={data.items.length ? "What should the AI change in the order? (optional)" : "Anything the AI should know about the order (optional)"} value={feedback} onChange={(e) => setFeedback(e.target.value)} />
         <div className="flex flex-wrap gap-2">
           <ActionButton variant={data.items.length ? undefined : "primary"} disabled={dirty} title={dirty ? "Save or discard your edits first" : undefined}
@@ -88,8 +108,21 @@ export function BacklogView({ project }: { project: string }) {
         {data.status === "draft" && !dirty ? (
           <div className="flex flex-wrap items-center gap-2">
             <Input className="min-w-[280px] flex-1" placeholder="Reason (optional)" value={reason} onChange={(e) => setReason(e.target.value)} />
-            <ActionButton variant="primary" disabled={data.problems.length > 0} success="Backlog approved"
-              action={async () => store(await api<Backlog>(`${path}/approve`, { method: "POST", body: { version: data.version, reason } }))}>Approve backlog</ActionButton>
+            {data.delivery.auto_start && data.delivery.would_open.length ? <>
+              <ActionButton variant="primary" disabled={data.problems.length > 0} success={`Backlog approved; ${data.delivery.would_open.join(", ")} open now`}
+                title="Stories open on their own: these runs start at once and stop at every gate"
+                action={async () => store(await api<Backlog>(`${path}/approve`, { method: "POST", body: { version: data.version, reason } }))}>
+                Approve and open {data.delivery.would_open.join(", ")}
+              </ActionButton>
+              <ActionButton disabled={data.problems.length > 0} success="Backlog approved; stories open only with Start"
+                title="Turns the switch off: start each story yourself"
+                action={async () => store(await api<Backlog>(`${path}/approve`, { method: "POST", body: { version: data.version, reason, auto_start: false } }))}>
+                Approve, open nothing
+              </ActionButton>
+            </> : (
+              <ActionButton variant="primary" disabled={data.problems.length > 0} success="Backlog approved"
+                action={async () => store(await api<Backlog>(`${path}/approve`, { method: "POST", body: { version: data.version, reason } }))}>Approve backlog</ActionButton>
+            )}
           </div>
         ) : null}
       </Card>
@@ -131,8 +164,17 @@ export function BacklogView({ project }: { project: string }) {
                     <td className="p-2.5">
                       {info ? <>
                         <Badge tone={STATE_TONE[info.state]} dot>{info.state}</Badge>
-                        <div className="mt-1 text-xs text-muted">{info.detail}</div>
-                        {info.run ? <Link href={`/runs/${info.run.id}`} className="text-xs"><StatusBadge status={info.run.status} /></Link> : null}
+                        {info.run?.opened_automatically && info.state === "open" ? <> <Badge tone="neutral">opened automatically</Badge></> : null}
+                        {info.state === "open" && info.run ? (
+                          <div className="mt-1 text-xs">
+                            <Link href={`/runs/${info.run.id}`}>
+                              {ACTION_LABEL[info.run.status.toLowerCase()] ? <>waits for you: {ACTION_LABEL[info.run.status.toLowerCase()]}</> : <>team working: {info.run.status.replace(/_/g, " ").toLowerCase()}</>}
+                            </Link>
+                          </div>
+                        ) : <>
+                          <div className="mt-1 text-xs text-muted">{info.detail}</div>
+                          {info.run ? <Link href={`/runs/${info.run.id}`} className="text-xs"><StatusBadge status={info.run.status} /></Link> : null}
+                        </>}
                       </> : <span className="text-xs text-muted">saved after Save</span>}
                     </td>
                     <td className="p-2.5">

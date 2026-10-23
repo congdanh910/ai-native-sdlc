@@ -183,18 +183,21 @@ def foundation_blocker(session: Session, project: Project) -> str:
     return ""
 
 
-def states(items: list[dict], runs: dict[str, list[Run]], foundation: str) -> dict[str, dict]:
-    """delivered / running / held / blocked / ready for every story of the backlog, with what decides it."""
+def states(items: list[dict], runs: dict[str, list[Run]], foundation: str,
+           auto_runs: frozenset[str] | set[str] = frozenset()) -> dict[str, dict]:
+    """delivered / open / held / blocked / ready for every story of the backlog, with what decides it. auto_runs: the
+    runs the worker opened on its own (the backlog marks them)."""
     delivered = {i["story"] for i in items if i.get("done")}
     delivered |= {story for story, rs in runs.items() if any(r.status == RunStatus.COMPLETED for r in rs)}
     result: dict[str, dict] = {}
     for item in items:
         story, last = item["story"], (runs.get(item["story"]) or [None])[-1]
-        run = {"id": str(last.id), "status": last.status} if last else None
+        run = {"id": str(last.id), "status": last.status, "opened_automatically": str(last.id) in auto_runs} \
+            if last else None
         if story in delivered:
             state = {"state": "delivered", "detail": item.get("done") or "merged"}
         elif last is not None and last.status not in TERMINAL:
-            state = {"state": "running", "detail": last.status}
+            state = {"state": "open", "detail": last.status}
         elif item.get("hold"):
             state = {"state": "held", "detail": "on hold"}
         else:
@@ -210,6 +213,13 @@ def states(items: list[dict], runs: dict[str, list[Run]], foundation: str) -> di
     return result
 
 
+def auto_opened(session: Session, project: Project) -> set[str]:
+    """Runs the worker opened on its own from the backlog."""
+    from controller.app.models import Event
+    return {str(r) for r in session.scalars(select(Event.run_id).where(
+        Event.project_id == project.id, Event.event_type == "backlog.started", Event.actor == AUTO_ACTOR))}
+
+
 def get_backlog(session: Session, project: Project, lock: bool = False) -> Backlog | None:
     query = select(Backlog).where(Backlog.project_id == project.id)
     return session.scalar(query.with_for_update() if lock else query)
@@ -221,7 +231,7 @@ def view(session: Session, project: Project) -> dict:
                for f in srs_features(srs) for s in f.stories}
     backlog = get_backlog(session, project)
     items = backlog.items if backlog else []
-    found = states(items, story_runs(session, project), foundation_blocker(session, project))
+    found = states(items, story_runs(session, project), foundation_blocker(session, project), auto_opened(session, project))
     wave = waves(items)
     return {
         "project": project.key, "commit": project.checked_commit,
@@ -235,14 +245,48 @@ def view(session: Session, project: Project) -> dict:
         "not_in_backlog": [{"story": sid, **meta} for sid, meta in stories.items()
                            if sid not in {i["story"] for i in items}],
         "problems": check(items, list(stories)) if backlog else [],
-        "delivery": _delivery_view(session, project),
+        "delivery": _delivery_view(session, project, backlog),
     }
 
 
-def _delivery_view(session: Session, project: Project) -> dict:
+def _delivery_view(session: Session, project: Project, backlog: Backlog | None) -> dict:
     settings = delivery(project)
-    return {"auto_start": bool(settings and settings.auto_start), "max_open_runs": settings.max_open_runs if settings else None,
-            "open_runs": len(open_runs(session, project)), "config_valid": settings is not None}
+    return {"auto_start": effective_auto_start(backlog, settings), "max_open_runs": settings.max_open_runs if settings else None,
+            "open_runs": len(open_runs(session, project)), "config_valid": settings is not None,
+            "config_auto_start": bool(settings and settings.auto_start),
+            "override": backlog.auto_start if backlog else None,
+            # what approving (or an approved backlog at the next poll) opens on its own, with the switch on
+            "would_open": next_to_open(session, project, backlog, settings, force=True) if backlog else []}
+
+
+def effective_auto_start(backlog: Backlog | None, settings) -> bool:
+    """The Tech Lead's switch on the backlog page wins over delivery.auto_start of project.yaml."""
+    if backlog is not None and backlog.auto_start is not None:
+        return backlog.auto_start
+    return bool(settings and settings.auto_start)
+
+
+def next_to_open(session: Session, project: Project, backlog: Backlog, settings, force: bool = False) -> list[str]:
+    """The ready stories, in backlog order, that fit in the room left (delivery.max_open_runs); never a story that
+    had a run already. force: as if stories opened on their own (to show what approving would do)."""
+    if settings is None or (not force and not effective_auto_start(backlog, settings)):
+        return []
+    room = settings.max_open_runs - len(open_runs(session, project))
+    runs = story_runs(session, project)
+    found = states(backlog.items, runs, foundation_blocker(session, project))
+    ready = [i["story"] for i in backlog.items if found[i["story"]]["state"] == "ready" and not runs.get(i["story"])]
+    return ready[:max(room, 0)]
+
+
+def set_auto_start(session: Session, project: Project, enabled: bool | None, *, actor: str) -> Backlog:
+    """The switch: on, off, or None to follow delivery.auto_start of project.yaml again."""
+    backlog = get_backlog(session, project, lock=True)
+    if backlog is None:
+        raise BacklogError(f"{project.key} has no backlog yet; propose one first")
+    backlog.auto_start = enabled
+    record_event(session, "backlog.auto_start", actor=actor, acting_role=HumanRole.TECH_LEAD, project_id=project.id,
+                 payload={"enabled": enabled})
+    return backlog
 
 
 def _store(session: Session, project: Project, items: list[dict], notes: str, actor: str, srs_commit: str | None,
@@ -307,7 +351,9 @@ def save(session: Session, project: Project, items: list[dict], notes: str, *, a
     return stored
 
 
-def approve(session: Session, project: Project, *, actor: str, version: int, reason: str = "") -> Backlog:
+def approve(session: Session, project: Project, *, actor: str, version: int, reason: str = "",
+            auto_start: bool | None = None) -> Backlog:
+    """auto_start: the switch set with the approval (False: approve and open nothing on its own)."""
     srs, _ = _srs(project)
     backlog = get_backlog(session, project, lock=True)
     if backlog is None:
@@ -318,6 +364,8 @@ def approve(session: Session, project: Project, *, actor: str, version: int, rea
     if problems:
         raise BacklogError("fix the backlog first: " + "; ".join(problems))
     backlog.status, backlog.approved_by, backlog.approved_at = APPROVED, actor, datetime.now(timezone.utc)
+    if auto_start is not None:
+        backlog.auto_start = auto_start
     record_event(session, "backlog.approved", actor=actor, acting_role=HumanRole.TECH_LEAD, project_id=project.id,
                  payload={"version": backlog.version, "reason": reason})
     return backlog
@@ -399,27 +447,15 @@ def auto_start(session: Session) -> list[str]:
     started = []
     for backlog in session.scalars(select(Backlog).where(Backlog.status == APPROVED)).all():
         project = session.get(Project, backlog.project_id)
-        settings = delivery(project)
-        if settings is None or not settings.auto_start or project.readiness == "not_ready":
+        if project.readiness == "not_ready":
             continue
-        room = settings.max_open_runs - len(open_runs(session, project))
-        if room <= 0:
-            continue
-        runs = story_runs(session, project)
-        found = states(backlog.items, runs, foundation_blocker(session, project))
-        for item in backlog.items:
-            if room <= 0:
-                break
-            story = item["story"]
-            if found[story]["state"] != "ready" or runs.get(story):
-                continue
+        for story in next_to_open(session, project, backlog, delivery(project)):
             try:
                 with session.begin_nested():
                     run = start(session, project, story, actor=AUTO_ACTOR)
             except (BacklogError, services.DecisionError, ValueError) as exc:
                 _note_failure(session, project, story, str(exc)[:500])
                 continue
-            room -= 1
             started.append(f"{project.key}: opened {story} as run {str(run.id)[:8]}")
     return started
 

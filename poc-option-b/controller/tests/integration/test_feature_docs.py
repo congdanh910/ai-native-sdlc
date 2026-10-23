@@ -172,7 +172,7 @@ def test_the_backlog_orders_the_stories_and_opens_a_ready_one(db, sample_repo):
         intent = latest_document(session, uuid.UUID(run.json()["id"]), "intent").data
     assert intent["story"] == "CIW-US-01" and intent["outcome"].startswith("- ")
     after = client.get("/api/projects/task-board/backlog").json()
-    assert after["items"][0]["state"] == "running" and after["items"][0]["run"]["id"] == run.json()["id"]
+    assert after["items"][0]["state"] == "open" and not after["items"][0]["run"]["opened_automatically"] and after["items"][0]["run"]["id"] == run.json()["id"]
     assert client.post("/api/projects/task-board/backlog/CIW-US-01/start").status_code == 409  # already running
     detail = client.get("/api/projects/task-board/backlog/ARF-US-01").json()
     assert detail["srs"].startswith("#### ") and detail["item"]["depends_on"] == ["CIW-US-01"] and detail["runs"] == []
@@ -191,11 +191,19 @@ def test_an_approved_backlog_opens_the_next_ready_story_once(db, sample_repo):
     saved = client.put("/api/projects/task-board/backlog", json={"items": items, "version": drafted["version"]}).json()
     with session_scope() as session:
         assert backlog.tick(session) == []  # a draft opens nothing
-    approved = client.post("/api/projects/task-board/backlog/approve", json={"version": saved["version"]}).json()
-    assert approved["delivery"] == {"auto_start": True, "max_open_runs": 2, "open_runs": 0, "config_valid": True}
+    assert saved["delivery"]["would_open"] == ["CIW-US-01"]  # what approving would open: ARF-US-01 waits for it
+    approved = client.post("/api/projects/task-board/backlog/approve",
+                           json={"version": saved["version"], "auto_start": False}).json()
+    assert approved["delivery"]["auto_start"] is False and approved["delivery"]["config_auto_start"] is True
+    with session_scope() as session:
+        assert backlog.tick(session) == []  # approved without opening anything
+    switched = client.post("/api/projects/task-board/backlog/auto-start", json={"enabled": None}).json()
+    assert switched["delivery"]["auto_start"] is True and switched["delivery"]["override"] is None
     with session_scope() as session:
         opened = backlog.tick(session)
     assert len(opened) == 1 and "opened CIW-US-01" in opened[0]  # ARF-US-01 waits for CIW-US-01 to merge
+    view = client.get("/api/projects/task-board/backlog").json()
+    assert view["items"][0]["run"]["opened_automatically"] and view["delivery"]["would_open"] == []
     with session_scope() as session:
         assert backlog.tick(session) == []
         run = session.scalars(select(Run)).one()

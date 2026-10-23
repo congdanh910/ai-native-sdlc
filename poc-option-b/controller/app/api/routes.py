@@ -251,6 +251,11 @@ class BacklogFeedback(Body):
 class BacklogApproval(Body):
     version: int
     reason: str = ""
+    auto_start: bool | None = None  # False: approve and open nothing on its own
+
+
+class AutoStart(Body):
+    enabled: bool | None  # None: follow delivery.auto_start of project.yaml
 
 
 def _backlog(key: str, action) -> dict:
@@ -293,7 +298,15 @@ def edit_backlog(key: str, body: BacklogEdit) -> dict:
 @router.post("/projects/{key}/backlog/approve")
 def approve_backlog(key: str, body: BacklogApproval) -> dict:
     from controller.app import backlog
-    return _backlog(key, lambda s, p: backlog.approve(s, p, actor=operator(), version=body.version, reason=body.reason))
+    return _backlog(key, lambda s, p: backlog.approve(s, p, actor=operator(), version=body.version, reason=body.reason,
+                                                      auto_start=body.auto_start))
+
+
+@router.post("/projects/{key}/backlog/auto-start")
+def backlog_auto_start(key: str, body: AutoStart) -> dict:
+    """The Tech Lead's switch for opening stories on their own, over delivery.auto_start of project.yaml."""
+    from controller.app import backlog
+    return _backlog(key, lambda s, p: backlog.set_auto_start(s, p, body.enabled, actor=operator()))
 
 
 @router.get("/projects/{key}/backlog/{story}")

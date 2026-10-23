@@ -357,7 +357,9 @@ Projects → **Backlog** của dự án (thiết kế: `docs/multi-story-design.
      auto_start: true     # false: chỉ mở bằng nút Start
      max_open_runs: 2
    ```
-   Mỗi story chỉ tự mở **một lần**; run đó bị đóng hoặc huỷ thì story về ready và người bấm Start. Run tự mở ghi actor `delivery_coordinator` và dừng ở mọi cổng như thường. Lỗi khi mở (ví dụ dự án chưa ready) ghi sự kiện `backlog.start_failed`.
+   Mỗi story chỉ tự mở **một lần**; run đó bị đóng hoặc huỷ thì story về ready và người bấm Start. Run tự mở có nhãn **opened automatically** trên bảng và dừng ở mọi cổng như thường; cột State ghi "waits for you: …" khi run chờ người. Lỗi khi mở (ví dụ dự án chưa ready) ghi sự kiện `backlog.start_failed`.
+   - Công tắc **Open stories on their own** trên trang Backlog: *As .sdlc/project.yaml* (theo file), *On*, *Off: only with Start*; ghi đè file mà không cần sửa repo dự án.
+   - Khi duyệt mà có story sẽ mở ngay, nút ghi rõ **Approve and open EMP-US-05, EMP-US-06**; bên cạnh có **Approve, open nothing** (duyệt và tắt công tắc).
 8. **Trùng file giữa hai run** (B2): ở cổng Plan, khung vàng **Other open runs change the same files** liệt kê run đang mở có sửa cùng file (theo plan của nó và những gì nhánh của nó đã đổi; bỏ qua `specs/`, `.sdlc/`, `SRS.md`, `SDS.md` vì nền tảng tự dựng lại). Tick **Wait for …** rồi Approve: run đi qua cổng test case rồi dừng ở READY với dòng "Waits to code until …", tự bắt đầu code khi run kia xong (merge, đóng hoặc huỷ). **Code now** để không chờ nữa. Không tick thì hai run code song song; PR sau sẽ gặp thay đổi của PR trước khi cập nhật theo `main` (B3, chưa làm).
 9. **Nhiều worker** (B2): `SDLC_WORKER_CONCURRENCY` trong `.env` (mặc định 1, tối đa 8) là số tiến trình worker chạy job song song; mỗi run vẫn chỉ một job một lúc; preview chọn cổng lần lượt. Mỗi validation và preview tốn bộ nhớ Docker: chỉ tăng khi Docker còn chỗ (BACKLOG 3.18). Đổi xong thì `./sdlc down && ./sdlc up` khi không có job chạy.
 

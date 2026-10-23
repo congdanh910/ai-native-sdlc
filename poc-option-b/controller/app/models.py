@@ -290,6 +290,7 @@ class Backlog(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False)  # draft / approved
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     srs_commit: Mapped[str | None] = mapped_column(String(40))
+    auto_start: Mapped[bool | None] = mapped_column(Boolean)  # the Tech Lead's switch; None: delivery.auto_start
     proposed_by: Mapped[str] = mapped_column(String(64), nullable=False)
     approved_by: Mapped[str | None] = mapped_column(String(64))
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

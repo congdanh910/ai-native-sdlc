@@ -43,12 +43,12 @@ def test_a_story_is_ready_once_every_story_it_needs_is_merged_or_done_outside():
     items = [item("EMP-US-01"), item("EMP-US-02", "EMP-US-01"), item("EMP-US-03", "EMP-US-02", "SHF-US-01"),
              item("SHF-US-01", done="built by the Foundation"), item("CAM-US-01", hold=True)]
     runs = {"EMP-US-01": [run("CLOSED_UNMERGED"), run("COMPLETED")], "EMP-US-02": [run("CODING")]}
-    found = states(items, runs, "")
+    found = states(items, runs, "", {"coding"})
     assert {s: (v["state"], v["detail"]) for s, v in found.items()} == {
-        "EMP-US-01": ("delivered", "merged"), "EMP-US-02": ("running", "CODING"),
+        "EMP-US-01": ("delivered", "merged"), "EMP-US-02": ("open", "CODING"),
         "EMP-US-03": ("blocked", "waits for EMP-US-02"), "SHF-US-01": ("delivered", "built by the Foundation"),
         "CAM-US-01": ("held", "on hold")}
-    assert found["EMP-US-02"]["run"] == {"id": "coding", "status": "CODING"}
+    assert found["EMP-US-02"]["run"] == {"id": "coding", "status": "CODING", "opened_automatically": True}
 
 
 def test_a_closed_run_puts_its_story_back_to_ready_and_an_unmerged_foundation_blocks_every_story():
