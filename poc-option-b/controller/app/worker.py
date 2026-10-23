@@ -20,7 +20,7 @@ from controller.app import coordinator, joblog, jobs
 from controller.app.config import get_settings
 from controller.app.doing import process
 from controller.app.db import session_scope
-from controller.app.models import Execution, Run, Task
+from controller.app.models import Execution, Project, Run, Task
 from controller.app.states import RUN_TRANSITIONS, RunStatus, TeamRole
 from controller.app.team import get_team
 from controller.app.integrations.langflow import InvalidModelOutput
@@ -157,8 +157,11 @@ def _poll(team: Team) -> None:
     """Slot 0's periodic work: pull requests, previews past their time, the backlog's next stories."""
     from controller.app import backlog
     with session_scope() as session:
-        coordinator.poll_pull_requests(session)
+        merged = coordinator.poll_pull_requests(session)
         coordinator.expire_previews(session)
+    for project_id in merged:  # after the runs show COMPLETED
+        with session_scope() as session:
+            coordinator.recheck_after_merge(session, session.get(Project, project_id))
     with session_scope() as session:
         for line in backlog.tick(session):
             log.info("backlog: %s", line)

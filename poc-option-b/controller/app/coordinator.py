@@ -1923,8 +1923,11 @@ def recheck_after_merge(session: Session, project: Project) -> None:
         log.warning("project %s: check after a merge failed: %s", project.key, exc)
 
 
-def poll_pull_requests(session: Session) -> None:
-    """Read CI, review and merge state of open draft PRs; a merge of the exact pushed head completes the run."""
+def poll_pull_requests(session: Session) -> list[uuid.UUID]:
+    """Read CI, review and merge state of open draft PRs; a merge of the exact pushed head completes the run. Returns
+    the projects whose default branch moved: the caller checks them again after this transaction, so the run shows
+    COMPLETED at once instead of after the project check (four minutes for attendance, 23/10)."""
+    merged: list[uuid.UUID] = []
     rows = session.execute(select(Run, PullRequest, Project).join(PullRequest, PullRequest.run_id == Run.id)
                            .join(Project, Project.id == Run.project_id)
                            .where(Run.status == RunStatus.WAITING_PR_APPROVAL, PullRequest.simulated.is_(False),
@@ -1949,7 +1952,7 @@ def poll_pull_requests(session: Session) -> None:
             pull.merged_sha = state.merged_sha
             transition_run(session, run, RunStatus.COMPLETED, actor="github", acting_role="code_owner",
                            reason=f"PR #{pull.number} merged as {state.merged_sha} (head {state.head_sha[:12]})")
-            recheck_after_merge(session, project)
+            merged.append(project.id)
         elif state.state == "MERGED":
             to_needs_human(session, run, f"PR #{pull.number} was merged with head {state.head_sha[:12]}, "
                                          f"not the head the team pushed ({(pull.head_sha or '')[:12]})")
@@ -1957,6 +1960,7 @@ def poll_pull_requests(session: Session) -> None:
             pull.review_status = "closed"
             transition_run(session, run, RunStatus.CLOSED_UNMERGED, actor="github", acting_role="code_owner",
                            reason=f"PR #{pull.number} closed without merge")
+    return list(dict.fromkeys(merged))
 
 
 # ---------------------------------------------------------------- discovery: extraction

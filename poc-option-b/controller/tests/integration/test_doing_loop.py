@@ -11,7 +11,7 @@ from controller.app.doing.executors import Session, SessionResult
 from controller.app.doing.process import ProcessResult
 from controller.app.doing.team import CliDoing
 from controller.app.doing.validation import ValidationGate
-from controller.app.models import Execution, Run, Task
+from controller.app.models import Execution, Project, Run, Task
 from controller.app.team.composite import CompositeTeam
 from controller.app.team.mock import MockTeam
 from controller.tests.integration.test_team_loop import _to_coding, drain, status
@@ -126,10 +126,13 @@ def test_polling_completes_only_on_a_merge_of_the_pushed_head(db, sample_repo, t
         coordinator.poll_pull_requests(session)
     assert status(runs[0]) == "WAITING_PR_APPROVAL" and checked == []
     with session_scope() as session:
-        coordinator.poll_pull_requests(session)
+        merged = coordinator.poll_pull_requests(session)
     with session_scope() as session:
         pull = session.scalar(select(PullRequest).where(PullRequest.run_id == runs[0]))
         assert (status(runs[0]), pull.merged_sha, pull.ci_status) == ("COMPLETED", "b" * 40, "success")
+    assert checked == [] and len(merged) == 1  # COMPLETED first; the project check runs after that transaction
+    with session_scope() as session:
+        coordinator.recheck_after_merge(session, session.get(Project, merged[0]))
     assert checked == ["task-board"]  # the merge is checked at once, without a Check again
 
 
@@ -269,7 +272,7 @@ def test_signed_github_deliveries_are_handled_once(db, monkeypatch):
 
     monkeypatch.setattr(get_settings(), "github_webhook_secret", "s3cret")
     polls = []
-    monkeypatch.setattr(coordinator, "poll_pull_requests", lambda session: polls.append(1))
+    monkeypatch.setattr(coordinator, "poll_pull_requests", lambda session: polls.append(1) or [])
     body = b'{"action": "closed"}'
     headers = {"X-Hub-Signature-256": "sha256=" + hmac.new(b"s3cret", body, hashlib.sha256).hexdigest(),
                "X-GitHub-Delivery": "d-1", "X-GitHub-Event": "pull_request", "Content-Type": "application/json"}

@@ -610,7 +610,10 @@ def github_event(session: Session, delivery: str, event: str) -> str:
     record_event(session, "github.delivery", actor="github", payload={"delivery": delivery, "event": event})
     if event not in PR_EVENTS:
         return "ignored"
-    coordinator.poll_pull_requests(session)
+    merged = coordinator.poll_pull_requests(session)
+    session.commit()  # the runs show COMPLETED before the project check runs
+    for project_id in merged:
+        coordinator.recheck_after_merge(session, session.get(Project, project_id))
     return "processed"
 
 
