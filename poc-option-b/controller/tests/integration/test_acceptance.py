@@ -197,6 +197,11 @@ def test_defect_notes_that_contradict_the_sds_go_back_to_the_person_first(db, sa
         assert run_detail(session, run)["defect_check"]["check"]["points"][0]["verdict"] == "conflict"
         services.resume(session, run, actor=OPERATOR, decision="defects_revised",
                         reason="AC-1: missing fields must return 400 (SDS 6)")
+        from sqlalchemy import select
+        from controller.app.models import Approval
+        last = session.scalars(select(Approval).where(Approval.run_id == run_id, Approval.stage == "acceptance")
+                               .order_by(Approval.created_at.desc())).first()
+        assert last.reason == "AC-1: missing fields must return 400 (SDS 6)"  # the revised notes, not the first ones
     drain()
     assert _fix_tasks(run_id) == ["QC (acceptance): AC-1: missing fields must return 400 (SDS 6)"]
     assert status(run_id) == RunStatus.WAITING_ACCEPTANCE_APPROVAL

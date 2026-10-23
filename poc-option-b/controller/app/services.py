@@ -827,6 +827,12 @@ def _decide_defects(session: Session, run: Run, *, actor: str, decision: str, re
     if decision == "defects_as_written":
         _add_fix_task(session, run, actor=actor, who=defects["who"], reason=defects["reason"])
     else:
+        # the revised notes replace the first ones wherever the notes are read again (the acceptance tests rewritten
+        # after the fix, the Code Reviewer): the first notes were wrong (Manage Departments, 23/10)
+        if defects["who"] == "QC (acceptance)":
+            _approval(session, run, "acceptance", "reject", actor, QC, reason=reason)
+        elif defects["who"].startswith("Code Owner"):
+            _approval(session, run, "pr", "request_changes", actor, CO, reason=reason)
         _send_defects(session, run, actor=actor, who=defects["who"], reason=reason)
 
 
