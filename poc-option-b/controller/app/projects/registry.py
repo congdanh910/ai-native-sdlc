@@ -159,8 +159,13 @@ def doing_checks(project: Project, mirror: Mirror, commit: str | None, snapshot:
         if checkout.exists():
             _git("--git-dir", str(mirror.path), "worktree", "remove", "--force", str(checkout))
         _git("--git-dir", str(mirror.path), "worktree", "add", "--quiet", "--detach", str(checkout), commit)
+        logs = DATA_DIR / "logs" / "checks" / project.key / commit[:12]
+        # the checkout is new every time: setup (backend/.venv, node_modules) must run in it again, so the markers of
+        # an earlier check of this commit do not count (attendance, 23/10: exit 127, .venv/bin/python not found)
+        for marker in logs.glob("*.done") if logs.is_dir() else []:
+            marker.unlink()
         try:
-            gate = ValidationGate(policy, checkout, DATA_DIR / "logs" / "checks" / project.key / commit[:12])
+            gate = ValidationGate(policy, checkout, logs)
             for report in gate.run([c.name for c in policy.validation], "check"):
                 items.append(Item(f"validation: {report.name}", "ok" if report.ok else "fail",
                                   f"passed in {report.seconds}s ({policy.validation_image or policy.env_dockerfile})"
