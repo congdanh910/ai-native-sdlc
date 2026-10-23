@@ -344,9 +344,14 @@ class Advice(Contract):
     what happened, who says what with which evidence, and a decision with a reason ready to use. A human decides."""
     situation: str = Field(min_length=1)
     sides: list[AdviceSide] = []
-    recommendation: Literal["amend_tests", "keep_tests", "already_built", "replan", "resume", "back_to_onboarding"]
+    recommendation: Literal["amend_tests", "keep_tests", "already_built", "allow_files", "replan", "resume",
+                            "back_to_onboarding"]
     confidence: Literal["high", "medium", "low"]
     reason: str = Field(min_length=1)  # what the Tech Lead's reason would say: which test, which value, which file
+    files: list[str] = []  # allow_files: the files the task may change besides its plan's files
+    # why a person must decide (the call changes what an AC or EC means, contradicts the SDS or the spec, weakens a
+    # security or project rule, or needs a design change); empty when the team may settle it on its own
+    needs_human: str = ""
     risk: str = ""  # what goes wrong if this is the wrong call
     checks: list[str] = []  # what the Tech Lead verifies before deciding
 

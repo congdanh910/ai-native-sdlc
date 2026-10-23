@@ -30,7 +30,7 @@ from controller.app.documents import (THREAD_DIR, add_document, add_plan, latest
                                       section_changes, sha256_text, thread_path)
 from controller.app.events import record_event
 from controller.app.jobs import COORDINATOR, enqueue, finish
-from controller.app.models import (Approval, Artifact, Document, Clarification, Execution, Plan, Project, PullRequest,
+from controller.app.models import (Approval, Artifact, Document, Clarification, Event, Execution, Plan, Project, PullRequest,
                                    Run, Task)
 from controller.app.feature_docs import (PHASE_HEADING, FeatureRef, link_once, phase_number, plan_header,
                                          plan_section, requirements_header, requirements_section, resolve_feature,
@@ -177,6 +177,9 @@ def decisions_for(run: Run, tasks: list[Task]) -> dict[str, str]:
     if ALREADY_PASS in reason:
         options["already_built"] = ("the code already does what the new tests check: they stay as regression guards, "
                                     "the Developer is skipped, the validation decides")
+    if any(t.status == TaskStatus.DISPUTED for t in tasks):
+        options["allow_files"] = ("the task may change these files too (name them in files; inside the project's "
+                                  "allowed paths, never a test file); the tests stand and the Developer tries again")
     options["resume"] = "run the stopped step again as it is (for a failure outside the code, now fixed)"
     options["replan"] = "the Tech Lead's plan is written again with the reason; the approved spec stays"
     if run.kind == RunKind.FOUNDATION:
@@ -587,7 +590,8 @@ def review_decisions(session: Session, run: Run) -> list[str]:
     for content in session.scalars(select(Artifact.content).where(Artifact.run_id == run.id, Artifact.kind.like("ruling:%"))
                                    .order_by(Artifact.created_at)):
         ruling = json.loads(content)
-        out.append(f"Tech Lead, {ruling['task']} {ruling['decision']}: {ruling['reason'][:600]}")
+        who = "Code Reviewer (decided on its own)" if AUTO_ACTOR in ruling.get("actor", "") else "Tech Lead"
+        out.append(f"{who}, {ruling['task']} {ruling['decision']}: {ruling['reason'][:600]}")
     for stage, reason in session.execute(select(Approval.stage, Approval.reason).where(
             Approval.run_id == run.id, Approval.reason.is_not(None),
             ((Approval.stage == "acceptance") & (Approval.decision == "reject"))
@@ -1025,9 +1029,60 @@ def _apply_check_defects(session: Session, run: Run, execution: Execution, resul
 
 
 def _apply_advice(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
-    """Keep the brief with the stop it answers; the run page shows it while the run waits on that stop."""
+    """Keep the brief with the stop it answers; the run page shows it while the run waits on that stop. A technical
+    dispute the brief settles with confidence is decided on its own (disputes.auto)."""
     store_artifact(session, run, "advice", TeamRole.CODE_REVIEWER,
                    json.dumps({"for": result["for"], "advice": result["advice"], "engine": result.get("_engine")}))
+    auto_rule(session, run, result)
+
+
+AUTO_ACTOR = "code_reviewer (auto)"
+# decisions the team may take on its own: none changes what a criterion means or what the plan builds
+AUTO_DECISIONS = ("amend_tests", "keep_tests", "allow_files", "already_built")
+CONFIDENCE = {"low": 0, "medium": 1, "high": 2}
+
+
+def auto_rule(session: Session, run: Run, result: dict) -> str | None:
+    """Apply the brief's decision without a person when the stop is a technical dispute it settles: the decision is
+    one of AUTO_DECISIONS, the brief raises no reason for a person (meaning of a criterion, the SDS, security, the
+    design), its confidence reaches disputes.min_confidence, and the task has not been decided on its own
+    disputes.max_auto_per_task times. Returns the decision taken, or None (why is kept for the run page)."""
+    from controller.app import services
+    advice = result.get("advice") or {}
+    if run.status != RunStatus.NEEDS_HUMAN or result.get("for") != (run.status_reason or ""):
+        return None  # a person decided meanwhile, or the run stopped again for something else
+    policy = EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy"))
+    if not policy.disputes.auto:
+        return None
+    stopped = [t for t in current_tasks(session, run) if t.status in (TaskStatus.DISPUTED, TaskStatus.FAILED)]
+    task = stopped[0].external_task_id if stopped else ""
+    decision = advice.get("recommendation", "")
+    taken = sum(1 for payload in session.scalars(select(Event.payload).where(
+        Event.run_id == run.id, Event.event_type == "dispute.auto_ruled")) if (payload or {}).get("task") == task)
+    why_not = (f"{decision} is the Tech Lead's call" if decision not in AUTO_DECISIONS
+               else advice["needs_human"] if advice.get("needs_human")
+               else f"the brief's confidence is {advice.get('confidence')}" if CONFIDENCE.get(advice.get("confidence"), 0)
+               < CONFIDENCE[policy.disputes.min_confidence]
+               else f"{task} was already decided on its own {taken} time(s)" if taken >= policy.disputes.max_auto_per_task
+               else "")
+    if not why_not:
+        corrected = run.human_corrected
+        try:
+            with session.begin_nested():
+                services.resume(session, run, actor=AUTO_ACTOR, decision=decision, files=advice.get("files") or [],
+                                reason=f"Decided by the Code Reviewer on its own: {advice.get('reason', '')}")
+        except services.DecisionError as exc:
+            why_not = str(exc)
+        else:
+            run.human_corrected = corrected  # the team settled it; no person corrected the run
+            record_event(session, "dispute.auto_ruled", actor=AUTO_ACTOR, run_id=run.id,
+                         payload={"task": task, "decision": decision, "reason": advice.get("reason", ""),
+                                  "files": advice.get("files") or [], "confidence": advice.get("confidence"),
+                                  "situation": advice.get("situation", ""), "stop": result.get("for", "")})
+            return decision
+    store_artifact(session, run, "auto_skipped", TeamRole.CODE_REVIEWER,
+                   json.dumps({"for": result.get("for", ""), "why": why_not}))
+    return None
 
 
 def _apply_preflight(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:

@@ -410,6 +410,7 @@ export function RunView({ id }: { id: string }) {
         </div>
       ) : null}
       {r.main_sync && !TERMINAL.includes(r.status) ? <MainSync sync={r.main_sync} /> : null}
+      {r.auto_decisions?.length ? <AutoDecisions decisions={r.auto_decisions} /> : null}
       {r.waiting_for?.length ? (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-warn bg-warn-soft p-3 text-sm">
           <span>Waits to code until {r.waiting_for.map((w, i) => <span key={w.run}>{i ? ", " : ""}<a href={`#/runs/${w.run}`}>{w.title}</a> ({w.status.replace(/_/g, " ").toLowerCase()})</span>)} finishes: they change the same files. It starts on its own afterwards.</span>
@@ -472,5 +473,26 @@ function MainSync({ sync }: { sync: NonNullable<RunDetail["main_sync"]> }) {
       {bad ? <ul className="m-0 pl-5 text-xs">{sync.problems.map((p) => <li key={p}>{p}</li>)}</ul> : null}
       {bad ? <div className="text-xs text-muted">The Developer (and the QA Engineer for test files) resolves them in a task of its own; validation, review and acceptance run again.</div> : null}
     </div>
+  );
+}
+
+
+/** Technical disputes the Code Reviewer settled without a person: what stopped, what it decided and why. People
+ * review them here and at the review and acceptance gates, and can still send defects or ask for changes. */
+function AutoDecisions({ decisions }: { decisions: NonNullable<RunDetail["auto_decisions"]> }) {
+  return (
+    <details className="rounded-xl border border-line bg-panel p-3 text-sm">
+      <summary className="cursor-pointer"><b>Decisions taken by the AI</b> <span className="text-xs text-muted">{decisions.length} technical dispute(s) settled by the Code Reviewer without a person (disputes.auto)</span></summary>
+      <ul className="m-0 mt-2 flex list-none flex-col gap-2 p-0">
+        {decisions.map((d, i) => (
+          <li key={i} className="rounded border border-line p-2">
+            <div className="flex flex-wrap items-center gap-2"><Mono>{d.task}</Mono><Badge tone="accent">{d.decision.replace(/_/g, " ")}</Badge><span className="text-xs text-muted">{d.confidence} confidence · {new Date(d.at).toLocaleString()}</span></div>
+            {d.situation ? <p className="m-0 mt-1 text-ink-2">{d.situation}</p> : null}
+            <p className="m-0 mt-1 whitespace-pre-wrap">{d.reason}</p>
+            {d.files?.length ? <p className="m-0 mt-1 text-xs">Files allowed: <Mono>{d.files.join(", ")}</Mono></p> : null}
+          </li>
+        ))}
+      </ul>
+    </details>
   );
 }

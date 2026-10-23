@@ -615,3 +615,48 @@ def test_a_file_the_plan_forgot_can_be_allowed_and_the_tests_stand(db, sample_re
         ruling = json.loads(artifact(session, run_id, "ruling:T1"))
         assert ruling["decision"] == "keep_tests" and "src/store.js" in ruling["reason"]
     assert status(run_id) == RunStatus.CODING
+
+
+class ConfidentReviewer(DisputingDeveloper):
+    """Disputes every time; the brief settles it with high confidence (or raises a reason for a person)."""
+    def __init__(self, decision="keep_tests", needs_human="", files=()):
+        self.decision, self.needs_human, self.files = decision, needs_human, list(files)
+
+    def advise(self, context, stop):
+        from controller.app.schemas import Advice
+        return Advice(situation="The test checks the right thing; the code is missing it.", recommendation=self.decision,
+                      confidence="high", reason="TC-T1-1 is right: make the code return the date as the test says.",
+                      files=self.files, needs_human=self.needs_human)
+
+
+def test_the_team_settles_a_technical_dispute_and_a_person_decides_after_the_limit(db, sample_repo):
+    from controller.app.api.views import run_detail
+    run_id = _to_coding(sample_repo)
+    drain(ConfidentReviewer())  # dispute, brief, decided on its own; twice; the third waits for the Tech Lead
+    with session_scope() as session:
+        run = session.get(Run, run_id)
+        detail = run_detail(session, run)
+        assert run.status == "NEEDS_HUMAN" and not run.human_corrected
+        assert [d["decision"] for d in detail["auto_decisions"]] == ["keep_tests", "keep_tests"]
+        assert "already decided on its own 2 time(s)" in detail["advice"]["not_decided"]
+        assert any("Code Reviewer (decided on its own)" in line for line in coordinator.review_decisions(session, run))
+
+
+def test_a_dispute_that_touches_a_criterion_waits_for_the_tech_lead(db, sample_repo):
+    from controller.app.api.views import run_detail
+    run_id = _to_coding(sample_repo)
+    drain(ConfidentReviewer(needs_human="Changing the date format changes what AC-01 means."))
+    with session_scope() as session:
+        run = session.get(Run, run_id)
+        detail = run_detail(session, run)
+        assert run.status == "NEEDS_HUMAN" and detail["auto_decisions"] == []
+        assert detail["advice"]["not_decided"] == "Changing the date format changes what AC-01 means."
+
+
+def test_the_team_allows_a_file_the_plan_forgot_on_its_own(db, sample_repo):
+    run_id = _to_coding(sample_repo)
+    team = ConfidentReviewer(decision="allow_files", files=["src/store.js"])
+    drain(team)
+    with session_scope() as session:
+        task = session.scalar(select(Task).where(Task.run_id == run_id, Task.external_task_id == "T1"))
+        assert "src/store.js" in task.payload["modify"]

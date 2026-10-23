@@ -504,7 +504,7 @@ function AlreadyBuilt({ evidence }: { evidence: NonNullable<RunDetail["already_b
 
 
 const DECISION_LABEL: Record<string, string> = {
-  amend_tests: "Let QA update the tests", keep_tests: "Keep the tests", already_built: "Already built: keep tests as guards",
+  amend_tests: "Let QA update the tests", keep_tests: "Keep the tests", allow_files: "Allow these files, keep the tests", already_built: "Already built: keep tests as guards",
   replan: "Replan", resume: "Resume", back_to_onboarding: "Back to onboarding",
 };
 
@@ -530,6 +530,7 @@ function AdviceCard({ run, onUse }: { run: RunDetail; onUse: (reason: string) =>
         <b>Brief for the Tech Lead</b>
         <span className="text-xs text-muted">Code Reviewer{brief.engine ? `, ${brief.engine}` : ""}; advisory, you decide</span>
       </div>
+      {brief.not_decided ? <p className="m-0 rounded bg-warn-soft p-2 text-xs"><b>Why the team did not settle this on its own:</b> {brief.not_decided}</p> : null}
       <p className="m-0">{a.situation}</p>
       <div className="flex flex-col gap-2">
         {a.sides.map((side, i) => (
@@ -543,7 +544,7 @@ function AdviceCard({ run, onUse }: { run: RunDetail; onUse: (reason: string) =>
       </div>
       <div className="flex flex-col gap-1 rounded border border-line bg-panel p-2">
         <div className="flex flex-wrap items-center gap-2">
-          <span>Recommended: <b>{DECISION_LABEL[a.recommendation] ?? a.recommendation}</b></span>
+          <span>Recommended: <b>{DECISION_LABEL[a.recommendation] ?? a.recommendation}</b>{a.files?.length ? <> · <Mono>{a.files.join(", ")}</Mono></> : null}</span>
           <Badge tone={tone}>{a.confidence} confidence</Badge>
         </div>
         <p className="m-0 whitespace-pre-wrap text-ink-2">{a.reason}</p>

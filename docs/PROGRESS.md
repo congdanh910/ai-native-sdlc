@@ -2,6 +2,14 @@
 
 _Cập nhật: 2026-10-23_
 
+## Chiều 23/10: chạy thật EMP-US-05/06 song song, sửa theo lỗi thật
+
+Hai run Manage Departments (e516e325) và Manage Positions (66736643) tự mở từ backlog. Sửa: ổ Docker đầy (tăng lên
+117 GB; service validation không --rm để giữ log), bộ test dùng tiền tố container riêng, lỗi hạ tầng không giao
+Developer, thông báo validation fail chi tiết + brief, job ngắn được ưu tiên, `SDLC_WORKER_CONCURRENCY=2` (.env, có
+hiệu lực sau restart), "Allow these files", Next step ở mọi mục kiểm chặn + `amend-plan`, AI tự phân xử khiếu nại kỹ
+thuật (`disputes`). Người dùng sẽ tăng Docker RAM lên 9 GB khi hai run dừng ở cổng; sau đó restart nền tảng.
+
 ## Điều phối nhiều story (23/10)
 
 Thiết kế `poc-option-b/docs/multi-story-design.md` (người dùng chốt: bắt đầu khi phụ thuộc đã merge, merge `main` vào

@@ -262,11 +262,14 @@ export interface RunDetail extends RunSummary {
   // the Code Reviewer's brief on the stop the run waits on (null when the run is not stopped)
   advice?: {
     pending: boolean; engine?: string | null; error?: string | null;
+    not_decided?: string | null;  // why the team did not settle this stop on its own
     advice: {
       situation: string; recommendation: string; confidence: "high" | "medium" | "low"; reason: string; risk: string;
-      checks: string[]; sides: { party: string; claim: string; evidence: string[] }[];
+      checks: string[]; sides: { party: string; claim: string; evidence: string[] }[]; files?: string[]; needs_human?: string;
     } | null;
   } | null;
+  // technical disputes the Code Reviewer settled on its own (disputes.auto)
+  auto_decisions?: { task: string; decision: string; reason: string; files: string[]; confidence: string; situation: string; stop: string; at: string }[];
   // at the plan gate: open runs that change files this plan changes; the Tech Lead may let them finish first
   overlaps?: { run: string; title: string; status: string; files: string[] }[];
   // the last merge of the default branch into the run's branch (B3)

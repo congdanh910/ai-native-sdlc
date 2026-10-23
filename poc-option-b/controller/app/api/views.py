@@ -204,6 +204,8 @@ def run_detail(session: Session, run: Run) -> dict:
         "overlaps": _overlaps(session, run),
         "waiting_for": _waiting_for(session, run),
         "main_sync": json.loads(artifact(session, run.id, "main_sync") or "null"),
+        "auto_decisions": [{**(e.payload or {}), "at": e.created_at.isoformat()} for e in session.scalars(
+            select(Event).where(Event.run_id == run.id, Event.event_type == "dispute.auto_ruled").order_by(Event.id))],
     })
     return detail
 
@@ -226,7 +228,11 @@ def _advice(session: Session, run: Run, executions: list[Execution]) -> dict | N
                                    .order_by(Artifact.created_at.desc())):
         stored = json.loads(content)
         if stored.get("for") == (run.status_reason or ""):
-            return {"pending": pending, "advice": stored["advice"], "engine": stored.get("engine")}
+            skipped = next((json.loads(c) for c in session.scalars(
+                select(Artifact.content).where(Artifact.run_id == run.id, Artifact.kind == "auto_skipped")
+                .order_by(Artifact.created_at.desc())) if json.loads(c).get("for") == stored["for"]), None)
+            return {"pending": pending, "advice": stored["advice"], "engine": stored.get("engine"),
+                    "not_decided": skipped["why"] if skipped else None}
     failed = next((e.error for e in reversed(executions) if e.kind == "advise" and e.status == "failed"), None)
     return {"pending": pending, "advice": None, "error": None if pending else failed}
 

@@ -12,6 +12,8 @@ Output keys:
 - reason: the reason the Tech Lead would record with the decision, written so that the role that acts on it cannot misread it: name the test (file and test name), the exact value or behaviour it must check, and what must not change. When an approved test case and the code disagree, say which one wins and that the other must follow.
 - risk: one sentence on what goes wrong if this is the wrong call.
 - checks: one to three things the Tech Lead can verify quickly before deciding (a line to look at, a value to compare).
+- files: for allow_files, the files the task must also change (paths as in the repository); otherwise empty.
+- needs_human: empty when the team can settle this on its own; otherwise one sentence on why a person must decide: the decision changes what an acceptance criterion or edge case means, contradicts the SDS or the spec, weakens a security rule or a rule of AGENTS.md, needs a file outside the project's allowed paths or a change of the design, or the facts do not settle it. Your decision is applied without a person when needs_human is empty and your confidence is high, so be strict.
 
 Rules:
 - Prefer the SDS, then the acceptance criteria, then the approved test cases, then the code as it is; say which of them settles the question. If none does, prefer what the code and the other tests of the project already do, and say so.
@@ -19,3 +21,5 @@ Rules:
 - When the new tests pass before any code and earlier_commits built the task's files, recommend already_built unless the tests check too little; when nothing earlier built them, suspect the tests.
 - When the problem is in the onboarding files (a command, a path, a preview service), recommend back_to_onboarding if decisions has it, otherwise replan.
 - Never recommend a decision that is not a key of decisions.
+- When the Developer stops because the work needs a file outside the task's files and the plan simply forgot it (the tests are right, the change belongs in that file by the project's layering), recommend allow_files with those files.
+- When a test checks the right behaviour at the wrong layer or with a wrong fixture (a clock, a session, an id), recommend amend_tests and say exactly what changes; the criterion the test proves must stay the same.

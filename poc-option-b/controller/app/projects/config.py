@@ -274,6 +274,15 @@ class Ui(Strict):
     review: Literal["gated", "skip"] = "gated"  # the QC ticks "the UI follows the concept" at the acceptance gate
 
 
+class Disputes(Strict):
+    """Technical disputes between the AI roles (a test on the wrong layer, a fixture, a file the plan forgot) are
+    settled by the Code Reviewer's brief without a person, when the brief is confident enough and touches neither
+    the meaning of a criterion nor a security rule nor the design. ask: every dispute waits for the Tech Lead."""
+    auto: bool = True
+    min_confidence: Literal["high", "medium"] = "high"
+    max_auto_per_task: int = Field(default=2, ge=0, le=5)  # then the Tech Lead decides
+
+
 class Delivery(Strict):
     """How the stories of the approved backlog open: the worker opens the next ready story while fewer feature runs
     than max_open_runs are open. A story opens on its own only once; after a run that did not merge, a person starts it."""
@@ -317,6 +326,7 @@ class ProjectConfig(Strict):
     preview: Preview | None = None
     ui: Ui = Ui()
     delivery: Delivery = Delivery()
+    disputes: Disputes = Disputes()
 
     @model_validator(mode="after")
     def _consistent(self) -> "ProjectConfig":
@@ -392,6 +402,7 @@ class EffectivePolicy(Strict):
     lock: list[str] = []
     preview: Preview | None = None
     ui: Ui = Ui()
+    disputes: Disputes = Disputes()
     toolchains: dict[str, str] = {}  # platform toolchain name -> image, for a validation command's own image
 
 
@@ -433,6 +444,7 @@ def effective_policy(config: ProjectConfig, defaults: PlatformDefaults = Platfor
         lock=list(config.environment.lock),
         preview=config.preview,
         ui=config.ui,
+        disputes=config.disputes,
         toolchains=dict(defaults.validation_images),
     )
 
