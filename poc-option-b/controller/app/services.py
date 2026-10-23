@@ -29,7 +29,7 @@ QC = HumanRole.QC.value
 FAILURE_CATEGORIES = ("AMBIGUOUS_SPEC", "MISSING_CONTEXT", "BAD_GROUNDING", "WEAK_TESTS", "MODEL_LIMITATION",
                       "INFRASTRUCTURE", "OTHER")
 FAILURE_STAGES = ("preflight", "specification", "planning", "test_design", "grounding", "test_writing", "coding",
-                  "validation", "review", "pr", "ci")
+                  "validation", "review", "acceptance", "pr", "ci")
 FAILURE_ROLES = ("business_analyst", "tech_lead_ai", "qa_analyst", "qa_engineer", "developer", "validation_gate",
                  "code_reviewer", "release_engineer", "delivery_coordinator", "human")
 
