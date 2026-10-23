@@ -1,0 +1,28 @@
+{
+  "id": "warm-friendly",
+  "name": "Warm friendly",
+  "layout": "topnav",
+  "density": "comfortable",
+  "best_for": "employee and customer portals: warm colors, rounded cards, generous space (in the style of Material 3)",
+  "tokens": {
+    "colors": {
+      "primary": "#C2410C",
+      "on_primary": "#FFFFFF",
+      "accent": "#0F766E",
+      "background": "#FFF8F2",
+      "surface": "#FFFFFF",
+      "text": "#2B1D14",
+      "muted": "#6B5546",
+      "border": "#F1E2D6",
+      "success": "#15803D",
+      "warning": "#A16207",
+      "danger": "#B42318"
+    },
+    "font_family": "'Nunito Sans', Inter, 'SF Pro Text', -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+    "heading_font": "'Nunito Sans', Inter, 'SF Pro Text', -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+    "base_size": 15,
+    "radius": 16,
+    "spacing": 10,
+    "shadow": "0 10px 30px rgba(194,65,12,.08)"
+  }
+}

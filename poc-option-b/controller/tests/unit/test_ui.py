@@ -19,7 +19,8 @@ def concept(**colors) -> Concept:
 
 def test_the_platform_has_five_default_concepts_that_pass_aa():
     loaded = presets()
-    assert len(loaded) == 5 and {p["layout"] for p in loaded} == {"sidebar", "topnav", "mobile"}
+    # every concept takes the mobile layout (bottom navigation) on the mobile device
+    assert len(loaded) == 5 and {p["layout"] for p in loaded} == {"sidebar", "topnav"}
     for preset in loaded:
         c = concept(**preset["tokens"]["colors"])
         assert all(r["ok"] for r in check(c, "wcag-aa")), (preset["id"], [r for r in check(c, "wcag-aa") if not r["ok"]])
@@ -56,10 +57,11 @@ def test_brand_colors_must_be_hex():
 
 def test_the_request_form_previews_a_default_concept_in_the_brand_typed_so_far():
     from controller.app.ui import presets, preview_concept, render
-    preset = next(p for p in presets() if p["id"] == "enterprise-clean")
+    preset = next(p for p in presets() if p["id"] == "clean-saas")
     concept = preview_concept(preset, ["#E8590C", "#123456"], ["Inter"], ["Employee Management", "Shift Management"])
     colors = concept.tokens.colors
     assert colors["primary"] == "#E8590C" and colors["accent"] == "#123456" and colors["on_primary"] == "#111827"
+    assert colors["sidebar"] == "#F4F4F5"  # a preset's optional colors stay
     assert concept.tokens.font_family.startswith("'Inter', ") and concept.navigation[0] == "Employee Management"
     assert [s.name for s in concept.screens] == ["overview", "form", "sign-in", "empty"]
     page = render(concept, concept.screens[0], "mobile", "Attendance")

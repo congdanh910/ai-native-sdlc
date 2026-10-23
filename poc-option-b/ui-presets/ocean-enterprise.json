@@ -1,0 +1,30 @@
+{
+  "id": "ocean-enterprise",
+  "name": "Ocean enterprise",
+  "layout": "sidebar",
+  "density": "compact",
+  "best_for": "ERP and HR systems with many records: navy sidebar, dense tables (in the style of Fluent and Ant Design)",
+  "tokens": {
+    "colors": {
+      "primary": "#1D64D8",
+      "on_primary": "#FFFFFF",
+      "accent": "#0EA5A4",
+      "background": "#F2F5FA",
+      "surface": "#FFFFFF",
+      "text": "#0F1B2D",
+      "muted": "#4A5A70",
+      "border": "#DCE3EE",
+      "success": "#137A3F",
+      "warning": "#9A5B00",
+      "danger": "#C02626",
+      "sidebar": "#0F1B2D",
+      "on_sidebar": "#DCE6F5"
+    },
+    "font_family": "'Segoe UI', Inter, 'SF Pro Text', -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+    "heading_font": "'Segoe UI', Inter, 'SF Pro Text', -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+    "base_size": 14,
+    "radius": 6,
+    "spacing": 8,
+    "shadow": "0 1px 3px rgba(15,27,45,.08)"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "id": "clean-saas",
+  "name": "Clean SaaS",
+  "layout": "sidebar",
+  "density": "comfortable",
+  "best_for": "back-office products: crisp, neutral, content first (in the style of shadcn/ui)",
+  "tokens": {
+    "colors": {
+      "primary": "#18181B",
+      "on_primary": "#FAFAFA",
+      "accent": "#2563EB",
+      "background": "#FAFAFA",
+      "surface": "#FFFFFF",
+      "text": "#09090B",
+      "muted": "#52525B",
+      "border": "#E4E4E7",
+      "success": "#15803D",
+      "warning": "#A16207",
+      "danger": "#B91C1C",
+      "sidebar": "#F4F4F5",
+      "on_sidebar": "#18181B"
+    },
+    "font_family": "Inter, 'SF Pro Text', -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+    "heading_font": "Inter, 'SF Pro Text', -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+    "base_size": 14,
+    "radius": 10,
+    "spacing": 8,
+    "shadow": "0 1px 2px rgba(9,9,11,.05)"
+  }
+}

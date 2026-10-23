@@ -32,11 +32,16 @@ tương phản. Link Figma thì nhúng `figma.com/embed`. Không gọi AI.
 
 Mỗi preset là một bộ token (màu, chữ, spacing, radius, bóng), quy tắc component và một khung HTML mẫu:
 
-1. **Enterprise clean**: nền trung tính, bảng dày thông tin, sidebar cố định. Hợp hệ thống nội bộ.
-2. **Friendly modern**: bo tròn, nhiều khoảng trắng, thẻ (card). Hợp cổng nhân viên, khách hàng.
-3. **Data dashboard**: lưới thẻ số liệu, biểu đồ, bộ lọc trên cùng. Hợp màn hình quản lý.
-4. **Mobile first**: điều hướng dưới, nút lớn, một cột. Hợp app hiện trường, chấm công.
-5. **High contrast accessible**: tương phản cao, chữ lớn, focus rõ. Hợp khách công, yêu cầu accessibility cao.
+1. **Clean SaaS** (phong cách shadcn/ui): trắng, trung tính, chữ gần đen, bo 10px. Hợp sản phẩm back-office.
+2. **Midnight console** (phong cách Linear): nền tối, dày thông tin, màu nhấn tím và cyan. Hợp phòng điều khiển, giám sát.
+3. **Ocean enterprise** (phong cách Fluent, Ant Design): sidebar navy, bảng dày. Hợp ERP, HR nhiều bản ghi.
+4. **Warm friendly** (phong cách Material 3): màu ấm, thẻ bo tròn, nhiều khoảng trắng, menu trên. Hợp cổng nhân viên, khách hàng.
+5. **Clear public service** (phong cách GOV.UK Design System): chữ lớn, tương phản mạnh, focus vàng, không bo. Hợp khu vực công, yêu cầu accessibility cao.
+
+Chỉ lấy phong cách (màu, mật độ, bo góc, kiểu điều hướng) của các design system mở, không chép template. Cả 5 đạt
+tương phản WCAG AA. Bộ vẽ (23/10, viết lại vì bản đầu quá thô): thanh trên có tìm kiếm và avatar, sidebar có icon, thẻ
+số liệu có tăng/giảm và sparkline, bảng có avatar và badge trạng thái, biểu đồ cột, màn đăng nhập chia đôi, trạng thái
+rỗng có hình; màn hình mobile dùng điều hướng dưới với mọi preset.
 
 Số concept mỗi lần: `ui.concepts` trong project.yaml (mặc định 3, tối đa 5).
 

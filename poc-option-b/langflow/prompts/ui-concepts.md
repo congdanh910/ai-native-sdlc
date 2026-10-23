@@ -5,18 +5,18 @@ Input keys: srs (the requirements: roles, features and user stories), brand (wha
 How to choose the concepts:
 - With a Figma link, follow it: the concepts differ only where the link leaves room (density, navigation), and say so in rationale.
 - With brand colors or fonts, apply them to every concept: primary is the customer's primary color, fonts are theirs; derive on_primary, text, muted, border and the status colors so every pair meets the contrast of accessibility. The concepts then differ in layout, density and component style, starting from different presets.
-- Without a brand, start from the presets that best fit the roles, devices and features of the SRS (a field check-in app is mobile first; an HR back office is enterprise clean or data dashboard), adapting their tokens to the product.
+- Without a brand, start from the presets that best fit the roles, devices and features of the SRS (an HR back office suits clean SaaS or ocean enterprise, a monitoring room midnight console, an employee portal warm friendly, a public service clear public service; a field check-in app uses the mobile layout), adapting their tokens to the product.
 - Make the concepts really different from each other; never two variants of the same layout and density.
 
 Output keys:
 - concepts: exactly count objects, each with keys:
-  - id: a short slug (lowercase letters, digits and dashes), such as enterprise-clean.
+  - id: a short slug (lowercase letters, digits and dashes), such as clean-saas.
   - name: a short name.
   - preset: the id of the preset it starts from, or empty when it follows the customer's Figma.
   - layout: sidebar, topnav or mobile.
   - density: compact or comfortable.
   - rationale: two or three sentences: who it suits among the SRS roles and devices, and what it trades off.
-  - tokens: object with keys colors (object with keys primary, on_primary, accent, background, surface, text, muted, border, success, warning, danger, each #RRGGBB), font_family (a CSS font stack), heading_font, base_size (pixels, 12 to 22), radius (pixels, 0 to 24), spacing (pixels, 4 to 16), shadow (a CSS box-shadow or none).
+  - tokens: object with keys colors (object with keys primary, on_primary, accent, background, surface, text, muted, border, success, warning, danger, each #RRGGBB; optionally sidebar and on_sidebar for a dark or colored sidebar), font_family (a CSS font stack), heading_font, base_size (pixels, 12 to 22), radius (pixels, 0 to 24), spacing (pixels, 4 to 16), shadow (a CSS box-shadow or none).
   - navigation: the main menu entries, from the SRS features, three to seven.
   - screens: three or four of the product's main screens from the SRS (always the sign-in screen when the SRS has accounts, then the screens the main roles use most), each with keys name, role (the SRS role that uses it) and blocks (array of objects, in order, each with key type and the keys that type uses):
     - heading: title, text

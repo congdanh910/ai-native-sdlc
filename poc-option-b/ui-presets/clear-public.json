@@ -1,0 +1,28 @@
+{
+  "id": "clear-public",
+  "name": "Clear public service",
+  "layout": "topnav",
+  "density": "comfortable",
+  "best_for": "public sector and strict accessibility: large text, strong contrast, clear focus (in the style of the GOV.UK Design System)",
+  "tokens": {
+    "colors": {
+      "primary": "#1D70B8",
+      "on_primary": "#FFFFFF",
+      "accent": "#FFDD00",
+      "background": "#FFFFFF",
+      "surface": "#F3F2F1",
+      "text": "#0B0C0C",
+      "muted": "#484F52",
+      "border": "#B1B4B6",
+      "success": "#00703C",
+      "warning": "#7A4A00",
+      "danger": "#AA2A16"
+    },
+    "font_family": "Arial, 'Helvetica Neue', sans-serif",
+    "heading_font": "Arial, 'Helvetica Neue', sans-serif",
+    "base_size": 16,
+    "radius": 0,
+    "spacing": 10,
+    "shadow": "none"
+  }
+}

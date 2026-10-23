@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Sparkles } from "lucide-react";
@@ -459,9 +459,19 @@ function BrandPreview({ project, product, colors, fonts, figma, logo, devices, a
   });
   const figmaUrl = /^https:\/\/(www\.)?figma\.com\//.test(figma.trim()) ? figma.trim() : "";
   const width = DEVICE_WIDTH[shownDevice] ?? 1280;
-  const scale = Math.min(1, 760 / width);
+  const frame = useRef<HTMLDivElement>(null);
+  const [room, setRoom] = useState(900);
+  useEffect(() => {
+    const node = frame.current;
+    if (!node) return;
+    const observer = new ResizeObserver(([entry]) => setRoom(entry.contentRect.width));
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  const scale = Math.min(1, room / width);
+  const height = shownDevice === "mobile" ? 760 : 720;
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-line p-3">
+    <div ref={frame} className="flex flex-col gap-3 rounded-lg border border-line p-3">
       <div>
         <b className="text-sm">Preview</b>{" "}
         <span className="text-xs text-muted">{figmaUrl ? "the customer's Figma file; the concepts follow it" : "the platform's default concepts with the brand above, on sample screens; the UX Designer then proposes concepts with the real screens of the SRS"}</span>
@@ -492,9 +502,9 @@ function BrandPreview({ project, product, colors, fonts, figma, logo, devices, a
       {preview.error ? <ErrorBox error={preview.error} /> : null}
       {preview.data ? (
         <>
-          <div className="overflow-hidden rounded border border-line bg-sunken" style={{ height: 560 * scale + 2, width: width * scale + 2, maxWidth: "100%" }}>
+          <div className="overflow-hidden rounded-lg border border-line bg-sunken shadow-sm" style={{ height: height * scale, width: width * scale }}>
             <iframe title="Concept preview" sandbox="" srcDoc={preview.data.html}
-              style={{ width, height: 560, transform: `scale(${scale})`, transformOrigin: "0 0", border: 0 }} />
+              style={{ width, height, transform: `scale(${scale})`, transformOrigin: "0 0", border: 0, display: "block" }} />
           </div>
           <div className="flex flex-wrap gap-1.5 text-xs">
             {preview.data.checks.map((c) => <Badge key={c.pair} tone={c.ok ? "good" : "bad"}>{c.pair} {c.ratio}:1{c.ok ? "" : ` (needs ${c.need}:1)`}</Badge>)}
