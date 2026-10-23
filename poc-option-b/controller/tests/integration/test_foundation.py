@@ -43,7 +43,7 @@ def test_the_onboarding_files_pass_their_gate_then_the_run_builds_the_skeleton(d
     onboarding = [d for d in state["documents"] if d["kind"] == "onboarding"][-1]
     assert "## `AGENTS.md` (changed)" in onboarding["content"] and "## `.gitignore` (new)" in onboarding["content"]
     assert "````diff" in onboarding["content"]
-    assert {c["id"]: c["ok"] for c in state["checklist"]["controller"]} == {"files": True}
+    assert {c["id"]: c["ok"] for c in state["checklist"]["controller"]} == {"files": True, "ci-env": True}
 
     # the Tech Lead asks for changes: the Architect writes v2 with the reason, and the gate shows the revision
     refused = client.post(f"/api/runs/{run['id']}/onboarding/redo", json={"reason": ""})
