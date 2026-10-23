@@ -174,6 +174,10 @@ def test_the_backlog_orders_the_stories_and_opens_a_ready_one(db, sample_repo):
     after = client.get("/api/projects/task-board/backlog").json()
     assert after["items"][0]["state"] == "running" and after["items"][0]["run"]["id"] == run.json()["id"]
     assert client.post("/api/projects/task-board/backlog/CIW-US-01/start").status_code == 409  # already running
+    detail = client.get("/api/projects/task-board/backlog/ARF-US-01").json()
+    assert detail["srs"].startswith("#### ") and detail["item"]["depends_on"] == ["CIW-US-01"] and detail["runs"] == []
+    assert client.get("/api/projects/task-board/backlog/CIW-US-01").json()["needed_by"] == ["ARF-US-01"]
+    assert client.get("/api/projects/task-board/backlog/XX-US-01").status_code == 409
 
 
 def test_an_approved_backlog_opens_the_next_ready_story_once(db, sample_repo):

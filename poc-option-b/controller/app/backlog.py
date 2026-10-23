@@ -535,3 +535,39 @@ def release_waiting(session: Session) -> list[str]:
 def tick(session: Session) -> list[str]:
     """The worker's poll: bring open branches up with main, release the runs that waited, open the next stories."""
     return sync_with_main(session) + release_waiting(session) + auto_start(session)
+
+
+def _story_section(text: str, story: str) -> str:
+    """The `#### <n> <story>: ...` section of a rendered SRS (section 7) or SDS (section 5), anchors removed."""
+    match = re.search(rf"^####\s+[\d.]+\s+{re.escape(story)}:.*?(?=^#{{2,4}}\s|\Z)", text or "", re.MULTILINE | re.DOTALL)
+    return re.sub(r"\s*<a id=\"[^\"]*\"></a>", "", match.group(0)).strip() if match else ""
+
+
+def story_detail(session: Session, project: Project, story: str) -> dict:
+    """One story as the backlog shows it opened: what the SRS and SDS say, its place in the backlog, its runs, and
+    the accepted spec of a delivered story (specs/<feature>/spec.md on the default branch)."""
+    from controller.app.feature_docs import US_HEADING
+    from controller.app.outcomes import story_context
+    srs, sds = _srs(project)
+    if story not in _story_ids(srs):
+        raise BacklogError(f"{story} is not a user story of the SRS")
+    mirror = mirror_for(project)
+    spec_path, spec = "", ""
+    for path in mirror.list_files(project.checked_commit):
+        if path.startswith("specs/") and path.endswith("/spec.md"):
+            text = mirror.read_file(project.checked_commit, path) or ""
+            section = next((m for m in US_HEADING.finditer(text) if m[1] == story), None)
+            if section:
+                following = [m.start() for m in US_HEADING.finditer(text) if m.start() > section.start()]
+                spec_path = path
+                spec = re.sub(r"\n+---\s*$", "", text[section.start(): following[0] if following else len(text)].rstrip())
+                break
+    backlog = get_backlog(session, project)
+    item = next((i for i in (backlog.items if backlog else []) if i["story"] == story), None)
+    needed_by = [i["story"] for i in (backlog.items if backlog else []) if story in (i.get("depends_on") or [])]
+    context = story_context(srs, sds, story)
+    return {"story": story, "srs": _story_section(srs, story), "sds": _story_section(sds, story),
+            "requirements": context["requirements"], "apis": context["apis"], "errors": context["errors"],
+            "spec_path": spec_path, "spec": spec, "item": item, "needed_by": needed_by,
+            "runs": [{"id": str(r.id), "status": r.status, "title": r.title, "created_at": r.created_at.isoformat()}
+                     for r in story_runs(session, project).get(story, [])]}

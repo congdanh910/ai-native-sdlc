@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, Play } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Play } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { ActionButton, Badge, Button, Card, ErrorBox, Input, Loading, Markdown, Mono, PageHeader, StatusBadge, Textarea } from "../components/ui";
 import { api, ApiError, type RunSummary } from "../lib/api";
@@ -32,6 +32,7 @@ export function BacklogView({ project }: { project: string }) {
   const [edits, setEdits] = useState<Edit[] | null>(null);
   const [feedback, setFeedback] = useState("");
   const [reason, setReason] = useState("");
+  const [opened, setOpened] = useState<string | null>(null);
   useEffect(() => { setEdits(null); }, [backlog.data?.version]);
   if (backlog.isLoading) return <Loading />;
   if (backlog.error) return <ErrorBox error={backlog.error} />;
@@ -110,11 +111,20 @@ export function BacklogView({ project }: { project: string }) {
               {rows.map((row, index) => {
                 const info = byStory.get(row.story);
                 return (
-                  <tr key={row.story} className="border-b border-line align-top last:border-0">
+                  <Fragment key={row.story}>
+                  <tr className={`align-top ${opened === row.story ? "" : "border-b border-line last:border-0"}`}>
                     <td className="p-2.5 text-muted">{index + 1}</td>
                     <td className="p-2.5">{info?.wave ? <Badge>{info.wave}</Badge> : <span className="text-muted">–</span>}</td>
                     <td className="max-w-[360px] p-2.5">
-                      <div><Mono>{row.story}</Mono> <b>{info?.title}</b> {info && !info.in_srs ? <Badge tone="bad">not in the SRS</Badge> : null}</div>
+                      <div>
+                        <button type="button" className="inline-flex items-start gap-1 text-left hover:text-accent-ink" aria-expanded={opened === row.story}
+                          title="Show what the SRS and SDS say about this story, its runs and its accepted spec"
+                          onClick={() => setOpened(opened === row.story ? null : row.story)}>
+                          {opened === row.story ? <ChevronDown className="mt-0.5 size-4 shrink-0" aria-hidden /> : <ChevronRight className="mt-0.5 size-4 shrink-0" aria-hidden />}
+                          <span><Mono>{row.story}</Mono> <b>{info?.title}</b></span>
+                        </button>
+                        {info && !info.in_srs ? <> <Badge tone="bad">not in the SRS</Badge></> : null}
+                      </div>
                       <div className="text-xs text-muted">{info?.feature} · {info?.actors}</div>
                       {row.reason ? <div className="mt-1 text-xs text-ink-2">{row.reason}</div> : null}
                     </td>
@@ -151,6 +161,12 @@ export function BacklogView({ project }: { project: string }) {
                       ) : null}
                     </td>
                   </tr>
+                  {opened === row.story ? (
+                    <tr className="border-b border-line last:border-0">
+                      <td colSpan={7} className="bg-sunken/40 p-3"><StoryDetail project={project} story={row.story} /></td>
+                    </tr>
+                  ) : null}
+                  </Fragment>
                 );
               })}
             </tbody>
@@ -173,5 +189,63 @@ export function BacklogView({ project }: { project: string }) {
         </Card>
       ) : null}
     </>
+  );
+}
+
+
+interface Detail {
+  story: string; srs: string; sds: string; spec_path: string; spec: string; needed_by: string[];
+  requirements: { id: string; function: string; text: string; rule: string }[];
+  apis: { id: string; purpose: string }[]; errors: { code: string; meaning: string }[];
+  item: { depends_on: string[]; reason: string } | null;
+  runs: { id: string; status: string; title: string; created_at: string }[];
+}
+
+/** One story opened in the backlog: what the SRS and SDS say about it, where it sits, its runs and, once delivered,
+ * the accepted spec with its criteria. */
+function StoryDetail({ project, story }: { project: string; story: string }) {
+  const detail = useQuery({
+    queryKey: ["backlog-story", project, story],
+    queryFn: () => api<Detail>(`/api/projects/${encodeURIComponent(project)}/backlog/${encodeURIComponent(story)}`),
+  });
+  if (detail.isLoading) return <Loading />;
+  if (detail.error) return <ErrorBox error={detail.error} />;
+  const d = detail.data!;
+  return (
+    <div className="grid grid-cols-1 gap-4 text-sm lg:grid-cols-2">
+      <section className="flex flex-col gap-2">
+        <h3 className="m-0 text-sm font-semibold">SRS.md</h3>
+        {d.srs ? <div className="rounded-lg border border-line bg-panel p-3"><Markdown source={d.srs} /></div> : <p className="m-0 text-muted">No section for this story.</p>}
+        {d.requirements.length ? (
+          <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
+            {d.requirements.map((r) => (
+              <li key={r.id}><Mono>{r.id}</Mono> <b>{r.function}</b>: {r.text}{r.rule ? <span className="block text-xs text-muted">Rule: {r.rule}</span> : null}</li>
+            ))}
+          </ul>
+        ) : null}
+        <h3 className="m-0 mt-2 text-sm font-semibold">SDS.md</h3>
+        {d.sds ? <div className="rounded-lg border border-line bg-panel p-3"><Markdown source={d.sds} /></div> : <p className="m-0 text-muted">No section for this story.</p>}
+        {d.apis.length ? <ul className="m-0 flex list-none flex-col gap-1 p-0">{d.apis.map((a) => <li key={a.id}><Mono>{a.id}</Mono> {a.purpose}</li>)}</ul> : null}
+        {d.errors.length ? <div className="text-xs text-ink-2">Errors: {d.errors.map((e) => <span key={e.code} className="mr-3"><Mono>{e.code}</Mono>{e.meaning ? ` ${e.meaning}` : ""}</span>)}</div> : null}
+      </section>
+      <section className="flex flex-col gap-2">
+        <h3 className="m-0 text-sm font-semibold">In the backlog</h3>
+        <div>Depends on: {d.item?.depends_on.length ? d.item.depends_on.map((s) => <Mono key={s} className="mr-2">{s}</Mono>) : <span className="text-muted">no other story</span>}</div>
+        <div>Needed by: {d.needed_by.length ? d.needed_by.map((s) => <Mono key={s} className="mr-2">{s}</Mono>) : <span className="text-muted">no other story</span>}</div>
+        {d.item?.reason ? <div className="text-ink-2">{d.item.reason}</div> : null}
+        <h3 className="m-0 mt-2 text-sm font-semibold">Runs</h3>
+        {d.runs.length ? (
+          <ul className="m-0 flex list-none flex-col gap-1 p-0">
+            {[...d.runs].reverse().map((r) => (
+              <li key={r.id} className="flex flex-wrap items-center gap-2"><Link href={`/runs/${r.id}`}><Mono>{r.id.slice(0, 8)}</Mono> {r.title}</Link> <StatusBadge status={r.status} /> <span className="text-xs text-muted">{new Date(r.created_at).toLocaleString()}</span></li>
+            ))}
+          </ul>
+        ) : <p className="m-0 text-muted">Not started yet.</p>}
+        {d.spec ? <>
+          <h3 className="m-0 mt-2 text-sm font-semibold">Accepted spec <Mono className="font-normal text-muted">{d.spec_path}</Mono></h3>
+          <div className="max-h-[480px] overflow-auto rounded-lg border border-line bg-panel p-3"><Markdown source={d.spec} /></div>
+        </> : null}
+      </section>
+    </div>
   );
 }

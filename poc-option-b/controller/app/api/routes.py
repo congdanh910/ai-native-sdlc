@@ -296,6 +296,13 @@ def approve_backlog(key: str, body: BacklogApproval) -> dict:
     return _backlog(key, lambda s, p: backlog.approve(s, p, actor=operator(), version=body.version, reason=body.reason))
 
 
+@router.get("/projects/{key}/backlog/{story}")
+def backlog_story(key: str, story: str) -> dict:
+    """One story opened in the backlog: its SRS and SDS sections, requirements, APIs, runs and accepted spec."""
+    from controller.app import backlog
+    return _backlog(key, lambda s, p: backlog.story_detail(s, p, story))
+
+
 @router.post("/projects/{key}/backlog/{story}/start", status_code=201)
 def start_story(key: str, story: str) -> dict:
     """Open the run of a ready story, with its outcomes drafted from the SRS and SDS."""
