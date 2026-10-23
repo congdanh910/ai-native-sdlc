@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import or_, select
+from sqlalchemy import case, or_, select
 from sqlalchemy.orm import Session
 
 from controller.app.config import get_settings
@@ -38,6 +38,11 @@ def enqueue(session: Session, run: Run, kind: str, role: str, *, side_effects: b
     return execution
 
 
+# Short jobs that change no code go first: a brief for the Tech Lead or a preview must not wait behind another run's
+# twenty-minute code task (Manage Departments, 23/10)
+QUICK_KINDS = ("advise", "check_defects", "preview", "preview_stop")
+
+
 def claim(session: Session, worker_id: str) -> Execution | None:
     """The oldest queued job of a run that has no job running. Several workers may claim at once: the run's row is
     locked (skipped when another worker holds it) and checked again, so a run never has two jobs at a time; two jobs
@@ -46,7 +51,8 @@ def claim(session: Session, worker_id: str) -> Execution | None:
     busy = select(Execution.run_id).where(Execution.status == "running")
     candidates = session.scalars(select(Execution).where(Execution.status == "queued", ready,
                                                          Execution.run_id.not_in(busy))
-                                 .order_by(Execution.created_at).limit(get_settings().claim_candidates)
+                                 .order_by(case((Execution.kind.in_(QUICK_KINDS), 0), else_=1), Execution.created_at)
+                                 .limit(get_settings().claim_candidates)
                                  .with_for_update(skip_locked=True)).all()
     for execution in candidates:
         if session.scalar(select(Run.id).where(Run.id == execution.run_id).with_for_update(skip_locked=True)) is None:

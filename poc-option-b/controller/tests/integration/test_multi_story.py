@@ -143,3 +143,19 @@ def test_a_code_conflict_with_main_goes_to_a_task_of_its_own(db, sample_repo):
         run = session.get(Run, run_id)
         assert run.status == RunStatus.NEEDS_HUMAN and "validation failed" in run.status_reason
     assert "<<<<<<<" in (worktree / "src/shared.py").read_text()
+
+
+def test_a_quick_job_goes_before_older_code_and_a_brief_nobody_waits_for_is_dropped(db, sample_repo):
+    from controller.app import coordinator
+    project_id = add_project(sample_repo)
+    first, second = new_run(project_id), new_run(project_id)
+    with session_scope() as session:
+        brief = jobs.enqueue(session, session.get(Run, second), "advise", "code_reviewer", side_effects=False, key="b")
+        brief_id = brief.id
+    with session_scope() as session:
+        claimed = jobs.claim(session, "worker-a")  # queued last, claimed first
+        assert claimed.id == brief_id
+        assert coordinator.on_claim(session, claimed) is False  # the run does not wait for the Tech Lead
+    with session_scope() as session:
+        assert session.get(Execution, brief_id).status == "discarded"
+        assert jobs.claim(session, "worker-a").run_id == first

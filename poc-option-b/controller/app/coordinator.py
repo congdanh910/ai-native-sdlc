@@ -489,6 +489,10 @@ def require_checklist(session: Session, run: Run, checked: list[str] | None) -> 
 def on_claim(session: Session, execution: Execution) -> bool:
     """Mark side-effecting work as started before it begins, so a crash leaves a visible trace. False: the job is
     not to run (a code task queued before the run stopped coding), and is discarded without starting."""
+    if execution.kind == "advise" and session.get(Run, execution.run_id).status != RunStatus.NEEDS_HUMAN:
+        # the Tech Lead decided before the brief came: nobody reads it any more
+        finish(session, execution, "discarded", error="the run no longer waits for the Tech Lead")
+        return False
     if execution.kind == "code_task":
         task = session.get(Task, execution.task_id, with_for_update=True)
         run = session.get(Run, execution.run_id)
