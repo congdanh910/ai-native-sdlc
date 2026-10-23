@@ -163,7 +163,7 @@ class CliDoing:
         files = [c.path for c in staged]
         detail = f"{len(cases)} case(s) written in {', '.join(files)} ({result.executor})"
         if amended:
-            detail += "; existing tests changed by human decision: " + ", ".join(amended)
+            detail += "; existing tests changed by the ruling on the dispute: " + ", ".join(amended)
         return StepResult(True, detail, changed_files=files,
                           evidence=self._evidence(result, label, commit=sha, amended=amended))
 
