@@ -9,7 +9,7 @@ import { PlanSummary } from "./PlanSummary";
 import { RevisionSummary } from "./Revision";
 import { PreviewBox } from "./PreviewBox";
 import { AcceptanceReport } from "./AcceptanceReport";
-import { ActionButton, Badge, Button, Card, Field, Markdown, Mono, Select, StatusBadge, Textarea } from "./ui";
+import { ActionButton, Badge, Button, Card, Field, Input, Markdown, Mono, Select, StatusBadge, Textarea } from "./ui";
 
 function Panel({ run, title, children }: { run: RunDetail; title: string; children: ReactNode }) {
   return (
@@ -54,6 +54,7 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
   const [testsDraft, setTestsDraft] = useState(plan ? JSON.stringify(plan.test_plan, null, 2) : "");
   const [checked, setChecked] = useState<string[]>([]);
   const [waitFor, setWaitFor] = useState<string[]>([]);
+  const [allowFiles, setAllowFiles] = useState("");
   const onFix = async (fix: GateFix, mode: "use" | "do" | "amend") => {
     if (mode === "use") {
       setReason(fix.reason);
@@ -363,6 +364,13 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
             <div className="flex flex-wrap gap-2">
               <ActionButton variant="primary" action={() => post("resume", { decision: "amend_tests", reason })}>Let QA update the tests</ActionButton>
               <ActionButton action={() => post("resume", { decision: "keep_tests", reason })}>Keep the tests</ActionButton>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 border-t border-line pt-2 text-sm">
+              <span className="text-ink-2">The work needs a file outside the task's files?</span>
+              <Input className="min-w-[280px] flex-1" placeholder="backend/app/persistence/departments.py, …" value={allowFiles}
+                aria-label="Files the task may change too" onChange={(e) => setAllowFiles(e.target.value)} />
+              <ActionButton disabled={!allowFiles.trim() || !reason.trim()} title="The task may change these files too (inside the allowed paths, never a test file); the tests stand and the Developer tries again"
+                action={() => post("resume", { decision: "allow_files", reason, files: allowFiles.split(/[\s,]+/).filter(Boolean) })}>Allow these files, keep the tests</ActionButton>
             </div>
           </div>
         ) : null}

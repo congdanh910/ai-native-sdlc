@@ -1,6 +1,7 @@
 """The whole loop with the mock team against a real PostgreSQL."""
 
 from datetime import timedelta
+import json
 import uuid
 
 import pytest
@@ -595,3 +596,22 @@ def test_validation_that_cannot_run_stops_the_task_as_an_environment_problem(db,
         assert run.status == RunStatus.NEEDS_HUMAN and team.implemented == 1  # no remediation on a broken environment
         assert "validation could not run, so the code was not judged: service postgres" in run.status_reason
         assert "Resume" in run.status_reason
+
+
+def test_a_file_the_plan_forgot_can_be_allowed_and_the_tests_stand(db, sample_repo):
+    from controller.app.coordinator import artifact
+    run_id = _to_coding(sample_repo)
+    drain(DisputingDeveloper())
+    with session_scope() as session:
+        run = services.get_run(session, run_id)
+        with pytest.raises(services.DecisionError, match="test files stay the QA Engineer's"):
+            services.resume(session, run, actor=OPERATOR, decision="allow_files", reason="x", files=["test/x.test.js"])
+        with pytest.raises(services.DecisionError, match="outside the project's allowed paths"):
+            services.resume(session, run, actor=OPERATOR, decision="allow_files", reason="x", files=["/etc/passwd"])
+        services.resume(session, run, actor=OPERATOR, decision="allow_files", reason="the store needs it",
+                        files=["src/store.js"])
+        task = session.scalar(select(Task).where(Task.run_id == run_id, Task.external_task_id == "T1"))
+        assert task.status == "READY" and "src/store.js" in task.payload["modify"]
+        ruling = json.loads(artifact(session, run_id, "ruling:T1"))
+        assert ruling["decision"] == "keep_tests" and "src/store.js" in ruling["reason"]
+    assert status(run_id) == RunStatus.CODING

@@ -110,8 +110,9 @@ class StageStart(Body):
 
 class Resume(Body):
     decision: Literal["resume", "replan", "cancel", "amend_tests", "keep_tests", "already_built",
-                      "defects_as_written", "defects_revised", "defects_retest"]
+                      "defects_as_written", "defects_revised", "defects_retest", "allow_files"]
     reason: str
+    files: list[str] = []  # allow_files: what the disputed task may change besides its plan's files
 
 
 class Reason(Body):
@@ -825,7 +826,7 @@ def start_stage(run_id: uuid.UUID, body: StageStart) -> dict:
 @router.post("/runs/{run_id}/resume")
 def resume(run_id: uuid.UUID, body: Resume) -> dict:
     return _decide(run_id, lambda s, r: services.resume(s, r, actor=operator(), decision=body.decision,
-                                                        reason=body.reason))
+                                                        reason=body.reason, files=body.files))
 
 
 @router.post("/runs/{run_id}/cancel")

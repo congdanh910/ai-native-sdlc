@@ -464,7 +464,7 @@ def cancel(session: Session, run: Run, *, actor: str, reason: str) -> None:
             transition_task(session, task, TaskStatus.CANCELLED, actor=actor, reason="run cancelled")
 
 
-def resume(session: Session, run: Run, *, actor: str, decision: str, reason: str) -> None:
+def resume(session: Session, run: Run, *, actor: str, decision: str, reason: str, files: list[str] | None = None) -> None:
     """Human decision on a NEEDS_HUMAN run: resume the stage, replan, or cancel."""
     _require(run, RunStatus.NEEDS_HUMAN)
     if not reason.strip():
@@ -482,6 +482,9 @@ def resume(session: Session, run: Run, *, actor: str, decision: str, reason: str
         return
     if decision in ("amend_tests", "keep_tests"):
         _rule_on_dispute(session, run, actor=actor, decision=decision, reason=reason)
+        return
+    if decision == "allow_files":
+        _allow_files(session, run, actor=actor, reason=reason, files=files or [])
         return
     if decision == "already_built":
         _accept_as_built(session, run, actor=actor, reason=reason)
@@ -534,6 +537,34 @@ def _rule_on_dispute(session: Session, run: Run, *, actor: str, decision: str, r
     transition_run(session, run, RunStatus.CODING, actor=actor, acting_role=TL, reason=reason)
     transition_task(session, task, TaskStatus.READY, actor=actor, reason=f"{decision}: {reason}")
     coordinator.schedule_tasks(session, run)
+
+
+def _allow_files(session: Session, run: Run, *, actor: str, reason: str, files: list[str]) -> None:
+    """The Developer disputes because a file the work needs is outside the task's files (a plan that forgot it): the
+    Tech Lead lets the task change these files too, inside the project's allowed paths and never a test file; the
+    tests stand. Quicker than a replan for one missing file (Manage Departments T2, 23/10)."""
+    from controller.app.projects.config import matches_any
+    disputed = [t for t in coordinator.current_tasks(session, run) if t.status == TaskStatus.DISPUTED]
+    if not disputed:
+        raise DecisionError("no task is disputed; resume, replan or cancel instead")
+    files = [f.strip() for f in files if f.strip()]
+    if not files:
+        raise DecisionError("name the files the task may change")
+    policy = coordinator.EffectivePolicy.model_validate_json(coordinator.artifact(session, run.id, "effective_policy"))
+    outside = [f for f in files if not matches_any(f, policy.allowed_paths)]
+    tests = [f for f in files if matches_any(f, policy.test_paths)]
+    if tests:
+        raise DecisionError(f"test files stay the QA Engineer's: {', '.join(tests)}; let QA update the tests instead")
+    if outside:
+        raise DecisionError(f"outside the project's allowed paths: {', '.join(outside)}")
+    task = disputed[0]
+    payload = dict(task.payload)
+    payload["modify"] = list(dict.fromkeys([*payload.get("modify", []), *files]))
+    task.payload = payload
+    record_event(session, "task.files_allowed", actor=actor, acting_role=TL, run_id=run.id,
+                 payload={"task": task.external_task_id, "files": files, "reason": reason})
+    _rule_on_dispute(session, run, actor=actor, decision="keep_tests",
+                     reason=f"The Tech Lead allows this task to change {', '.join(files)} as well; the tests stand. {reason}")
 
 
 ALREADY_PASS = "already pass before the implementation"
