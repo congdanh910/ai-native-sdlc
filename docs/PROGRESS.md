@@ -8,7 +8,10 @@ Hai run Manage Departments (e516e325) và Manage Positions (66736643) tự mở 
 117 GB; service validation không --rm để giữ log), bộ test dùng tiền tố container riêng, lỗi hạ tầng không giao
 Developer, thông báo validation fail chi tiết + brief, job ngắn được ưu tiên, `SDLC_WORKER_CONCURRENCY=2` (.env, có
 hiệu lực sau restart), "Allow these files", Next step ở mọi mục kiểm chặn + `amend-plan`, AI tự phân xử khiếu nại kỹ
-thuật (`disputes`). Người dùng sẽ tăng Docker RAM lên 9 GB khi hai run dừng ở cổng; sau đó restart nền tảng.
+thuật (`disputes`). Docker đã lên 9.7 GB RAM, 2 worker chạy. **Nợ phải trả:** Manage Positions tạm giữ cột "Actions" trên bảng nhân
+viên để gán chức vụ (người dùng chọn nhanh để verify); SDS §3.2.3–3.2.4 đặt việc sửa phòng ban/chức vụ ở trang chi tiết
+nhân viên: khi làm EMP-US-04 (Update an Employee) phải chuyển việc gán chức vụ vào đó và gỡ cột Actions (ghi vào
+intent của EMP-US-04).
 
 ## Điều phối nhiều story (23/10)
 
