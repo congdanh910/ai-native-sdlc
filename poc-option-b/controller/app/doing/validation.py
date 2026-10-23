@@ -157,13 +157,15 @@ class ValidationGate:
             for service in self.policy.services:
                 name = f"{CONTAINER_PREFIX}svc-{uuid.uuid4().hex[:12]}"
                 env = [x for key, value in service.env.items() for x in ("-e", f"{key}={value}")]
-                result = run_bounded(["docker", "run", "-d", "--rm", "--name", name, "--network", network,
+                # no --rm: a service that dies keeps its logs for the report (attendance 23/10: postgres exited on
+                # "No space left on device" and only "No such container" was left); finally removes it
+                result = run_bounded(["docker", "run", "-d", "--name", name, "--network", network,
                                       "--network-alias", service.name, "--memory", f"{self.policy.container_memory_mb}m",
                                       "--security-opt", "no-new-privileges", *env, service.image], timeout=300)
+                started.append(name)
                 if not result.ok:
                     yield network, self._report(f"service-{service.name}", result)
                     return
-                started.append(name)
                 if service.ready and not self._wait_ready(name, service):
                     logs = run_bounded(["docker", "logs", "--tail", "50", name], timeout=30)
                     failed = ProcessResult(["docker", "exec", name, *service.ready], 1,
