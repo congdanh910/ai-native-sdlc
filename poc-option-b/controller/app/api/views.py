@@ -25,7 +25,24 @@ def project_view(project: Project) -> dict:
             "updated_at": project.updated_at.isoformat() if project.updated_at else None}
 
 
-def waiting(run: Run) -> dict | None:
+def ai_deciding(session: Session, run: Run) -> bool:
+    """A disputed task whose brief is being written while disputes are settled by the team: nobody needs to act."""
+    if run.status != RunStatus.NEEDS_HUMAN:
+        return False
+    if not session.scalar(select(Execution.id).where(Execution.run_id == run.id, Execution.kind == "advise",
+                                                     Execution.status.in_(("queued", "running"))).limit(1)):
+        return False
+    if not session.scalar(select(Task.id).where(Task.run_id == run.id, Task.status == "DISPUTED").limit(1)):
+        return False
+    from controller.app.coordinator import artifact
+    from controller.app.projects.config import EffectivePolicy
+    raw = artifact(session, run.id, "effective_policy")
+    return bool(raw) and EffectivePolicy.model_validate_json(raw).disputes.auto
+
+
+def waiting(run: Run, session: Session | None = None) -> dict | None:
+    if session is not None and ai_deciding(session, run):
+        return {"role": "code_reviewer", "action": "ai_deciding"}
     if run.awaiting_start:
         return {"role": STAGE_STARTER[run.awaiting_start].value, "action": "start", "stage": run.awaiting_start}
     role = WAITING_FOR.get(run.status)
@@ -38,9 +55,9 @@ def waiting(run: Run) -> dict | None:
     return None
 
 
-def run_summary(run: Run, project_key: str) -> dict:
+def run_summary(run: Run, project_key: str, session: Session | None = None) -> dict:
     return {"id": str(run.id), "title": run.title, "kind": run.kind, "project": project_key, "status": run.status,
-            "version": run.version, "reason": run.status_reason, "waiting": waiting(run),
+            "version": run.version, "reason": run.status_reason, "waiting": waiting(run, session),
             "experiment": run.experiment, "updated_at": run.updated_at.isoformat(),
             "created_at": run.created_at.isoformat()}
 
@@ -162,7 +179,7 @@ def run_detail(session: Session, run: Run) -> dict:
     executions = session.scalars(select(Execution).where(Execution.run_id == run.id)
                                  .order_by(Execution.created_at)).all()
     task_ids = {t.id: t.external_task_id for t in session.scalars(select(Task).where(Task.run_id == run.id))}
-    detail = run_summary(run, project.key)
+    detail = run_summary(run, project.key, session)
     detail.update({"preview": _preview_view(session, run)})
     detail.update({
         "base_commit": run.base_commit, "branch": run.branch, "stage_modes": run.stage_modes,
@@ -299,7 +316,9 @@ def inbox(session: Session) -> list[dict]:
     for run, key in rows:
         if run.experiment or (run.status not in ACTIVE and not needs_classification(run)):
             continue  # experiment runs are followed on the Evals page
-        need = waiting(run)
+        need = waiting(run, session)
+        if need and need["action"] == "ai_deciding":
+            continue  # the Code Reviewer settles the dispute first; a person is asked only if it cannot
         if run.kind == "discovery" and run.status == "CLARIFYING":
             # Questions for you: one card per role that has open questions, besides the PO's card for the round.
             from controller.app.discovery import questions as q

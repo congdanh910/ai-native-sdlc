@@ -7,7 +7,7 @@ The input also has constitution: the project's rules for tests and status codes.
 Output keys:
 - cases: array of test cases. Each case has:
   - id: "TC-1", "TC-2" and so on.
-  - task_id: the id of the plan task whose code the case tests. Use only ids from plan.tasks; pick the task whose acceptance_criteria include the case's criterion.
+  - task_id: the id of the plan task whose code the case tests. Use only ids from plan.tasks; pick the task whose acceptance_criteria include the case's criterion. A case runs when its task is coded, on the code of that task and the tasks before it: a case that calls an HTTP route, a screen or a job goes on the task that creates that route, screen or job (look at each task's create and modify files), or a later one; a case on an earlier task (the domain or storage layer) tests that layer directly, not through the API. The target_file follows the same layer (an API test file only for a task that changes the API).
   - criterion: the AC or EC id it proves.
   - name: a short test name of 2 to 6 words.
   - description: the scenario as "given ..., when ..., then ...", with concrete values.

@@ -55,6 +55,7 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
   const [checked, setChecked] = useState<string[]>([]);
   const [waitFor, setWaitFor] = useState<string[]>([]);
   const [allowFiles, setAllowFiles] = useState("");
+  const [decideMyself, setDecideMyself] = useState(false);
   const onFix = async (fix: GateFix, mode: "use" | "do" | "amend") => {
     if (mode === "use") {
       setReason(fix.reason);
@@ -351,7 +352,17 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
     );
   }
 
-  if (need.action === "needs_human") {
+  if (need.action === "ai_deciding" && !decideMyself) {
+    return (
+      <Panel run={run} title="The Code Reviewer is settling a technical dispute">
+        <p className="m-0 rounded-lg bg-sunken p-3 text-sm text-ink-2">{run.reason}</p>
+        <p className="m-0 text-sm text-muted">This is a disagreement between the AI roles (a test, a file, a layer). The Code Reviewer reads the tests and the code and decides on its own when it is sure and nothing touches what a criterion means, the SDS, security or the design (1–3 minutes). You are asked only if it cannot; its decision then shows under Decisions taken by the AI.</p>
+        <div><Button onClick={() => setDecideMyself(true)}>Decide it myself instead</Button></div>
+      </Panel>
+    );
+  }
+
+  if (need.action === "needs_human" || need.action === "ai_deciding") {
     const disputed = run.tasks.some((t) => t.status === "DISPUTED");
     return (
       <Panel run={run} title="The team stopped">

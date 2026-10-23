@@ -660,3 +660,19 @@ def test_the_team_allows_a_file_the_plan_forgot_on_its_own(db, sample_repo):
     with session_scope() as session:
         task = session.scalar(select(Task).where(Task.run_id == run_id, Task.external_task_id == "T1"))
         assert "src/store.js" in task.payload["modify"]
+
+
+def test_while_the_code_reviewer_settles_a_dispute_nobody_is_asked(db, sample_repo):
+    from controller.app.api.views import inbox, run_detail
+    run_id = _to_coding(sample_repo)
+    team = ConfidentReviewer()
+    for _ in range(20):  # up to the dispute, before the brief is written
+        run_once(team, worker_id="test")
+        if status(run_id) == "NEEDS_HUMAN":
+            break
+    with session_scope() as session:
+        run = session.get(Run, run_id)
+        assert run_detail(session, run)["waiting"] == {"role": "code_reviewer", "action": "ai_deciding"}
+        assert all(item["id"] != str(run_id) for item in inbox(session))
+    run_once(team, worker_id="test")  # the brief: decided on its own
+    assert status(run_id) == RunStatus.CODING

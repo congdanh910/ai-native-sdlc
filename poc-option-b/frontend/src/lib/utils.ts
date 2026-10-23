@@ -40,6 +40,7 @@ export const ACTION_LABEL: Record<string, string> = {
   waiting_test_approval: "Review the test cases",
   waiting_pr_approval: "Review the pull request",
   needs_human: "Decide how to continue",
+  ai_deciding: "The Code Reviewer is settling a dispute",
   start: "Start a manual stage",
   classify: "Classify what went wrong",
 };
