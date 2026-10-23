@@ -6,7 +6,9 @@ names no host port). It stops after SDLC_PREVIEW_TTL_MINUTES, when the run ends,
 place (SDLC_PREVIEW_MAX_RUNNING). It reaches the network like an application a developer runs on the machine.
 """
 
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+import fcntl
 import json
 from pathlib import Path
 import socket
@@ -28,6 +30,19 @@ def project_name(run_id: str) -> str:
 def port_range() -> range:
     first, _, last = get_settings().sdlc_preview_ports.partition("-")
     return range(int(first), int(last or first) + 1)
+
+
+@contextmanager
+def starting(lock_dir: Path):
+    """Held while a preview picks its port and starts: two workers (SDLC_WORKER_CONCURRENCY) would otherwise both
+    find the same port free before either one listens on it."""
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    with open(lock_dir / "preview.lock", "w") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def free_port(taken: set[int]) -> int | None:

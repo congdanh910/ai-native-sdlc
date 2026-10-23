@@ -7,13 +7,15 @@ _Cập nhật: 2026-10-23_
 Thiết kế `poc-option-b/docs/multi-story-design.md` (người dùng chốt: bắt đầu khi phụ thuộc đã merge, merge `main` vào
 nhánh, tự mở tối đa 2 run, Tech Lead duyệt backlog). **B1 xong**: bảng `backlogs` (migration 0011), `controller/app/backlog.py`,
 prompt `backlog.md`, API `/projects/{key}/backlog` (propose, PUT, approve, `{story}/start`), trang Projects → Backlog.
-Chưa gọi Propose order thật trên attendance (dùng hạn mức AI; để người dùng bấm). **Tiếp theo**: B2 (`delivery.auto_start`,
-`max_open_runs`, `SDLC_WORKER_CONCURRENCY`, một job mỗi run, chặn chồng file ở cổng plan), rồi B3 (`update_branch`,
-dựng lại tài liệu nền tảng, migration hai head, task Resolve conflicts).
+Người dùng đang thử B1 (Propose order trên attendance). **B2 xong**: `delivery.auto_start`/`max_open_runs` trong
+project.yaml, `backlog.tick` ở vòng poll của worker (nhả run chờ, mở story ready; mỗi story tự mở một lần),
+`SDLC_WORKER_CONCURRENCY` (slot 0 dọn dẹp và poll, slot khác chỉ chạy job), `jobs.claim` một job mỗi run (khoá hàng run),
+khoá chọn cổng preview, trùng file ở cổng plan (`overlaps`, `wait_for`, READY "waits for …", `stop-waiting`).
+**Tiếp theo**: B3 (`update_branch`, dựng lại tài liệu nền tảng, migration hai head, task Resolve conflicts).
 
 Run List Employees `31d224b9`: ghi chú "đặt test vào `test.describe('EMP-US-02')`" bị gửi bằng Send defects, đối chiếu
 SDS coi là trái test case → NEEDS_HUMAN. Đã thêm lựa chọn **Run the acceptance tests again instead**; người dùng bấm để
-chạy lại Acceptance. Test: 318 passed.
+chạy lại Acceptance (đã qua, run đang chờ duyệt PR). Test: 322 passed.
 
 ## Foundation attendance (run a70e419f), 21–22/10
 

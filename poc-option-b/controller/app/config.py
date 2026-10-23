@@ -99,6 +99,10 @@ class Settings(BaseSettings):
     sdlc_executor_read_paths: str = "/Library/Developer/CommandLineTools,/System/Library/OpenSSL"
     sdlc_preview_max_running: int = Field(default=2, ge=1, le=20)  # more stops the oldest
     sdlc_preview_ttl_minutes: int = Field(default=60, ge=5)  # a preview stops this long after it started
+    # Worker processes that run jobs side by side (one job per run at a time). Each validation and preview takes
+    # Docker memory: raise it only when Docker has room (BACKLOG 3.18).
+    sdlc_worker_concurrency: int = Field(default=1, ge=1, le=8)
+    claim_candidates: int = Field(default=20, ge=1)  # queued jobs a worker looks through for a run that is free
 
     @field_validator("sdlc_db_port", "langflow_port", "sdlc_api_port", "ollama_tunnel_port",
                      "ollama_remote_port", "gx10_ssh_port")

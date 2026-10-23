@@ -274,6 +274,13 @@ class Ui(Strict):
     review: Literal["gated", "skip"] = "gated"  # the QC ticks "the UI follows the concept" at the acceptance gate
 
 
+class Delivery(Strict):
+    """How the stories of the approved backlog open: the worker opens the next ready story while fewer feature runs
+    than max_open_runs are open. A story opens on its own only once; after a run that did not merge, a person starts it."""
+    auto_start: bool = True
+    max_open_runs: int = Field(default=2, ge=1, le=10)
+
+
 class Artifacts(Strict):
     commit_to_repo: bool = True
 
@@ -308,6 +315,7 @@ class ProjectConfig(Strict):
     environment: Environment = Environment()
     preview: Preview | None = None
     ui: Ui = Ui()
+    delivery: Delivery = Delivery()
 
     @model_validator(mode="after")
     def _consistent(self) -> "ProjectConfig":

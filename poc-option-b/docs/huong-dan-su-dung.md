@@ -351,7 +351,17 @@ Projects → **Backlog** của dự án (thiết kế: `docs/multi-story-design.
 5. Trạng thái mỗi story: **ready** (mọi story nó cần đã merge), **blocked** (ghi đang chờ story nào; Foundation chưa merge cũng chặn), **running** (link tới run), **held**, **delivered** (PR đã merge hoặc done outside). Run bị đóng không merge hay bị huỷ thì story về ready.
 6. **Start** trên story ready: mở run feature với tiêu đề, vấn đề (statement) và Desired outcome nháp từ SRS/SDS; run dừng ở mọi cổng như run tạo tay. Story mới thêm vào SRS hiện ở **Not in the backlog**.
 
-Tự mở story tiếp theo, nhiều run song song, cập nhật theo `main` và xử lý xung đột là các giai đoạn B2, B3 (chưa làm).
+7. **Tự mở story** (B2): khi backlog đã duyệt, worker tự mở story ready kế tiếp (theo thứ tự backlog) mỗi lần poll PR, khi số run feature đang mở của dự án còn dưới `delivery.max_open_runs`. Cấu hình trong `.sdlc/project.yaml`:
+   ```yaml
+   delivery:
+     auto_start: true     # false: chỉ mở bằng nút Start
+     max_open_runs: 2
+   ```
+   Mỗi story chỉ tự mở **một lần**; run đó bị đóng hoặc huỷ thì story về ready và người bấm Start. Run tự mở ghi actor `delivery_coordinator` và dừng ở mọi cổng như thường. Lỗi khi mở (ví dụ dự án chưa ready) ghi sự kiện `backlog.start_failed`.
+8. **Trùng file giữa hai run** (B2): ở cổng Plan, khung vàng **Other open runs change the same files** liệt kê run đang mở có sửa cùng file (theo plan của nó và những gì nhánh của nó đã đổi; bỏ qua `specs/`, `.sdlc/`, `SRS.md`, `SDS.md` vì nền tảng tự dựng lại). Tick **Wait for …** rồi Approve: run đi qua cổng test case rồi dừng ở READY với dòng "Waits to code until …", tự bắt đầu code khi run kia xong (merge, đóng hoặc huỷ). **Code now** để không chờ nữa. Không tick thì hai run code song song; PR sau sẽ gặp thay đổi của PR trước khi cập nhật theo `main` (B3, chưa làm).
+9. **Nhiều worker** (B2): `SDLC_WORKER_CONCURRENCY` trong `.env` (mặc định 1, tối đa 8) là số tiến trình worker chạy job song song; mỗi run vẫn chỉ một job một lúc; preview chọn cổng lần lượt. Mỗi validation và preview tốn bộ nhớ Docker: chỉ tăng khi Docker còn chỗ (BACKLOG 3.18). Đổi xong thì `./sdlc down && ./sdlc up` khi không có job chạy.
+
+Cập nhật theo `main` và xử lý xung đột là giai đoạn B3 (chưa làm).
 
 1. **New request → Feature request**: chọn dự án và **User story** trong SRS §7, điền Desired outcome, bấm **Submit intent.md**.
    - Chọn story xong, dưới ô Desired outcome có **Suggested outcomes**: các dòng nháp lấy từ requirement và luật nghiệp vụ của SRS truy vết tới story, mục đích các API của story trong SDS và các mã lỗi riêng của chúng; mỗi dòng ghi nguồn (FEN-FR-01, API-FEN-02, FACE_CAPTURE_INVALID…). Tick dòng muốn dùng rồi **Use the ticked lines** (hoặc **Add the ticked lines** khi ô đã có chữ), sửa lại cho đúng ý.

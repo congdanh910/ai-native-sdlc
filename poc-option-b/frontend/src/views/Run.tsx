@@ -409,6 +409,15 @@ export function RunView({ id }: { id: string }) {
           {r.reason}
         </div>
       ) : null}
+      {r.waiting_for?.length ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-warn bg-warn-soft p-3 text-sm">
+          <span>Waits to code until {r.waiting_for.map((w, i) => <span key={w.run}>{i ? ", " : ""}<a href={`#/runs/${w.run}`}>{w.title}</a> ({w.status.replace(/_/g, " ").toLowerCase()})</span>)} finishes: they change the same files. It starts on its own afterwards.</span>
+          <ActionButton className="ml-auto" success="Coding starts" action={async () => {
+            await api(`/api/runs/${r.id}/stop-waiting`, { method: "POST", body: { reason: "the Tech Lead lets it code now" } });
+            refresh();
+          }}>Code now</ActionButton>
+        </div>
+      ) : null}
       <DecisionPanel key={`${r.id}:${r.version}`} run={r} onDone={refresh} onShowSources={() => {
         select("sources");
         document.getElementById("run-tabs")?.scrollIntoView({ behavior: "smooth" });

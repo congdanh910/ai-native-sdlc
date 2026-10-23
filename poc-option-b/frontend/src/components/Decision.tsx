@@ -53,6 +53,7 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
   const tests = [...run.documents].reverse().find((d) => d.kind === "tests");
   const [testsDraft, setTestsDraft] = useState(plan ? JSON.stringify(plan.test_plan, null, 2) : "");
   const [checked, setChecked] = useState<string[]>([]);
+  const [waitFor, setWaitFor] = useState<string[]>([]);
   const checklist = run.checklist ? <GateChecklist checklist={run.checklist} checked={checked} onChange={setChecked} /> : null;
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [classification, setClassification] = useState({ category: "", stage: "", role: "", note: "" });
@@ -242,10 +243,11 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
             <Textarea id="plan-edit" className="min-h-80 font-mono text-[12px]" value={planDraft} onChange={(e) => setPlanDraft(e.target.value)} />
           </Field>
         ) : null}
+        {run.overlaps?.length ? <OverlapCard overlaps={run.overlaps} waitFor={waitFor} onChange={setWaitFor} /> : null}
         {checklist}
         <Reason value={reason} onChange={setReason} placeholder="Required to reject, optional to revise" />
         <div className="flex flex-wrap items-center gap-2">
-          <ActionButton variant="primary" success="Plan approved; the QC reviews the test cases next" action={() => post("approve-plan", { plan_id: plan.id, sha256: plan.sha256, checked })}>
+          <ActionButton variant="primary" success={waitFor.length ? "Plan approved; the run codes after the runs it waits for finish" : "Plan approved; the QC reviews the test cases next"} action={() => post("approve-plan", { plan_id: plan.id, sha256: plan.sha256, checked, wait_for: waitFor })}>
             Approve plan v{plan.version}
           </ActionButton>
           <Button onClick={() => setEditing(!editing)}>{editing ? "Hide editor" : "Edit JSON"}</Button>
@@ -539,6 +541,28 @@ function AdviceCard({ run, onUse }: { run: RunDetail; onUse: (reason: string) =>
   );
 }
 
+
+/** Open runs that change files this plan changes. Ticked runs finish (merge, or close) before this one codes;
+ * otherwise both code at once and the second PR meets the first one's changes when it updates with main. */
+function OverlapCard({ overlaps, waitFor, onChange }: {
+  overlaps: NonNullable<RunDetail["overlaps"]>; waitFor: string[]; onChange: (ids: string[]) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-warn bg-warn-soft p-3 text-sm">
+      <div><b>Other open runs change the same files</b> <span className="text-xs text-muted">tick a run to code after it finishes; leave unticked to code now</span></div>
+      {overlaps.map((o) => (
+        <label key={o.run} className="flex items-start gap-2">
+          <input type="checkbox" className="mt-1" checked={waitFor.includes(o.run)}
+            onChange={(e) => onChange(e.target.checked ? [...waitFor, o.run] : waitFor.filter((r) => r !== o.run))} />
+          <span>
+            Wait for <a href={`#/runs/${o.run}`}>{o.title}</a> <span className="text-xs text-muted">({o.status.replace(/_/g, " ").toLowerCase()})</span>
+            <span className="block text-xs text-ink-2">{o.files.map((f) => <Mono key={f} className="mr-2">{f}</Mono>)}</span>
+          </span>
+        </label>
+      ))}
+    </div>
+  );
+}
 
 const VERDICT_TONE = { consistent: "good", conflict: "bad", not_covered: "neutral", not_actionable: "warn" } as const;
 

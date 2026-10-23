@@ -12,7 +12,7 @@ from controller.app.project_docs import SRS_PATH, srs_features
 from controller.app.projects.registry import mirror_for
 from controller.app.coordinator import evaluate_gate
 from controller.app.services import needs_classification
-from controller.app.states import ACTIVE, STAGE_STARTER, WAITING_FOR, HumanRole
+from controller.app.states import ACTIVE, STAGE_STARTER, WAITING_FOR, HumanRole, RunStatus
 
 
 WAITING_GATES = ("WAITING_BASELINE_APPROVAL", "WAITING_ONBOARDING_APPROVAL", "WAITING_ACCEPTANCE_APPROVAL", "WAITING_OPTIONS_APPROVAL", "WAITING_UI_APPROVAL", "WAITING_SPEC_APPROVAL", "WAITING_PLAN_APPROVAL", "WAITING_TEST_APPROVAL", "WAITING_PR_APPROVAL")
@@ -135,6 +135,21 @@ def _preview_view(session: Session, run: Run) -> dict | None:
             "missing": missing, "locked": preview_locked(run, start=state.get("status") not in ("running", "starting"))}
 
 
+def _overlaps(session: Session, run: Run) -> list[dict]:
+    """At the plan gate: open runs that change files this plan changes."""
+    if run.status != RunStatus.WAITING_PLAN_APPROVAL:
+        return []
+    from controller.app.backlog import overlaps
+    return overlaps(session, run)
+
+
+def _waiting_for(session: Session, run: Run) -> list[dict]:
+    if run.status != RunStatus.READY:
+        return []
+    from controller.app.backlog import waiting_on
+    return [{"run": str(r.id), "title": r.title, "status": r.status} for r in waiting_on(session, run)]
+
+
 def run_detail(session: Session, run: Run) -> dict:
     project = session.get(Project, run.project_id)
     documents = session.scalars(select(Document).where(Document.run_id == run.id)
@@ -186,6 +201,8 @@ def run_detail(session: Session, run: Run) -> dict:
         "already_built": _already_built(session, run, tasks, executions),
         "advice": _advice(session, run, executions),
         "defect_check": _defect_check(session, run),
+        "overlaps": _overlaps(session, run),
+        "waiting_for": _waiting_for(session, run),
     })
     return detail
 

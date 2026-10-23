@@ -39,17 +39,28 @@ def enqueue(session: Session, run: Run, kind: str, role: str, *, side_effects: b
 
 
 def claim(session: Session, worker_id: str) -> Execution | None:
+    """The oldest queued job of a run that has no job running. Several workers may claim at once: the run's row is
+    locked (skipped when another worker holds it) and checked again, so a run never has two jobs at a time; two jobs
+    of one run would change its worktree and its state under each other."""
     ready = or_(Execution.available_at.is_(None), Execution.available_at <= now())
-    execution = session.scalar(select(Execution).where(Execution.status == "queued", ready)
-                               .order_by(Execution.created_at).limit(1).with_for_update(skip_locked=True))
-    if execution is None:
-        return None
-    execution.status = "running"
-    execution.worker_id = worker_id
-    execution.attempts += 1
-    execution.started_at = now()
-    execution.lease_until = now() + lease()
-    return execution
+    busy = select(Execution.run_id).where(Execution.status == "running")
+    candidates = session.scalars(select(Execution).where(Execution.status == "queued", ready,
+                                                         Execution.run_id.not_in(busy))
+                                 .order_by(Execution.created_at).limit(get_settings().claim_candidates)
+                                 .with_for_update(skip_locked=True)).all()
+    for execution in candidates:
+        if session.scalar(select(Run.id).where(Run.id == execution.run_id).with_for_update(skip_locked=True)) is None:
+            continue  # another worker is claiming for this run, or a person's decision holds it
+        if session.scalar(select(Execution.id).where(Execution.run_id == execution.run_id,
+                                                     Execution.status == "running").limit(1)) is not None:
+            continue
+        execution.status = "running"
+        execution.worker_id = worker_id
+        execution.attempts += 1
+        execution.started_at = now()
+        execution.lease_until = now() + lease()
+        return execution
+    return None
 
 
 def postpone(session: Session, execution: Execution, seconds: float, reason: str) -> None:

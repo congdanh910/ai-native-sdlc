@@ -235,7 +235,14 @@ def view(session: Session, project: Project) -> dict:
         "not_in_backlog": [{"story": sid, **meta} for sid, meta in stories.items()
                            if sid not in {i["story"] for i in items}],
         "problems": check(items, list(stories)) if backlog else [],
+        "delivery": _delivery_view(session, project),
     }
+
+
+def _delivery_view(session: Session, project: Project) -> dict:
+    settings = delivery(project)
+    return {"auto_start": bool(settings and settings.auto_start), "max_open_runs": settings.max_open_runs if settings else None,
+            "open_runs": len(open_runs(session, project)), "config_valid": settings is not None}
 
 
 def _store(session: Session, project: Project, items: list[dict], notes: str, actor: str, srs_commit: str | None,
@@ -346,3 +353,142 @@ def start(session: Session, project: Project, story: str, *, actor: str):
     record_event(session, "backlog.started", actor=actor, project_id=project.id, run_id=run.id,
                  payload={"story": story})
     return run
+
+
+# ---------------------------------------------------------------- B2: opening stories on their own, waiting for a run
+
+AUTO_ACTOR = "delivery_coordinator"
+WAIT_FOR = "wait_for"  # artifact: the runs a run waits for before it codes (the Tech Lead's choice at the plan gate)
+# files the platform writes for every story; B3 rebuilds a story's sections on main, so they are no overlap
+PLATFORM_PATHS = ("specs/", ".sdlc/", "SRS.md", "SDS.md")
+
+
+def delivery(project: Project):
+    """The project's delivery settings, or None when its project.yaml does not parse."""
+    from controller.app.foundation import CONFIG_PATH
+    from controller.app.projects.config import Delivery, parse_project_config
+    raw = mirror_for(project).read_file(project.checked_commit, CONFIG_PATH) if project.checked_commit else None
+    try:
+        return parse_project_config(raw).delivery if raw else Delivery()
+    except ValueError:
+        return None
+
+
+def open_runs(session: Session, project: Project) -> list[Run]:
+    """The project's feature runs that are not finished (experiments aside)."""
+    return list(session.scalars(select(Run).where(Run.project_id == project.id, Run.kind == RunKind.FEATURE,
+                                                  Run.experiment.is_(False),
+                                                  Run.status.not_in([s.value for s in TERMINAL]))))
+
+
+def _note_failure(session: Session, project: Project, story: str, message: str) -> None:
+    """Once per message: the worker tries again at every poll."""
+    from controller.app.models import Event
+    last = session.scalar(select(Event.payload).where(Event.project_id == project.id,
+                                                      Event.event_type == "backlog.start_failed")
+                          .order_by(Event.id.desc()).limit(1))
+    if last != {"story": story, "error": message}:
+        record_event(session, "backlog.start_failed", actor=AUTO_ACTOR, project_id=project.id,
+                     payload={"story": story, "error": message})
+
+
+def auto_start(session: Session) -> list[str]:
+    """Open the next ready stories of every approved backlog while the project has room (delivery.max_open_runs).
+    A story opens on its own once: after a run that did not merge, a person starts it again."""
+    from controller.app import services
+    started = []
+    for backlog in session.scalars(select(Backlog).where(Backlog.status == APPROVED)).all():
+        project = session.get(Project, backlog.project_id)
+        settings = delivery(project)
+        if settings is None or not settings.auto_start or project.readiness == "not_ready":
+            continue
+        room = settings.max_open_runs - len(open_runs(session, project))
+        if room <= 0:
+            continue
+        runs = story_runs(session, project)
+        found = states(backlog.items, runs, foundation_blocker(session, project))
+        for item in backlog.items:
+            if room <= 0:
+                break
+            story = item["story"]
+            if found[story]["state"] != "ready" or runs.get(story):
+                continue
+            try:
+                with session.begin_nested():
+                    run = start(session, project, story, actor=AUTO_ACTOR)
+            except (BacklogError, services.DecisionError, ValueError) as exc:
+                _note_failure(session, project, story, str(exc)[:500])
+                continue
+            room -= 1
+            started.append(f"{project.key}: opened {story} as run {str(run.id)[:8]}")
+    return started
+
+
+def _files(session: Session, run: Run) -> set[str]:
+    """What a run changes or plans to change: its latest plan's files and what its branch changed since its base."""
+    from controller.app.documents import latest_plan
+    from controller.app.doing import changes
+    files: set[str] = set()
+    plan = latest_plan(session, run.id)
+    for task in (plan.payload.get("tasks") or []) if plan else []:
+        files.update(task.get("modify", []) + task.get("create", []))
+    if run.worktree_path and run.base_commit:
+        from pathlib import Path
+        if Path(run.worktree_path).is_dir():
+            try:
+                files.update(changes.changed_since(Path(run.worktree_path), run.base_commit))
+            except Exception:  # a worktree being rebuilt: the plan's files still count
+                pass
+    return {f for f in files if not f.startswith(PLATFORM_PATHS)}
+
+
+def overlaps(session: Session, run: Run) -> list[dict]:
+    """Open runs of the project that change files this run's plan changes (the platform's own files aside)."""
+    from controller.app.documents import latest_plan
+    plan = latest_plan(session, run.id)
+    mine = {f for task in (plan.payload.get("tasks") or []) if plan
+            for f in task.get("modify", []) + task.get("create", []) if not f.startswith(PLATFORM_PATHS)}
+    if not mine:
+        return []
+    others = session.scalars(select(Run).where(Run.project_id == run.project_id, Run.id != run.id,
+                                               Run.kind.in_([RunKind.FEATURE, RunKind.FOUNDATION]),
+                                               Run.experiment.is_(False),
+                                               Run.status.not_in([s.value for s in TERMINAL]))
+                             .order_by(Run.created_at)).all()
+    found = []
+    for other in others:
+        shared = sorted(mine & _files(session, other))
+        if shared:
+            found.append({"run": str(other.id), "title": other.title, "status": other.status, "files": shared})
+    return found
+
+
+def waiting_on(session: Session, run: Run) -> list[Run]:
+    """The runs this run still waits for: chosen at the plan gate, not finished yet."""
+    import json
+    import uuid
+    from controller.app.coordinator import artifact
+    chosen = json.loads(artifact(session, run.id, WAIT_FOR) or "[]")
+    runs = [session.get(Run, uuid.UUID(r)) for r in chosen]
+    return [r for r in runs if r is not None and r.status not in TERMINAL]
+
+
+def wait_reason(runs: list[Run]) -> str:
+    return "waits for " + ", ".join(f"run {str(r.id)[:8]} ({r.title})" for r in runs) + \
+        " to finish before coding: they change the same files"
+
+
+def release_waiting(session: Session) -> list[str]:
+    """Runs held at READY for other runs start coding once those runs are finished."""
+    from controller.app import services
+    released = []
+    for run in session.scalars(select(Run).where(Run.status == RunStatus.READY).with_for_update(skip_locked=True)).all():
+        if run.status_reason and run.status_reason.startswith("waits for ") and not waiting_on(session, run):
+            services.start_coding(session, run, actor=AUTO_ACTOR, acting_role=None)
+            released.append(f"run {str(run.id)[:8]} starts coding: the runs it waited for are finished")
+    return released
+
+
+def tick(session: Session) -> list[str]:
+    """The worker's poll: release the runs that waited, then open the next stories."""
+    return release_waiting(session) + auto_start(session)

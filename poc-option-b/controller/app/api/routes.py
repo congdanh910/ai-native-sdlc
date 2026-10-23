@@ -80,6 +80,7 @@ class PlanChoice(Body):
     plan_id: uuid.UUID
     sha256: str
     checked: list[str] = []
+    wait_for: list[str] = []  # open runs that change the same files: this run codes after they finish
 
 
 class Revision(Body):
@@ -700,7 +701,13 @@ def reject_spec(run_id: uuid.UUID, body: Rejection) -> dict:
 @router.post("/runs/{run_id}/approve-plan")
 def approve_plan(run_id: uuid.UUID, body: PlanChoice) -> dict:
     return _decide(run_id, lambda s, r: services.approve_plan(s, r, body.plan_id, body.sha256, actor=operator(),
-                                                                       checked=body.checked))
+                                                                       checked=body.checked, wait_for=body.wait_for))
+
+
+@router.post("/runs/{run_id}/stop-waiting")
+def stop_waiting(run_id: uuid.UUID, body: Reason) -> dict:
+    """A run that waits for other runs to finish codes now."""
+    return _decide(run_id, lambda s, r: services.stop_waiting(s, r, actor=operator(), reason=body.reason))
 
 
 @router.post("/runs/{run_id}/revise-plan")

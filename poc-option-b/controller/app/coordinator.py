@@ -1195,12 +1195,13 @@ def _try_preview(policy: EffectivePolicy, loaded: Loaded) -> dict | None:
     worktree = Path(loaded.extra["worktree"])
     if policy.preview is None or preview.missing_parts(worktree, policy.preview):
         return None
-    port = preview.free_port(set())
-    if port is None:
-        return None
-    joblog.note("starting the preview once to check the onboarding files against the code")
-    state = preview.start(loaded.extra["run_id"], worktree, policy.preview, port,
-                          DATA_DIR / "logs" / loaded.extra["run_id"] / "environment-preview")
+    with preview.starting(DATA_DIR / "run"):
+        port = preview.free_port(set())
+        if port is None:
+            return None
+        joblog.note("starting the preview once to check the onboarding files against the code")
+        state = preview.start(loaded.extra["run_id"], worktree, policy.preview, port,
+                              DATA_DIR / "logs" / loaded.extra["run_id"] / "environment-preview")
     preview.stop(loaded.extra["run_id"])
     return state
 
@@ -1317,12 +1318,13 @@ def _run_preview(loaded: Loaded) -> dict:
         return {"preview": {"status": "failed", "detail": "the project has no preview in .sdlc/project.yaml"}}
     if get_settings().coding_is_mocked:
         return {"preview": {"status": "failed", "detail": "not started: SDLC_DOING_MODE is mock"}}
-    port = preview.free_port(set(extra["taken"]))
-    if port is None:
-        return {"preview": {"status": "failed", "detail": f"no free port in {get_settings().sdlc_preview_ports}"}}
-    joblog.note(f"starting the preview on 127.0.0.1:{port}")
-    state = preview.start(extra["run_id"], Path(extra["worktree"]), Preview.model_validate(extra["preview"]), port,
-                          DATA_DIR / "logs" / extra["run_id"] / "preview")
+    with preview.starting(DATA_DIR / "run"):
+        port = preview.free_port(set(extra["taken"]))
+        if port is None:
+            return {"preview": {"status": "failed", "detail": f"no free port in {get_settings().sdlc_preview_ports}"}}
+        joblog.note(f"starting the preview on 127.0.0.1:{port}")
+        state = preview.start(extra["run_id"], Path(extra["worktree"]), Preview.model_validate(extra["preview"]),
+                              port, DATA_DIR / "logs" / extra["run_id"] / "preview")
     joblog.note(state.get("detail", "")[:500])
     return {"preview": state, "stopped": extra["evict"]}
 
@@ -1359,11 +1361,12 @@ def _accept(team: Team, loaded: Loaded) -> dict:
     run_id = extra["run_id"]
     for other in extra["evict"]:
         preview.stop(other)
-    port = preview.free_port(set(extra["taken"]))
-    if port is None:
-        return {**result, "ok": False, "detail": f"no free port in {get_settings().sdlc_preview_ports}"}
     config = Preview.model_validate(extra["preview"])
-    state = preview.start(run_id, Path(extra["worktree"]), config, port, DATA_DIR / "logs" / run_id / "preview")
+    with preview.starting(DATA_DIR / "run"):
+        port = preview.free_port(set(extra["taken"]))
+        if port is None:
+            return {**result, "ok": False, "detail": f"no free port in {get_settings().sdlc_preview_ports}"}
+        state = preview.start(run_id, Path(extra["worktree"]), config, port, DATA_DIR / "logs" / run_id / "preview")
     result.update(preview=state, stopped=extra["evict"])
     if state["status"] != "running":
         return {**result, "ok": False, "detail": f"the preview did not start: {state['detail'][:1500]}"}

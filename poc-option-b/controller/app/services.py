@@ -261,10 +261,17 @@ def _current_plan(session: Session, run: Run, plan_id: uuid.UUID, sha256: str):
 
 
 def approve_plan(session: Session, run: Run, plan_id: uuid.UUID, sha256: str, *, actor: str,
-                 checked: list[str] | None = None) -> None:
+                 checked: list[str] | None = None, wait_for: list[str] | None = None) -> None:
+    """wait_for: open runs that change the same files (the gate shows them); this run codes after they finish."""
     _require(run, RunStatus.WAITING_PLAN_APPROVAL)
     plan = _current_plan(session, run, plan_id, sha256)
     checklist = _checklist(session, run, checked)
+    from controller.app.backlog import WAIT_FOR, overlaps
+    known = {o["run"] for o in overlaps(session, run)}
+    unknown = [r for r in wait_for or [] if r not in known]
+    if unknown:
+        raise DecisionError(f"run {unknown[0][:8]} does not change this plan's files (or has finished); reload the run")
+    coordinator.store_artifact(session, run, WAIT_FOR, TeamRole.COORDINATOR, json.dumps(sorted(set(wait_for or []))))
     _approval(session, run, "plan", "approve", actor, TL, plan_id=plan.id, checklist=checklist)
     plan.commit_sha = coordinator.commit_thread(session, run, "plan", coordinator.plan_markdown(run, plan),
                                                 f"sdlc: plan v{plan.version} approved")
@@ -310,11 +317,34 @@ def approve_tests(session: Session, run: Run, document_id: uuid.UUID, sha256: st
         coordinator.store_artifact(session, run, "task_base", TeamRole.COORDINATOR, worktree.head())
     session.flush()
     transition_run(session, run, RunStatus.READY, actor=actor, acting_role=QC)
+    from controller.app.backlog import wait_reason, waiting_on
+    waiting = waiting_on(session, run)
+    if waiting:  # the Tech Lead chose at the plan gate to let those runs finish first
+        run.status_reason = wait_reason(waiting)
+        record_event(session, "run.waiting", actor=actor, run_id=run.id,
+                     payload={"runs": [str(r.id) for r in waiting]})
+        return
+    start_coding(session, run, actor=actor, acting_role=QC)
+
+
+def start_coding(session: Session, run: Run, *, actor: str, acting_role: str | None) -> None:
+    """From READY: the tasks start, when the project is ready."""
     project = session.get(Project, run.project_id)
     if project.readiness != "ready" and not get_settings().coding_is_mocked:
         coordinator.to_needs_human(session, run, f"project {project.key} is {project.readiness}; coding needs ready")
         return
-    coordinator.enter_stage(session, run, "coding", actor=actor, acting_role=QC)
+    coordinator.enter_stage(session, run, "coding", actor=actor, acting_role=acting_role)
+
+
+def stop_waiting(session: Session, run: Run, *, actor: str, reason: str) -> None:
+    """The Tech Lead lets a run that waits for other runs code now."""
+    from controller.app.backlog import WAIT_FOR
+    _require(run, RunStatus.READY)
+    if not (run.status_reason or "").startswith("waits for "):
+        raise DecisionError("this run does not wait for other runs")
+    coordinator.store_artifact(session, run, WAIT_FOR, TeamRole.COORDINATOR, "[]")
+    record_event(session, "run.waiting_stopped", actor=actor, acting_role=TL, run_id=run.id, payload={"reason": reason})
+    start_coding(session, run, actor=actor, acting_role=TL)
 
 
 def revise_tests(session: Session, run: Run, test_plan: dict, *, actor: str, reason: str | None) -> None:

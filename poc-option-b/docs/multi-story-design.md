@@ -14,7 +14,7 @@ story, SDS §5 chỉ có mục đích. Hai story chạy cùng lúc sẽ đụng 
 - migration: hai nhánh cùng tạo `0003_*` trên `0002` thành hai head; git không báo xung đột, chạy migration mới lỗi;
 - code của chính các story.
 
-## B1. Backlog theo phụ thuộc
+## B1. Backlog theo phụ thuộc (đã làm 23/10)
 
 Tab **Backlog** của dự án (trang Projects → Backlog).
 
@@ -35,7 +35,7 @@ Tab **Backlog** của dự án (trang Projects → Backlog).
 Lưu trong bảng `backlogs` (một dòng mỗi dự án: items, ghi chú, trạng thái nháp/duyệt, người duyệt, commit SRS); sự kiện
 `backlog.*` ghi lịch sử.
 
-## B2. Tự mở story tiếp theo, nhiều run song song
+## B2. Tự mở story tiếp theo, nhiều run song song (đã làm 23/10)
 
 ```yaml
 delivery:
@@ -44,11 +44,14 @@ delivery:
 ```
 
 - Worker (vòng poll) mở story ready có thứ hạng cao nhất khi số run feature đang mở < `max_open_runs` và backlog đã
-  duyệt. Idempotency key `backlog:<dự án>:<story>:<lần>` nên không mở trùng.
+  duyệt. Idempotency key `backlog:<dự án>:<story>:<lần>` nên không mở trùng. Mỗi story chỉ tự mở một lần: run không
+  merge (đóng, huỷ, hỏng) thì người bấm Start, để một story lỗi không bị mở đi mở lại.
 - Nhiều worker: `SDLC_WORKER_CONCURRENCY` (mặc định 1); mỗi run chỉ một job chạy cùng lúc; hạn mức engine giữ nguyên;
   preview đã có `SDLC_PREVIEW_MAX_RUNNING`. Bộ nhớ Docker: BACKLOG 3.18.
 - **Chặn chồng file**: plan đã duyệt biết `modify/create`. Trùng file với run đang mở khác thì cổng plan báo, Tech Lead
-  chọn **Wait for <run>** (run giữ ở READY tới khi run kia merge) hoặc **Proceed**.
+  chọn **Wait for <run>** (run giữ ở READY tới khi run kia kết thúc) hoặc không tick (code luôn); **Code now** bỏ chờ.
+- Nhiều worker là nhiều tiến trình (không phải thread): trạng thái tiến trình con (CLI, container của job) là toàn cục
+  trong một tiến trình. Slot 0 dọn phần bị bỏ lại trước khi các slot khác chạy, rồi poll PR và backlog.
 
 ## B3. Theo kịp `main`, xử lý xung đột
 

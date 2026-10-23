@@ -14,6 +14,7 @@ interface Item {
 interface Backlog {
   project: string; commit: string | null; status: "draft" | "approved" | null; version: number; notes: string;
   approved_by: string | null; approved_at: string | null; srs_commit: string | null;
+  delivery: { auto_start: boolean; max_open_runs: number | null; open_runs: number; config_valid: boolean };
   items: Item[]; not_in_backlog: { story: string; title: string; actors: string; feature: string }[]; problems: string[];
 }
 type Edit = Pick<Item, "story" | "depends_on" | "reason" | "hold" | "done">;
@@ -58,6 +59,12 @@ export function BacklogView({ project }: { project: string }) {
           {(["ready", "running", "blocked", "held", "delivered"] as const).map((s) => <Badge key={s} tone={STATE_TONE[s]}>{counts[s] ?? 0} {s}</Badge>)}
           <span className="text-muted">SRS at <Mono>{short(data.commit ?? "", 10)}</Mono>{data.srs_commit && data.srs_commit !== data.commit ? <> · backlog made at <Mono>{short(data.srs_commit, 10)}</Mono></> : null}</span>
         </div>
+        <p className="m-0 text-sm text-muted">
+          {!data.delivery.config_valid ? ".sdlc/project.yaml does not parse: stories do not open on their own."
+            : data.delivery.auto_start
+              ? <>Once approved, the next ready story opens on its own while fewer than <b>{data.delivery.max_open_runs}</b> feature runs are open (now {data.delivery.open_runs}); <Mono>delivery</Mono> in .sdlc/project.yaml. A story opens on its own once; after a run that did not merge, start it here.</>
+              : <>Stories open only with Start (<Mono>delivery.auto_start: false</Mono>); {data.delivery.open_runs} feature run(s) open.</>}
+        </p>
         <Textarea rows={2} placeholder={data.items.length ? "What should the AI change in the order? (optional)" : "Anything the AI should know about the order (optional)"} value={feedback} onChange={(e) => setFeedback(e.target.value)} />
         <div className="flex flex-wrap gap-2">
           <ActionButton variant={data.items.length ? undefined : "primary"} disabled={dirty} title={dirty ? "Save or discard your edits first" : undefined}

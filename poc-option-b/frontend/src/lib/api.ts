@@ -262,6 +262,10 @@ export interface RunDetail extends RunSummary {
       checks: string[]; sides: { party: string; claim: string; evidence: string[] }[];
     } | null;
   } | null;
+  // at the plan gate: open runs that change files this plan changes; the Tech Lead may let them finish first
+  overlaps?: { run: string; title: string; status: string; files: string[] }[];
+  // at READY: the runs this run waits for before it codes
+  waiting_for?: { run: string; title: string; status: string }[];
   // after a red check found a task's new tests passing before any code: what tells code already built from weak tests
   already_built?: {
     task: string; title: string; files: string[]; qa_note: string; red_check: string;

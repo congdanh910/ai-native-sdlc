@@ -147,17 +147,40 @@ def _queue_has_work() -> bool:
         return session.scalar(select(Execution.id).where(Execution.status.in_(("queued", "running"))).limit(1)) is not None
 
 
-def run_forever(poll_seconds: float = 1.0) -> None:
+def _start_slots(count: int) -> list[subprocess.Popen]:
+    """Extra worker processes for SDLC_WORKER_CONCURRENCY; they only run jobs (slot 0 polls and cleans up)."""
+    return [subprocess.Popen([sys.executable, "-m", "controller.app.worker", "--slot", str(slot)])
+            for slot in range(1, count)]
+
+
+def _poll(team: Team) -> None:
+    """Slot 0's periodic work: pull requests, previews past their time, the backlog's next stories."""
+    from controller.app import backlog
+    with session_scope() as session:
+        coordinator.poll_pull_requests(session)
+        coordinator.expire_previews(session)
+    with session_scope() as session:
+        for line in backlog.tick(session):
+            log.info("backlog: %s", line)
+
+
+def run_forever(poll_seconds: float = 1.0, slot: int = 0) -> None:
     team = get_team()
     stopping = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stopping.set())
     settings = get_settings()
     awake = StayAwake(settings.keep_awake_release_seconds, enabled=settings.sdlc_keep_awake)
-    log.info("worker %s started with team %s", WORKER_ID, team.engine)
-    for leftover in process.kill_orphans():
-        log.warning("stopped %s left behind by an earlier worker", leftover)
+    log.info("worker %s (slot %d) started with team %s", WORKER_ID, slot, team.engine)
+    slots: list[subprocess.Popen] = []
+    if slot == 0:  # before any other slot starts: what is left behind belongs to a worker that died
+        for leftover in process.kill_orphans():
+            log.warning("stopped %s left behind by an earlier worker", leftover)
+        slots = _start_slots(settings.sdlc_worker_concurrency)
     next_pr_poll = 0.0
+    parent = os.getppid()
     while not stopping.is_set():
+        if slot and os.getppid() != parent:  # slot 0 died without stopping this one
+            break
         try:
             # Hold the assertion before the job starts: taken only after a job, the first job after an idle spell
             # ran unprotected and the Mac slept through it (discovery trial, 2026-10-16).
@@ -170,24 +193,33 @@ def run_forever(poll_seconds: float = 1.0) -> None:
         except Exception:
             log.exception("worker loop error")
             busy = False
-        if not busy:
+        if slot == 0 and time.monotonic() >= next_pr_poll:  # also while busy: other slots may be the ones working
+            next_pr_poll = time.monotonic() + get_settings().pr_poll_seconds
             try:
-                advance_evals()
+                _poll(team)
             except Exception:
-                log.exception("eval scoring failed")
-            if time.monotonic() >= next_pr_poll:
-                next_pr_poll = time.monotonic() + get_settings().pr_poll_seconds
+                log.exception("polling failed")
+        if not busy:
+            if slot == 0:
                 try:
-                    with session_scope() as session:
-                        coordinator.poll_pull_requests(session)
-                        coordinator.expire_previews(session)
+                    advance_evals()
                 except Exception:
-                    log.exception("pull request polling failed")
+                    log.exception("eval scoring failed")
             stopping.wait(poll_seconds)
+    for child in slots:
+        child.terminate()
+    for child in slots:
+        try:
+            child.wait(timeout=get_settings().job_lease_seconds)
+        except subprocess.TimeoutExpired:
+            child.kill()
     awake.release()
     log.info("worker stopped")
 
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--slot", type=int, default=0)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
-    run_forever()
+    run_forever(slot=parser.parse_args().slot)

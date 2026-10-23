@@ -5,7 +5,9 @@ import uuid
 
 from fastapi.testclient import TestClient
 import pytest
+from sqlalchemy import select
 
+from controller.app import services
 from controller.app.db import session_scope
 from controller.app.main import app
 from controller.app.models import Run
@@ -172,3 +174,29 @@ def test_the_backlog_orders_the_stories_and_opens_a_ready_one(db, sample_repo):
     after = client.get("/api/projects/task-board/backlog").json()
     assert after["items"][0]["state"] == "running" and after["items"][0]["run"]["id"] == run.json()["id"]
     assert client.post("/api/projects/task-board/backlog/CIW-US-01/start").status_code == 409  # already running
+
+
+def test_an_approved_backlog_opens_the_next_ready_story_once(db, sample_repo):
+    from controller.app import backlog
+    srs = with_srs(sample_repo)
+    with_sds(sample_repo, srs)
+    post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
+    drafted = client.post("/api/projects/task-board/backlog/propose", json={}).json()
+    items = [{k: i[k] for k in ("story", "depends_on", "reason", "hold", "done")} for i in drafted["items"]]
+    items[1]["depends_on"] = ["CIW-US-01"]
+    saved = client.put("/api/projects/task-board/backlog", json={"items": items, "version": drafted["version"]}).json()
+    with session_scope() as session:
+        assert backlog.tick(session) == []  # a draft opens nothing
+    approved = client.post("/api/projects/task-board/backlog/approve", json={"version": saved["version"]}).json()
+    assert approved["delivery"] == {"auto_start": True, "max_open_runs": 2, "open_runs": 0, "config_valid": True}
+    with session_scope() as session:
+        opened = backlog.tick(session)
+    assert len(opened) == 1 and "opened CIW-US-01" in opened[0]  # ARF-US-01 waits for CIW-US-01 to merge
+    with session_scope() as session:
+        assert backlog.tick(session) == []
+        run = session.scalars(select(Run)).one()
+        services.cancel(session, services.get_run(session, run.id), actor="t", reason="try again later")
+    with session_scope() as session:
+        assert backlog.tick(session) == []  # a story opens on its own once; after that a person starts it
+    view = client.get("/api/projects/task-board/backlog").json()
+    assert view["items"][0]["state"] == "ready" and view["delivery"]["open_runs"] == 0
