@@ -3,7 +3,7 @@ import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Sparkles } from "lucide-react";
 import { toast } from "sonner";
-import { ActionButton, Button, Card, Empty, ErrorBox, Field, Input, Loading, PageHeader, Select, Tabs, Textarea } from "../components/ui";
+import { ActionButton, Badge, Button, Card, Empty, ErrorBox, Field, Input, Loading, PageHeader, Select, Tabs, Textarea } from "../components/ui";
 import { api, ApiError, type Project, type RunSummary } from "../lib/api";
 
 const FIELDS = [
@@ -176,6 +176,8 @@ function DocumentForm({ project, fields, bodyKey, submit, allowBaseline, allowPr
               <option value="none">No requirement</option>
             </Select>
           </Field>
+          <BrandPreview project={project} product={brief.title ?? ""} colors={brand.colors} fonts={brand.fonts} figma={brand.figma_url}
+            logo={logo} devices={devices} accessibility={accessibility} />
         </fieldset>
       ) : null}
       <div>
@@ -426,6 +428,80 @@ function OutcomeSuggestions({ project, story, current, onUse }: { project: strin
           setPicked(null);
         }}>Suggest with AI (about a minute)</ActionButton>
       </div>
+    </div>
+  );
+}
+
+
+interface PresetInfo { id: string; name: string; best_for: string; layout: string; density: string }
+interface PreviewAnswer { html: string; screens: string[]; checks: { pair: string; ratio: number; ok: boolean; need: number }[]; ignored_colors: string[] }
+const DEVICE_WIDTH: Record<string, number> = { desktop: 1280, tablet: 820, mobile: 390, kiosk: 1080 };
+
+/** What the UI could look like before the SDS run: the platform's default concepts drawn by the controller with the
+ * brand typed so far (colors, fonts, logo), on sample screens with the project's features; or the customer's Figma
+ * file embedded. The UX Designer later proposes the real concepts from these, with the SRS screens. */
+function BrandPreview({ project, product, colors, fonts, figma, logo, devices, accessibility }: {
+  project: string; product: string; colors: string; fonts: string; figma: string; logo: { name: string; data: string } | null;
+  devices: string[]; accessibility: string;
+}) {
+  const presets = useQuery({ queryKey: ["ui-presets"], queryFn: () => api<PresetInfo[]>("/api/ui/presets"), staleTime: 300_000 });
+  const [preset, setPreset] = useState("");
+  const [device, setDevice] = useState("desktop");
+  const [screen, setScreen] = useState("overview");
+  const chosen = preset || presets.data?.[0]?.id || "";
+  const shownDevice = devices.includes(device) ? device : devices[0] ?? "desktop";
+  const logoUri = logo ? `data:${logo.name.toLowerCase().endsWith(".svg") ? "image/svg+xml" : `image/${logo.name.split(".").pop()?.toLowerCase().replace("jpg", "jpeg")}`};base64,${logo.data}` : "";
+  const body = { preset: chosen, colors: colors.split(/[\s,]+/).filter(Boolean), fonts: fonts.split(",").map((f) => f.trim()).filter(Boolean),
+    product, project, logo: logoUri, device: shownDevice, screen, accessibility };
+  const preview = useQuery({
+    queryKey: ["ui-preview", body], enabled: !!chosen, placeholderData: (previous) => previous,
+    queryFn: () => api<PreviewAnswer>("/api/ui/preview", { method: "POST", body }),
+  });
+  const figmaUrl = /^https:\/\/(www\.)?figma\.com\//.test(figma.trim()) ? figma.trim() : "";
+  const width = DEVICE_WIDTH[shownDevice] ?? 1280;
+  const scale = Math.min(1, 760 / width);
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-line p-3">
+      <div>
+        <b className="text-sm">Preview</b>{" "}
+        <span className="text-xs text-muted">{figmaUrl ? "the customer's Figma file; the concepts follow it" : "the platform's default concepts with the brand above, on sample screens; the UX Designer then proposes concepts with the real screens of the SRS"}</span>
+      </div>
+      {figmaUrl ? (
+        <>
+          <iframe title="Figma file" className="h-[520px] w-full rounded border border-line" allowFullScreen
+            src={`https://www.figma.com/embed?embed_host=sdlc-control-room&url=${encodeURIComponent(figmaUrl)}`} />
+          <p className="m-0 text-xs text-muted">Empty or asking to sign in? Share the file as "anyone with the link can view" in Figma.</p>
+        </>
+      ) : null}
+      <div className="flex flex-wrap gap-2" role="tablist" aria-label="Default concepts">
+        {(presets.data ?? []).map((p) => (
+          <button key={p.id} type="button" role="tab" aria-selected={chosen === p.id} onClick={() => setPreset(p.id)}
+            className={`rounded-lg border px-3 py-1.5 text-left text-xs ${chosen === p.id ? "border-accent bg-accent-soft text-accent-ink" : "border-line hover:bg-sunken"}`}>
+            <b className="block text-sm">{p.name}</b>{p.best_for}
+          </button>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <Select aria-label="Device" className="w-auto" value={shownDevice} onChange={(e) => setDevice(e.target.value)}>
+          {(devices.length ? devices : ["desktop"]).map((d) => <option key={d} value={d}>{d}</option>)}
+        </Select>
+        {(preview.data?.screens ?? ["overview", "form", "sign-in", "empty"]).map((name) => (
+          <Button key={name} variant={screen === name ? "primary" : undefined} onClick={() => setScreen(name)}>{name}</Button>
+        ))}
+      </div>
+      {preview.error ? <ErrorBox error={preview.error} /> : null}
+      {preview.data ? (
+        <>
+          <div className="overflow-hidden rounded border border-line bg-sunken" style={{ height: 560 * scale + 2, width: width * scale + 2, maxWidth: "100%" }}>
+            <iframe title="Concept preview" sandbox="" srcDoc={preview.data.html}
+              style={{ width, height: 560, transform: `scale(${scale})`, transformOrigin: "0 0", border: 0 }} />
+          </div>
+          <div className="flex flex-wrap gap-1.5 text-xs">
+            {preview.data.checks.map((c) => <Badge key={c.pair} tone={c.ok ? "good" : "bad"}>{c.pair} {c.ratio}:1{c.ok ? "" : ` (needs ${c.need}:1)`}</Badge>)}
+          </div>
+          {preview.data.ignored_colors.length ? <p className="m-0 text-xs text-bad">Not a #RRGGBB color, ignored: {preview.data.ignored_colors.join(", ")}</p> : null}
+        </>
+      ) : <p className="m-0 text-xs text-muted">Drawing the preview…</p>}
     </div>
   );
 }

@@ -340,3 +340,56 @@ def logo_bytes(artifact: str | None) -> tuple[str, bytes] | None:
     import base64
     stored = json.loads(artifact)
     return Path(stored["name"]).name, base64.b64decode(stored["data"])
+
+
+# ---------------------------------------------------------------- preview while the SDS request is written
+
+PREVIEW_SCREENS = ("overview", "form", "sign-in", "empty")
+
+
+def preview_concept(preset: dict, colors: list[str], fonts: list[str], navigation: list[str]) -> Concept:
+    """A preset with the customer's brand applied, as the request form shows it before any model is asked: primary
+    and accent from the brand colors (text on primary in white or near black, whichever reads better), the first font
+    in front of the preset's stack."""
+    tokens = json.loads(json.dumps(preset["tokens"]))
+    if colors:
+        tokens["colors"]["primary"] = colors[0].upper()
+        tokens["colors"]["on_primary"] = max(("#FFFFFF", "#111827"), key=lambda c: contrast(c, colors[0]))
+    if len(colors) > 1:
+        tokens["colors"]["accent"] = colors[1].upper()
+    if fonts:
+        stack = ", ".join(f"'{f}'" for f in fonts)
+        tokens["font_family"] = f"{stack}, {preset['tokens']['font_family']}"
+        tokens["heading_font"] = tokens["font_family"]
+    nav = navigation[:6] or ["Overview", "Records", "Reports", "Settings"]
+    return Concept(id=preset["id"], name=preset["name"], preset=preset["id"], layout=preset["layout"],
+                   density=preset.get("density", "comfortable"), rationale=preset.get("best_for", "") or "preset",
+                   tokens=Tokens.model_validate(tokens), navigation=nav, screens=preview_screens(nav))
+
+
+def preview_screens(features: list[str]) -> list[Screen]:
+    """Sample screens with the product's features in them: what any concept is judged on before the SRS screens."""
+    named = (features + ["Records", "Requests", "Reports"])[:3]
+    rows = [[f"{feature} item {n}", owner, status, date] for n, (feature, owner, status, date) in enumerate(zip(
+        named * 2, ["Lan Nguyen", "Minh Tran", "Hoa Pham", "Duc Le", "An Vo", "Bao Ho"],
+        ["Active", "Pending", "Active", "Closed", "Pending", "Active"],
+        ["2026-10-21", "2026-10-21", "2026-10-22", "2026-10-22", "2026-10-23", "2026-10-23"]), start=1)][:5]
+    return [
+        Screen(name="overview", blocks=[
+            Block(type="heading", title="Overview", text="Sample data to judge the look; the real screens come from the SRS."),
+            Block(type="stats", items=[f"{f}: {n}" for f, n in zip(named, (128, 14, 3))]),
+            Block(type="table", title="Recent activity", columns=["Name", "Owner", "Status", "Updated"], rows=rows),
+            Block(type="actions", items=["Create", "Export"])]),
+        Screen(name="form", blocks=[
+            Block(type="heading", title=f"New {named[0].lower()} item"),
+            Block(type="alert", tone="danger", title="Check the highlighted field", text="Name is required."),
+            Block(type="form", fields=["Name", "Owner", "Start date", "Notes"], items=["Save", "Cancel"])]),
+        Screen(name="sign-in", blocks=[
+            Block(type="heading", title="Sign in"),
+            Block(type="form", fields=["Email", "Password"], items=["Sign in"]),
+            Block(type="alert", tone="info", title="Demo", text="Use the account your administrator gave you.")]),
+        Screen(name="empty", blocks=[
+            Block(type="heading", title=named[1]),
+            Block(type="empty", title=f"No {named[1].lower()} yet", text="Items appear here once someone creates one."),
+            Block(type="actions", items=["Create the first one"])]),
+    ]

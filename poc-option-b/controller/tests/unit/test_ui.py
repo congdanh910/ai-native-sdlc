@@ -52,3 +52,15 @@ def test_the_docs_ui_files_hold_the_guide_tokens_prototypes_and_logo():
 def test_brand_colors_must_be_hex():
     with pytest.raises(ValueError, match="#1F5FAD"):
         Brand(colors=["blue"])
+
+
+def test_the_request_form_previews_a_default_concept_in_the_brand_typed_so_far():
+    from controller.app.ui import presets, preview_concept, render
+    preset = next(p for p in presets() if p["id"] == "enterprise-clean")
+    concept = preview_concept(preset, ["#E8590C", "#123456"], ["Inter"], ["Employee Management", "Shift Management"])
+    colors = concept.tokens.colors
+    assert colors["primary"] == "#E8590C" and colors["accent"] == "#123456" and colors["on_primary"] == "#111827"
+    assert concept.tokens.font_family.startswith("'Inter', ") and concept.navigation[0] == "Employee Management"
+    assert [s.name for s in concept.screens] == ["overview", "form", "sign-in", "empty"]
+    page = render(concept, concept.screens[0], "mobile", "Attendance")
+    assert "<script" not in page and "Attendance" in page and "Employee Management item 1" in page

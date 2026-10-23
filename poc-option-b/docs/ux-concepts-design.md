@@ -21,6 +21,13 @@ Khai báo khi tạo run SDS (khung **Brand and UX** trong New request); logo lư
 logo (file), màu chính/phụ (tuỳ chọn), font (tuỳ chọn), link Figma (tuỳ chọn), thiết bị đích (desktop, tablet,
 mobile, kiosk), mức accessibility (mặc định WCAG 2.2 AA), giọng điệu (trang trọng / thân thiện), ngôn ngữ giao diện.
 
+## Xem trước khi gửi yêu cầu SDS
+
+Khung Brand and UX có **Preview** (23/10, người dùng: "chỉ text thì không hình dung được, nhất là khi không có Figma"):
+`POST /api/ui/preview` vẽ preset với brand đang nhập (màu chính/phụ, chữ trên màu chính trắng hoặc gần đen tuỳ tương
+phản, font đặt trước stack của preset, logo dạng data URI) trên 4 màn hình mẫu có tên feature của SRS; kèm kiểm tra
+tương phản. Link Figma thì nhúng `figma.com/embed`. Không gọi AI.
+
 ## Concept mặc định của nền tảng (`ui-presets/`, cấu hình được, không cứng trong code)
 
 Mỗi preset là một bộ token (màu, chữ, spacing, radius, bóng), quy tắc component và một khung HTML mẫu:

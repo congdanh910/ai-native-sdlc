@@ -545,6 +545,50 @@ def redo_ui(run_id: uuid.UUID, body: Reason) -> dict:
     return _decide(run_id, lambda s, r: services.redo_ui(s, r, actor=operator(), reason=body.reason))
 
 
+class UiPreview(Body):
+    preset: str
+    colors: list[str] = []
+    fonts: list[str] = []
+    product: str = ""
+    project: str = ""  # its SRS features become the menu
+    logo: str = ""  # a data: URI of the logo being uploaded
+    device: Literal["desktop", "tablet", "mobile", "kiosk"] = "desktop"
+    screen: str = "overview"
+    accessibility: Literal["wcag-aa", "wcag-aaa", "none"] = "wcag-aa"
+
+
+@router.get("/ui/presets")
+def ui_presets() -> list[dict]:
+    """The platform's default UI concepts (ui-presets/)."""
+    from controller.app.ui import presets
+    return [{k: p[k] for k in ("id", "name", "best_for", "layout", "density") if k in p} for p in presets()]
+
+
+@router.post("/ui/preview")
+def ui_preview(body: UiPreview) -> dict:
+    """A default concept with the brand typed so far applied, on sample screens, for the SDS request form; no model is
+    asked. The HTML has no script and no external request; the page shows it in a sandboxed frame."""
+    from controller.app.project_docs import SRS_PATH
+    from controller.app.ui import HEX, PREVIEW_SCREENS, check, presets, preview_concept, render
+    preset = next((p for p in presets() if p["id"] == body.preset), None)
+    if preset is None:
+        raise HTTPException(404, f"no preset {body.preset}")
+    colors = [c.strip() for c in body.colors if HEX.fullmatch(c.strip())]
+    navigation: list[str] = []
+    if body.project:
+        with session_scope() as session:
+            project = session.scalar(select(Project).where(Project.key == body.project))
+            if project is not None and project.checked_commit:
+                from controller.app.project_docs import srs_features
+                srs = registry.mirror_for(project).read_file(project.checked_commit, SRS_PATH) or ""
+                navigation = [f.name for f in srs_features(srs)]
+    concept = preview_concept(preset, colors, [f.strip() for f in body.fonts if f.strip()], navigation)
+    screen = next((s for s in concept.screens if s.name == body.screen), concept.screens[0])
+    logo = body.logo if body.logo.startswith("data:image/") else ""
+    return {"html": render(concept, screen, body.device, body.product, logo), "screens": list(PREVIEW_SCREENS),
+            "checks": check(concept, body.accessibility), "ignored_colors": [c for c in body.colors if c.strip() not in colors]}
+
+
 @router.get("/runs/{run_id}/ui/{version}/{concept}/{screen}", response_class=HTMLResponse)
 def ui_prototype(run_id: uuid.UUID, version: int, concept: str, screen: str, device: str = "desktop") -> HTMLResponse:
     """One prototype screen of a UI concept, rendered by the controller; no script, shown in a sandboxed frame."""
