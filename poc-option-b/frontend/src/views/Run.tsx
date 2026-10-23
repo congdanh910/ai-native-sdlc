@@ -409,6 +409,7 @@ export function RunView({ id }: { id: string }) {
           {r.reason}
         </div>
       ) : null}
+      {r.main_sync && !TERMINAL.includes(r.status) ? <MainSync sync={r.main_sync} /> : null}
       {r.waiting_for?.length ? (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-warn bg-warn-soft p-3 text-sm">
           <span>Waits to code until {r.waiting_for.map((w, i) => <span key={w.run}>{i ? ", " : ""}<a href={`#/runs/${w.run}`}>{w.title}</a> ({w.status.replace(/_/g, " ").toLowerCase()})</span>)} finishes: they change the same files. It starts on its own afterwards.</span>
@@ -454,5 +455,22 @@ export function RunView({ id }: { id: string }) {
         <SidePanel run={r} />
       </div>
     </>
+  );
+}
+
+
+/** The last merge of the default branch into this run's branch: what the platform merged itself (its per-story files),
+ * what it left for the Developer, and what it checked on the merged code. */
+function MainSync({ sync }: { sync: NonNullable<RunDetail["main_sync"]> }) {
+  const bad = sync.problems.length > 0;
+  return (
+    <div className={`flex flex-col gap-1 rounded-xl border p-3 text-sm ${bad ? "border-warn bg-warn-soft" : "border-line bg-panel"}`}>
+      <div><b>Updated with the default branch</b> <span className="text-xs text-muted">main <Mono>{sync.main.slice(0, 12)}</Mono> merged as <Mono>{sync.commit.slice(0, 12)}</Mono>{sync.pushed ? "; pushed to the pull request" : ""}</span></div>
+      {sync.resolved.length ? <div className="text-xs text-ink-2">Merged by the platform (this story's sections put back into main's version): {sync.resolved.map((f) => <Mono key={f} className="mr-2">{f}</Mono>)}</div> : null}
+      {sync.validation ? <div className="text-xs text-ink-2">Validation of the merged code: {sync.validation.ok ? "passed" : "failed"}</div> : null}
+      {sync.notes.map((n) => <div key={n} className="text-xs text-warn">{n}</div>)}
+      {bad ? <ul className="m-0 pl-5 text-xs">{sync.problems.map((p) => <li key={p}>{p}</li>)}</ul> : null}
+      {bad ? <div className="text-xs text-muted">The Developer (and the QA Engineer for test files) resolves them in a task of its own; validation, review and acceptance run again.</div> : null}
+    </div>
   );
 }

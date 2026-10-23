@@ -434,9 +434,10 @@ def _files(session: Session, run: Run) -> set[str]:
         files.update(task.get("modify", []) + task.get("create", []))
     if run.worktree_path and run.base_commit:
         from pathlib import Path
+        from controller.app.coordinator import diff_base
         if Path(run.worktree_path).is_dir():
             try:
-                files.update(changes.changed_since(Path(run.worktree_path), run.base_commit))
+                files.update(changes.changed_since(Path(run.worktree_path), diff_base(session, run)))
             except Exception:  # a worktree being rebuilt: the plan's files still count
                 pass
     return {f for f in files if not f.startswith(PLATFORM_PATHS)}
@@ -478,11 +479,53 @@ def wait_reason(runs: list[Run]) -> str:
         " to finish before coding: they change the same files"
 
 
+def _busy(session: Session, run: Run) -> bool:
+    from controller.app.models import Execution
+    return session.scalar(select(Execution.id).where(Execution.run_id == run.id,
+                                                     Execution.status.in_(("queued", "running"))).limit(1)) is not None
+
+
+def sync_with_main(session: Session) -> list[str]:
+    """Queue a merge of the default branch into every open run's branch that waits at a gate and lacks main's latest
+    commit (delivery.update_with_main). The mirror is fetched first, so merges done outside the platform count."""
+    from pathlib import Path
+    from controller.app import coordinator, mainline
+    queued = []
+    states_ = [s.value for s in coordinator.SYNC_BEFORE_CODING + coordinator.SYNC_AFTER_CODING]
+    runs = session.scalars(select(Run).where(Run.kind.in_([RunKind.FEATURE, RunKind.FOUNDATION]),
+                                             Run.experiment.is_(False), Run.status.in_(states_),
+                                             Run.worktree_path.is_not(None))).all()
+    mains: dict = {}
+    for run in runs:
+        project = session.get(Project, run.project_id)
+        if project.id not in mains:
+            settings = delivery(project)
+            mains[project.id] = None
+            if settings is not None and settings.update_with_main:
+                mirror = mirror_for(project)
+                try:
+                    mirror.fetch()
+                    mains[project.id] = mirror.resolve(project.default_branch)
+                except Exception as exc:  # offline: the next poll tries again
+                    _note_failure(session, project, "main", f"fetching {project.default_branch} failed: {exc}"[:500])
+        main = mains[project.id]
+        if not main or not Path(run.worktree_path).is_dir() or _busy(session, run):
+            continue
+        if mainline.is_up_to_date(Path(run.worktree_path), main):
+            continue
+        coordinator.queue(session, run, "update_branch", key=f"main:{main}:{run.status}")
+        queued.append(f"run {str(run.id)[:8]}: merging {main[:12]} from {project.default_branch}")
+    return queued
+
+
 def release_waiting(session: Session) -> list[str]:
-    """Runs held at READY for other runs start coding once those runs are finished."""
+    """Runs held at READY for other runs start coding once those runs are finished, and once main (with what they
+    merged) is merged into their branch."""
     from controller.app import services
     released = []
     for run in session.scalars(select(Run).where(Run.status == RunStatus.READY).with_for_update(skip_locked=True)).all():
+        if _busy(session, run):
+            continue  # its update with main runs first
         if run.status_reason and run.status_reason.startswith("waits for ") and not waiting_on(session, run):
             services.start_coding(session, run, actor=AUTO_ACTOR, acting_role=None)
             released.append(f"run {str(run.id)[:8]} starts coding: the runs it waited for are finished")
@@ -490,5 +533,5 @@ def release_waiting(session: Session) -> list[str]:
 
 
 def tick(session: Session) -> list[str]:
-    """The worker's poll: release the runs that waited, then open the next stories."""
-    return release_waiting(session) + auto_start(session)
+    """The worker's poll: bring open branches up with main, release the runs that waited, open the next stories."""
+    return sync_with_main(session) + release_waiting(session) + auto_start(session)

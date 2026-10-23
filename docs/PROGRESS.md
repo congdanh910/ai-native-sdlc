@@ -11,7 +11,13 @@ Người dùng đang thử B1 (Propose order trên attendance). **B2 xong**: `de
 project.yaml, `backlog.tick` ở vòng poll của worker (nhả run chờ, mở story ready; mỗi story tự mở một lần),
 `SDLC_WORKER_CONCURRENCY` (slot 0 dọn dẹp và poll, slot khác chỉ chạy job), `jobs.claim` một job mỗi run (khoá hàng run),
 khoá chọn cổng preview, trùng file ở cổng plan (`overlaps`, `wait_for`, READY "waits for …", `stop-waiting`).
-**Tiếp theo**: B3 (`update_branch`, dựng lại tài liệu nền tảng, migration hai head, task Resolve conflicts).
+**B3 xong**: `controller/app/mainline.py` (gộp file nền tảng theo section, migration hai head, merge `main`),
+job `update_branch` ở các cổng (`delivery.update_with_main`), task Tn+1 "Resolve the conflicts with the default branch",
+`diff_base` cho các diff của run, `--first-parent` khi tìm commit của task, khung "Updated with the default branch".
+Sửa thêm: project check chạy lại setup trên checkout mới (attendance bị not ready, exit 127, a11fea2).
+Chưa làm: đánh lại số TC trùng giữa story (chỉ ghi chú), migration ngoài Alembic. Chưa chạy B2/B3 trên dự án thật.
+Test: 327 passed; `test_team_loop.py::test_a_code_task_whose_job_breaks_is_started_again_on_resume` chập chờn (fail 2
+trong khoảng 25 lần, chưa bắt lại được trong 12 lần chạy liên tiếp; chưa rõ có do khoá run khi nhận job của B2 không).
 
 Run List Employees `31d224b9`: ghi chú "đặt test vào `test.describe('EMP-US-02')`" bị gửi bằng Send defects, đối chiếu
 SDS coi là trái test case → NEEDS_HUMAN. Đã thêm lựa chọn **Run the acceptance tests again instead**; người dùng bấm để

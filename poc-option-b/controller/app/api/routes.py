@@ -853,7 +853,7 @@ def document_diff(run_id: uuid.UUID, kind: str, base: int, head: int) -> dict:
 def run_diff(run_id: uuid.UUID) -> dict:
     """The run's code change from its base commit (sources first, then tests, without the .sdlc thread)."""
     from pathlib import Path
-    from controller.app.coordinator import artifact
+    from controller.app.coordinator import artifact, diff_base
     from controller.app.doing import changes
     from controller.app.projects.config import EffectivePolicy
     with session_scope() as session:
@@ -864,6 +864,6 @@ def run_diff(run_id: uuid.UUID) -> dict:
             return {"diff": "", "files": []}
         policy = artifact(session, run.id, "effective_policy")
         test_paths = EffectivePolicy.model_validate_json(policy).test_paths if policy else []
-        diff = changes.run_diff(Path(run.worktree_path), run.base_commit, test_paths, 400_000)
+        diff = changes.run_diff(Path(run.worktree_path), diff_base(session, run), test_paths, 400_000)
     files = [line.split(" b/", 1)[1] for line in diff.splitlines() if line.startswith("diff --git ") and " b/" in line]
     return {"diff": diff, "files": files}

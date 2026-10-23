@@ -279,6 +279,7 @@ class Delivery(Strict):
     than max_open_runs are open. A story opens on its own only once; after a run that did not merge, a person starts it."""
     auto_start: bool = True
     max_open_runs: int = Field(default=2, ge=1, le=10)
+    update_with_main: bool = True  # merge the default branch into open runs' branches at their gates (B3)
 
 
 class Artifacts(Strict):

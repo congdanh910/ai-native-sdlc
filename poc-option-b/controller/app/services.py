@@ -777,20 +777,8 @@ def _add_fix_task(session: Session, run: Run, *, actor: str, who: str, reason: s
     re-running every task in order had the first one dispute what it could not change (attendance, AC-24). The QA
     Engineer first writes or updates the tests the defects break (a human's decision, so existing lines may change),
     then the Developer fixes the code; review and acceptance follow."""
-    tasks = coordinator.current_tasks(session, run)
-    files = sorted({f for t in tasks for f in t.payload.get("modify", []) + t.payload.get("create", [])})
-    criteria = sorted({c for t in tasks for c in t.payload.get("acceptance_criteria", [])})
-    number = max(int(t.external_task_id[1:]) for t in tasks) + 1
-    policy = coordinator.EffectivePolicy.model_validate_json(coordinator.artifact(session, run.id, "effective_policy"))
-    # any file of the allowed paths: a defect may sit in a module an earlier plan wrote, or need a new migration
-    payload = {"id": f"T{number}", "title": f"Fix the defects found by the {who}", "depends_on": [],
-               "modify": files + list(policy.allowed_paths), "create": list(policy.allowed_paths), "provides": [], "references": [], "acceptance_criteria": criteria,
-               "validation": [c.name for c in policy.validation], "defects": f"{who}: {reason}"}
-    session.add(Task(run_id=run.id, plan_id=tasks[0].plan_id, external_task_id=payload["id"], payload=payload,
-                     status=TaskStatus.READY.value))
-    session.flush()
-    record_event(session, "task.fix_added", actor=actor, run_id=run.id, payload={"task": payload["id"], "reason": reason})
-    coordinator.schedule_tasks(session, run)
+    coordinator.add_fix_task(session, run, actor=actor, title=f"Fix the defects found by the {who}",
+                             fields={"defects": f"{who}: {reason}"}, reason=reason)
 
 
 def preview_locked(run: Run, *, start: bool) -> str | None:

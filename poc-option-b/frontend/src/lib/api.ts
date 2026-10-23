@@ -264,6 +264,11 @@ export interface RunDetail extends RunSummary {
   } | null;
   // at the plan gate: open runs that change files this plan changes; the Tech Lead may let them finish first
   overlaps?: { run: string; title: string; status: string; files: string[] }[];
+  // the last merge of the default branch into the run's branch (B3)
+  main_sync?: {
+    main: string; commit: string; resolved: string[]; conflicts: string[]; migrations: string[]; notes: string[];
+    validation: { ok: boolean; detail: string } | null; pushed: string | null; problems: string[];
+  } | null;
   // at READY: the runs this run waits for before it codes
   waiting_for?: { run: string; title: string; status: string }[];
   // after a red check found a task's new tests passing before any code: what tells code already built from weak tests

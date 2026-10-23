@@ -189,7 +189,8 @@ def drop_commit(worktree: Path, subject_prefix: str) -> bool:
 
 def find_commit(worktree: Path, base: str, subject_prefix: str) -> str | None:
     """The newest commit since base whose subject starts with the prefix."""
-    for line in _git("log", "--format=%H %s", f"{base}..HEAD", cwd=worktree).splitlines():
+    # first parent: main merged into the branch (B3) brings other runs' commits with the same subjects (test(T1): ...)
+    for line in _git("log", "--first-parent", "--format=%H %s", f"{base}..HEAD", cwd=worktree).splitlines():
         sha, _, subject = line.partition(" ")
         if subject.startswith(subject_prefix):
             return sha
@@ -239,7 +240,8 @@ def commits_touching(worktree: Path, base: str, until: str, paths: list[str]) ->
     """The commits between base and until that changed any of these paths, newest first, with the paths."""
     if not paths:
         return []
-    out = _git("log", "--format=%x00%H%x09%s", "--name-only", f"{base}..{until}", "--", *paths, cwd=worktree)
+    out = _git("log", "--first-parent", "--format=%x00%H%x09%s", "--name-only", f"{base}..{until}", "--", *paths,
+               cwd=worktree)
     commits = []
     for block in out.split("\0")[1:]:
         head, *files = block.strip().splitlines()

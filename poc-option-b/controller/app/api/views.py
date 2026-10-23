@@ -10,7 +10,7 @@ from controller.app.models import (Approval, Artifact, Clarification, Document, 
                                    Run, Source, Task)
 from controller.app.project_docs import SRS_PATH, srs_features
 from controller.app.projects.registry import mirror_for
-from controller.app.coordinator import evaluate_gate
+from controller.app.coordinator import artifact, evaluate_gate
 from controller.app.services import needs_classification
 from controller.app.states import ACTIVE, STAGE_STARTER, WAITING_FOR, HumanRole, RunStatus
 
@@ -203,6 +203,7 @@ def run_detail(session: Session, run: Run) -> dict:
         "defect_check": _defect_check(session, run),
         "overlaps": _overlaps(session, run),
         "waiting_for": _waiting_for(session, run),
+        "main_sync": json.loads(artifact(session, run.id, "main_sync") or "null"),
     })
     return detail
 

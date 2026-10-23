@@ -53,7 +53,7 @@ delivery:
 - Nhiều worker là nhiều tiến trình (không phải thread): trạng thái tiến trình con (CLI, container của job) là toàn cục
   trong một tiến trình. Slot 0 dọn phần bị bỏ lại trước khi các slot khác chạy, rồi poll PR và backlog.
 
-## B3. Theo kịp `main`, xử lý xung đột
+## B3. Theo kịp `main`, xử lý xung đột (đã làm 23/10)
 
 - `main` mới (poll PR, project check) → mỗi run feature đang mở có nhánh nhận job `update_branch`, chạy giữa các task.
   Merge `main` vào nhánh (như Update branch của GitHub): không force-push, commit mà bằng chứng, preview, red check,
@@ -66,3 +66,13 @@ delivery:
   3. Code: task **Resolve conflicts with main** (Tn+1 như task sửa lỗi) với file xung đột và plan của story kia; qua
      validation, review, Acceptance. Không giải được thì NEEDS_HUMAN kèm danh sách xung đột.
 - Hai PR cùng mở: PR merge trước thắng, PR kia cập nhật như trên. Không bao giờ tự merge.
+
+Cách làm B3 (`controller/app/mainline.py`, job `update_branch`):
+- Chỉ merge khi run chờ ở cổng (Spec, Plan, Test cases, READY, QC, PR), không lúc đang code; mỗi run một job một lúc.
+- Gộp file nền tảng theo ba bản (base, nhánh, `main`): section nhánh không đổi so với base thì giữ bản `main`.
+- Xung đột code được commit cùng dấu xung đột trong một merge commit (để `main` thành tổ tiên của nhánh), task
+  Tn+1 giải: file test cho QA Engineer (Developer không được sửa test), code cho Developer.
+- Diff "run này đổi gì" (Diff, review, quét secret, phân tích sau code, mục "Other stories' sections") tính từ commit
+  `main` đã merge gần nhất; tìm commit của task dùng `--first-parent` để commit `test(T1):` của story khác không bị
+  nhận nhầm.
+- Chưa làm: đánh lại số TC trùng (chỉ ghi chú), migration của công cụ khác Alembic.

@@ -48,7 +48,7 @@ from controller.app.projects.repo import GitError, Worktree
 from controller.app.schemas import (PlanPayload, PlanTask, Review, Spec, TestPlan, parse_criteria, render_plan,
                                     render_review, render_spec)
 from controller.app.state_machine import transition_run, transition_task
-from controller.app.states import TERMINAL, RunKind, RunStatus, TaskStatus, TeamRole
+from controller.app.states import RUN_TRANSITIONS, TERMINAL, RunKind, RunStatus, TaskStatus, TeamRole
 from controller.app.team.base import ReleaseResult, RunContext, StepResult, Team
 from controller.app.team.tidy import tidy_plan, tidy_spec, tidy_tests
 
@@ -77,6 +77,8 @@ KINDS: dict[str, tuple[TeamRole, bool, RunStatus]] = {
     "advise": (TeamRole.CODE_REVIEWER, False, None),
     # A person's defect notes checked against the SDS before the fix task gets them.
     "check_defects": (TeamRole.CODE_REVIEWER, False, None),
+    # main merged into the run's branch at a gate (B3); it belongs to the stage the run waits in
+    "update_branch": (TeamRole.COORDINATOR, True, None),
 }
 
 DEFECTS_CONFLICT = "the defect notes conflict with the SDS or ask for what no code change can do"
@@ -212,6 +214,13 @@ def store_artifact(session: Session, run: Run, kind: str, role: TeamRole, conten
 def artifact(session: Session, run_id: uuid.UUID, kind: str) -> str | None:
     return session.scalar(select(Artifact.content).where(Artifact.run_id == run_id, Artifact.kind == kind)
                           .order_by(Artifact.created_at.desc()).limit(1))
+
+
+def diff_base(session: Session, run: Run) -> str | None:
+    """What this run's own changes are measured from: the default branch's commit last merged into the branch (B3),
+    else the commit the run started on. A plain diff from the start commit would count main's merged changes too."""
+    synced = json.loads(artifact(session, run.id, "main_sync") or "{}")
+    return synced.get("main") or run.base_commit
 
 
 def feature_ref(session: Session, run: Run) -> FeatureRef | None:
@@ -426,7 +435,8 @@ def _release_evidence(session: Session, run: Run) -> tuple[list[str], list[str]]
     if not run.worktree_path or not Path(run.worktree_path).is_dir() or not run.base_commit:
         return [], []
     import subprocess
-    diff = subprocess.run(["git", "-C", run.worktree_path, "diff", "--unified=0", run.base_commit, "HEAD"],
+    base = diff_base(session, run)
+    diff = subprocess.run(["git", "-C", run.worktree_path, "diff", "--unified=0", base, "HEAD"],
                           capture_output=True, text=True).stdout
     # Secrets are looked for in what ships: source and configuration. Test fixtures ("Secret123") and the story's
     # documents (examples in criteria) are data, so test paths, specs/ and the run thread are skipped.
@@ -445,7 +455,7 @@ def _release_evidence(session: Session, run: Run) -> tuple[list[str], list[str]]
         mirror = mirror_for(session.get(Project, run.project_id))
         worktree = worktree_for(session.get(Project, run.project_id), run)
         for name in ("spec.md", "plan.md", "test_cases.md", "checklists/requirements.md"):
-            before = mirror.read_file(run.base_commit, f"{ref.folder}/{name}") or ""
+            before = mirror.read_file(base, f"{ref.folder}/{name}") or ""
             after = worktree.read(f"{ref.folder}/{name}") or ""
             for story, text in _sections(before).items():
                 if story != ref.story_id and _sections(after).get(story) != text:
@@ -627,6 +637,8 @@ def load(session: Session, execution: Execution) -> Loaded:
         return loaded
     if execution.kind == "extract":
         return _load_extract(session, run, loaded)
+    if execution.kind == "update_branch":
+        return _load_update(session, run, loaded)
     plan = latest_plan(session, run.id)
     feedback: list[str] = []
     if (execution.kind == "plan" and plan and plan.author_kind == "ai" and plan.regenerated_from is None
@@ -675,7 +687,7 @@ def load(session: Session, execution: Execution) -> Loaded:
         loaded.plan = PlanPayload.model_validate(plan.payload)
         loaded.tests = TestPlan.model_validate(plan.test_plan)
     if execution.kind == "review" and not get_settings().coding_is_mocked and run.worktree_path:
-        loaded.extra["diff"] = changes.run_diff(Path(run.worktree_path), run.base_commit, loaded.context.policy.test_paths,
+        loaded.extra["diff"] = changes.run_diff(Path(run.worktree_path), diff_base(session, run), loaded.context.policy.test_paths,
                                                 get_settings().context_char_budget // 2)  # spec, plan and test plan need room too
         loaded.extra["validation"] = validation_summary(session, run)
     if execution.kind == "review":
@@ -804,6 +816,8 @@ def compute(team: Team, loaded: Loaded) -> dict:
         return _try_environment(loaded)
     if loaded.kind in ("preview", "preview_stop"):
         return _run_preview(loaded)
+    if loaded.kind == "update_branch":
+        return _update_branch(team, loaded)
     if loaded.kind == "acceptance":
         return _accept(team, loaded)
     if loaded.kind == "onboarding":
@@ -873,7 +887,10 @@ def _work_task(team: Team, loaded: Loaded) -> list[dict]:
     A failed red check goes back to the QA Engineer once with the result. Validation failures go back to the
     Developer with the failing output, at most limits.max_remediations times (.sdlc/project.yaml).
     """
-    task = PlanTask.model_validate({k: v for k, v in loaded.task_payload.items() if k != "defects"})  # a fix task's notes
+    task = PlanTask.model_validate({k: v for k, v in loaded.task_payload.items()
+                                    if k not in ("defects", "conflicts")})  # a fix task's notes
+    if loaded.task_payload.get("conflicts") and not loaded.extra.get("ruling"):
+        return _resolve_conflicts(team, loaded, task)
     context, tests = loaded.context, loaded.tests
 
     def step(state: TaskStatus, role: TeamRole, result: StepResult) -> dict:
@@ -961,7 +978,7 @@ def apply(session: Session, loaded: Loaded, result: dict, team: Team) -> None:
                "onboarding": _apply_onboarding, "environment": _apply_environment, "ui_concepts": _apply_ui_concepts,
                "preview": _apply_preview, "preview_stop": _apply_preview,
                "acceptance": _apply_acceptance, "advise": _apply_advice,
-               "check_defects": _apply_check_defects}[loaded.kind]
+               "check_defects": _apply_check_defects, "update_branch": _apply_update_branch}[loaded.kind]
     handler(session, run, execution, result, team)
     if execution.status == "running":
         finish(session, execution, "succeeded", result=result)
@@ -1756,7 +1773,7 @@ def record_analysis(session: Session, run: Run, stage: str) -> None:
                                              + [c.target_file for c in tests.cases], [])  # simulated coding changes nothing
         else:
             import subprocess
-            changed = subprocess.run(["git", "-C", run.worktree_path, "diff", "--name-only", run.base_commit, "HEAD"],
+            changed = subprocess.run(["git", "-C", run.worktree_path, "diff", "--name-only", diff_base(session, run), "HEAD"],
                                      capture_output=True, text=True).stdout.split()
             raw_policy = artifact(session, run.id, "effective_policy")
             test_paths = EffectivePolicy.model_validate_json(raw_policy).test_paths if raw_policy else []
@@ -2106,3 +2123,166 @@ def write_discovery_documents(session: Session, run: Run, config, names: dict[st
         if current is None or current.content != content:
             document = add_document(session, run.id, kind, content, author_kind="ai", author=COORDINATOR)
             document.commit_sha = commit_thread(session, run, kind, content, f"sdlc: {kind} v{document.version}")
+
+
+# ---------------------------------------------------------------- keeping up with the default branch (B3)
+
+# Where main is merged into a run's branch: a gate, never while a stage changes the worktree. Before coding the branch
+# holds documents only; after coding the merged code is validated, and tested again at the QC gate.
+SYNC_BEFORE_CODING = (RunStatus.WAITING_SPEC_APPROVAL, RunStatus.WAITING_PLAN_APPROVAL, RunStatus.WAITING_TEST_APPROVAL,
+                      RunStatus.READY)
+SYNC_AFTER_CODING = (RunStatus.WAITING_ACCEPTANCE_APPROVAL, RunStatus.WAITING_PR_APPROVAL)
+
+
+def add_fix_task(session: Session, run: Run, *, actor: str, title: str, fields: dict, reason: str) -> Task:
+    """One more task of the current plan that may change any file of the plan's tasks and of the allowed paths: for
+    a person's defects (fields: defects) or for what merging main left (fields: conflicts). The run codes again."""
+    tasks = current_tasks(session, run)
+    files = sorted({f for t in tasks for f in t.payload.get("modify", []) + t.payload.get("create", [])})
+    criteria = sorted({c for t in tasks for c in t.payload.get("acceptance_criteria", [])})
+    number = max(int(t.external_task_id[1:]) for t in tasks) + 1
+    policy = EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy"))
+    extra_files = sorted(set(fields.get("conflicts", {}).get("files", [])) - set(files))
+    # any file of the allowed paths: a defect may sit in a module an earlier plan wrote, or need a new migration
+    payload = {"id": f"T{number}", "title": title, "depends_on": [],
+               "modify": files + extra_files + list(policy.allowed_paths), "create": list(policy.allowed_paths),
+               "provides": [], "references": [], "acceptance_criteria": criteria,
+               "validation": [c.name for c in policy.validation], **fields}
+    task = Task(run_id=run.id, plan_id=tasks[0].plan_id, external_task_id=payload["id"], payload=payload,
+                status=TaskStatus.READY.value)
+    session.add(task)
+    session.flush()
+    record_event(session, "task.fix_added", actor=actor, run_id=run.id, payload={"task": payload["id"], "reason": reason})
+    schedule_tasks(session, run)
+    return task
+
+
+def _load_update(session: Session, run: Run, loaded: Loaded) -> Loaded:
+    project = session.get(Project, run.project_id)
+    ref = feature_ref(session, run)
+    tasks = current_tasks(session, run)
+    loaded.extra.update(worktree=run.worktree_path or "", main=mirror_for(project).resolve(project.default_branch),
+                        story=ref.story_id if ref else "", status=run.status, branch=run.branch,
+                        coded=run.status in SYNC_AFTER_CODING, task=tasks[-1].payload if tasks else None,
+                        slug=None if get_settings().coding_is_mocked else repo_slug(project.repo_url))
+    pull = session.scalar(select(PullRequest).where(PullRequest.run_id == run.id))
+    loaded.extra["pushed_pr"] = bool(pull and pull.number and not pull.simulated)
+    if loaded.extra["coded"]:
+        loaded.context = build_context(session, run, kind="update_branch")
+    return loaded
+
+
+def _update_branch(team: Team, loaded: Loaded) -> dict:
+    """Merge main; after coding, validate the merged code and (at the PR gate) push it to the open pull request."""
+    from controller.app import mainline
+    extra = loaded.extra
+    worktree = Path(extra["worktree"])
+    joblog.note(f"merging {extra['main'][:12]} from the default branch into {extra['branch']}")
+    merged = mainline.merge_main(worktree, extra["main"], extra["story"])
+    result: dict = {"merge": merged, "main": extra["main"]}
+    if merged["up_to_date"]:
+        joblog.note("the branch already contains it")
+        return result
+    joblog.note(f"merged as {merged['commit'][:12]}; platform files merged: {', '.join(merged['resolved']) or 'none'}; "
+                f"code conflicts: {', '.join(merged['conflicts']) or 'none'}; "
+                f"migrations: {'; '.join(merged['migrations']) or 'one head'}")
+    if extra["coded"] and extra["task"] and not merged["conflicts"] and not merged["migrations"]:
+        task = PlanTask.model_validate({k: v for k, v in extra["task"].items() if k not in ("defects", "conflicts")})
+        check = team.validate(loaded.context, task, attempt=1)
+        result["validation"] = {"ok": check.ok, "detail": check.detail,
+                                "failures": check.evidence.get("failures", "") if check.evidence else ""}
+        joblog.note(f"validation of the merged code: {check.detail[:300]}")
+        if check.ok and extra["status"] == RunStatus.WAITING_PR_APPROVAL and extra["slug"] and extra["pushed_pr"]:
+            github.push(worktree, extra["branch"])
+            result["pushed"] = merged["commit"]
+            joblog.note("pushed to the open pull request")
+    return result
+
+
+def _apply_update_branch(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    merged = result["merge"]
+    if merged["up_to_date"]:
+        return
+    validation = result.get("validation")
+    problems = ([f"code conflict in {f}" for f in merged["conflicts"]] + merged["migrations"]
+                + ([f"validation fails after the merge: {validation['detail'][:300]}"]
+                   if validation and not validation["ok"] else []))
+    store_artifact(session, run, "main_sync", TeamRole.COORDINATOR, json.dumps(
+        {"main": result["main"], "commit": merged["commit"], "resolved": merged["resolved"],
+         "conflicts": merged["conflicts"], "migrations": merged["migrations"], "notes": merged["notes"],
+         "validation": validation, "pushed": result.get("pushed"), "problems": problems}))
+    record_event(session, "branch.updated", actor=COORDINATOR, run_id=run.id,
+                 payload={"main": result["main"], "commit": merged["commit"], "problems": problems})
+    status = RunStatus(run.status)
+    if problems:
+        reason = f"main {result['main'][:12]} merged into the branch: " + "; ".join(problems)
+        if current_tasks(session, run) and RunStatus.CODING in RUN_TRANSITIONS[status] and status in SYNC_AFTER_CODING:
+            transition_run(session, run, RunStatus.CODING, actor=COORDINATOR, reason=reason)
+            add_fix_task(session, run, actor=COORDINATOR, title="Resolve the conflicts with the default branch",
+                         reason=reason, fields={"conflicts": {
+                             "main": result["main"], "files": merged["conflicts"], "migrations": merged["migrations"],
+                             "validation": (validation or {}).get("failures", "") if validation and not validation["ok"] else ""}})
+        elif RunStatus.NEEDS_HUMAN in RUN_TRANSITIONS[status]:
+            to_needs_human(session, run, reason)
+        return
+    if status == RunStatus.WAITING_ACCEPTANCE_APPROVAL:  # the evidence was about the code before the merge
+        transition_run(session, run, RunStatus.ACCEPTANCE_TESTING, actor=COORDINATOR,
+                       reason=f"main {result['main'][:12]} merged into the branch; the acceptance tests run again")
+        queue(session, run, "acceptance", key=f"main:{result['main']}")
+    elif status == RunStatus.WAITING_PR_APPROVAL and result.get("pushed"):
+        pull = session.scalar(select(PullRequest).where(PullRequest.run_id == run.id))
+        pull.head_sha, pull.ci_status = result["pushed"], "pending"  # the merge completes the run at this head
+
+
+def _resolve_conflicts(team: Team, loaded: Loaded, task: PlanTask) -> list[dict]:
+    """The task that finishes a merge of main: the QA Engineer resolves conflicts in test files, the Developer in
+    code, migrations and what validation found; no conflict marker may remain, then validation decides."""
+    from controller.app import mainline
+    context, tests = loaded.context, loaded.tests
+    found = loaded.task_payload["conflicts"]
+    worktree = Path(context.worktree)
+    test_files = [f for f in found["files"] if matches_any(f, context.policy.test_paths)]
+    code_files = [f for f in found["files"] if f not in test_files]
+    brief = (f"The default branch ({found['main'][:12]}) was merged into this branch; another story changed the same "
+             f"places. Keep what both sides need: this story's behaviour and the other story's. Remove every conflict "
+             f"marker (<<<<<<<, =======, >>>>>>>).")
+
+    def step(state: TaskStatus, role: TeamRole, result: StepResult) -> dict:
+        joblog.note(f"{task.id} {state.value} by {role.value}: {'ok' if result.ok else 'not ok'}; {result.detail[:300]}")
+        return {"state": state.value, "role": role.value, "ok": result.ok, "detail": result.detail,
+                "dispute": result.dispute, "changed_files": result.changed_files, "evidence": result.evidence}
+
+    if test_files:
+        steps = [step(TaskStatus.WRITING_TESTS, TeamRole.QA_ENGINEER, team.write_tests(
+            context, task, tests, amend=True, feedback=f"{brief}\nResolve the conflicts in these test files: "
+                                                         f"{', '.join(test_files)}"))]
+        if not steps[-1]["ok"]:
+            return steps
+    else:
+        steps = [step(TaskStatus.WRITING_TESTS, TeamRole.QA_ENGINEER, StepResult(True, "no test file in conflict"))]
+    steps.append(step(TaskStatus.RED_CHECK, TeamRole.VALIDATION_GATE,
+                      StepResult(True, "skipped: merging main adds no behaviour; the existing tests decide")))
+    asks = ([f"Resolve the conflicts in: {', '.join(code_files)}"] if code_files else []) + \
+        ([f"Migrations: {problem}" for problem in found.get("migrations", [])]) + \
+        ([f"Validation fails on the merged code:\n{found['validation']}"] if found.get("validation") else [])
+    if asks:
+        steps.append(step(TaskStatus.CODING, TeamRole.DEVELOPER,
+                          team.implement(context, task, 1, tests, feedback="\n".join([brief, *asks]))))
+    else:
+        steps.append(step(TaskStatus.CODING, TeamRole.DEVELOPER, StepResult(True, "no code conflict")))
+    for remediation in range(context.policy.max_remediations + 1):
+        if not steps[-1]["ok"] or steps[-1]["dispute"]:
+            return steps
+        left = mainline.markers_left(worktree, found["files"])
+        if left:
+            check = StepResult(False, f"conflict markers remain in {', '.join(left)}",
+                               evidence={"failures": f"conflict markers remain in {', '.join(left)}"})
+        else:
+            check = team.validate(context, task, attempt=remediation + 1)
+        steps.append(step(TaskStatus.VALIDATING, TeamRole.VALIDATION_GATE, check))
+        if steps[-1]["ok"] or remediation == context.policy.max_remediations:
+            return steps
+        failure = steps[-1]["evidence"].get("failures") or steps[-1]["detail"]
+        steps.append(step(TaskStatus.REMEDIATING, TeamRole.DEVELOPER,
+                          team.implement(context, task, remediation + 2, tests, feedback=f"{brief}\n{failure}")))
+    return steps
