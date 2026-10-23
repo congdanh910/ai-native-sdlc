@@ -146,6 +146,9 @@ def schedule_tasks(session: Session, run: Run) -> None:
             queue(session, run, "code_task", key=f"{task.plan_id}:{task.external_task_id}:a{task.attempt_count}", task=task)
 
 
+INFRASTRUCTURE_NEXT = ("Check Docker (Docker Desktop running, memory and disk: docker system df), then Resume: the task "
+                       "runs again and keeps the code and tests already committed. No code change is needed for this.")
+
 IN_PROGRESS = (TaskStatus.WRITING_TESTS, TaskStatus.RED_CHECK, TaskStatus.CODING, TaskStatus.VALIDATING,
                TaskStatus.REMEDIATING)
 
@@ -881,6 +884,23 @@ def compute(team: Team, loaded: Loaded) -> dict:
     return result
 
 
+def _validated(team: Team, context: RunContext, task: PlanTask, attempt: int, step) -> dict:
+    """Validation, run again when its environment broke (validation_infra_retries); a step that still could not judge
+    the code carries "infrastructure", so the task stops for a person instead of sending the Developer to fix it."""
+    from controller.app.doing.validation import infrastructure_problem
+    result = step(TaskStatus.VALIDATING, TeamRole.VALIDATION_GATE, team.validate(context, task, attempt=attempt))
+    for _ in range(get_settings().validation_infra_retries):
+        problem = "" if result["ok"] else infrastructure_problem((result["evidence"] or {}).get("reports", []))
+        if not problem:
+            return result
+        joblog.note(f"{task.id}: validation could not run ({problem}); running it again")
+        result = step(TaskStatus.VALIDATING, TeamRole.VALIDATION_GATE, team.validate(context, task, attempt=attempt))
+    problem = "" if result["ok"] else infrastructure_problem((result["evidence"] or {}).get("reports", []))
+    if problem:
+        result["infrastructure"] = problem
+    return result
+
+
 def _work_task(team: Team, loaded: Loaded) -> list[dict]:
     """QA Engineer writes tests, Validation Gate red-checks, Developer implements, Validation Gate validates.
 
@@ -923,7 +943,7 @@ def _work_task(team: Team, loaded: Loaded) -> list[dict]:
         steps.append(step(TaskStatus.RED_CHECK, TeamRole.VALIDATION_GATE,
                           StepResult(True, f"skipped; the new tests are regression guards ({note})")))
         steps.append(step(TaskStatus.CODING, TeamRole.DEVELOPER, StepResult(True, f"no code: {note}")))
-        steps.append(step(TaskStatus.VALIDATING, TeamRole.VALIDATION_GATE, team.validate(context, task, attempt=1)))
+        steps.append(_validated(team, context, task, 1, step))
         return steps
     steps.append(step(TaskStatus.RED_CHECK, TeamRole.VALIDATION_GATE, team.red_check(context, task, tests)))
     if not steps[-1]["ok"]:
@@ -947,9 +967,8 @@ def _work_task(team: Team, loaded: Loaded) -> list[dict]:
     for remediation in range(max_remediations + 1):
         if not steps[-1]["ok"] or steps[-1]["dispute"]:
             return steps
-        steps.append(step(TaskStatus.VALIDATING, TeamRole.VALIDATION_GATE,
-                          team.validate(context, task, attempt=remediation + 1)))
-        if steps[-1]["ok"] or remediation == max_remediations:
+        steps.append(_validated(team, context, task, remediation + 1, step))
+        if steps[-1]["ok"] or steps[-1].get("infrastructure") or remediation == max_remediations:
             return steps
         failure = steps[-1]["evidence"].get("failures") or steps[-1]["detail"]
         steps.append(step(TaskStatus.REMEDIATING, TeamRole.DEVELOPER,
@@ -1691,12 +1710,24 @@ def _apply_code_task(session: Session, run: Run, execution: Execution, result: d
     if last["state"] == TaskStatus.VALIDATING and last["ok"]:
         transition_task(session, task, TaskStatus.PASSED, actor=TeamRole.VALIDATION_GATE.value, reason="validation passed")
         schedule_tasks(session, run)
+    elif last.get("infrastructure"):  # the environment broke: nothing says the code is wrong
+        transition_task(session, task, TaskStatus.FAILED, actor=TeamRole.VALIDATION_GATE.value,
+                        reason=f"validation could not run: {last['infrastructure']}")
+        to_needs_human(session, run, f"{task.external_task_id}: validation could not run, so the code was not judged: "
+                                     f"{last['infrastructure']}. {INFRASTRUCTURE_NEXT}")
     else:
+        from controller.app.doing.validation import first_error
         transition_task(session, task, TaskStatus.FAILED, actor=TeamRole.VALIDATION_GATE.value,
                         reason="validation still failing after remediation")
         policy = EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy"))
+        reports = (last.get("evidence") or {}).get("reports", [])
+        failing = [r["name"] for r in reports if not r.get("ok")]
+        error = first_error(reports)
         to_needs_human(session, run, f"{task.external_task_id}: validation failed after {policy.max_remediations} "
-                                     "remediations")
+                                     f"remediations: {', '.join(failing) or last['detail'][:200]} still fail"
+                                     + (f"; first error: {error}" if error else "")
+                                     + ". The Code Reviewer's brief below weighs the code against the tests.")
+        queue_advice(session, run, task)
 
 
 def _apply_review(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
@@ -2277,10 +2308,10 @@ def _resolve_conflicts(team: Team, loaded: Loaded, task: PlanTask) -> list[dict]
         if left:
             check = StepResult(False, f"conflict markers remain in {', '.join(left)}",
                                evidence={"failures": f"conflict markers remain in {', '.join(left)}"})
+            steps.append(step(TaskStatus.VALIDATING, TeamRole.VALIDATION_GATE, check))
         else:
-            check = team.validate(context, task, attempt=remediation + 1)
-        steps.append(step(TaskStatus.VALIDATING, TeamRole.VALIDATION_GATE, check))
-        if steps[-1]["ok"] or remediation == context.policy.max_remediations:
+            steps.append(_validated(team, context, task, remediation + 1, step))
+        if steps[-1]["ok"] or steps[-1].get("infrastructure") or remediation == context.policy.max_remediations:
             return steps
         failure = steps[-1]["evidence"].get("failures") or steps[-1]["detail"]
         steps.append(step(TaskStatus.REMEDIATING, TeamRole.DEVELOPER,

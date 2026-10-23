@@ -350,7 +350,8 @@ def test_a_project_environment_builds_its_image_and_reaches_its_services(tmp_pat
     assert (repo / "setup.out").read_text() == "v1\n"
     (repo / "requirements.txt").write_text("v2\n")  # a changed dependency manifest runs setup again
     assert gate.run(["db"], "env2")[0].ok and (repo / "setup.out").read_text() == "v2\n"
-    left = subprocess.run(["docker", "network", "ls", "-q", "--filter", "name=sdlc-validate-net-"], capture_output=True,
+    from controller.app.doing.process import CONTAINER_PREFIX  # the tests' own prefix: a live run's network is not ours
+    left = subprocess.run(["docker", "network", "ls", "-q", "--filter", f"name={CONTAINER_PREFIX}net-"], capture_output=True,
                           text=True).stdout.split()
     assert left == []  # services and their network are removed
     image, _ = gate.image()
@@ -917,3 +918,15 @@ def test_only_the_story_s_own_acceptance_tests_prove_its_criteria(tmp_path):
     problems = coverage(["AC-01", "EC-06"], cases)
     assert problems == ["regression: AC-09 invalid credentials keep both fields failed (an acceptance test of an earlier story)",
                         "EC-06 has no acceptance test and no passing test of the coding"]  # the foundation's EC-06 is not this one
+
+
+def test_validation_tells_a_broken_environment_from_failing_code():
+    from controller.app.doing.validation import first_error, infrastructure_problem
+    service = {"name": "service-postgres", "ok": False, "exit_code": 1, "tail": "postgres was not ready after 60s"}
+    assert infrastructure_problem([service]).startswith("service postgres of the validation environment did not start")
+    dns = {"name": "backend-api", "ok": False, "exit_code": 1,
+           "tail": "psycopg.OperationalError: failed to resolve host 'postgres': Temporary failure in name resolution"}
+    assert "could not be reached" in infrastructure_problem([dns])
+    assert "exit 137" in infrastructure_problem([{"name": "backend-unit", "ok": False, "exit_code": 137, "tail": ""}])
+    code = {"name": "backend-unit", "ok": False, "exit_code": 1, "tail": "collected 3\nE   assert 404 == 200\nFAILED test_x"}
+    assert infrastructure_problem([code]) == "" and first_error([code]) == "backend-unit: E   assert 404 == 200"

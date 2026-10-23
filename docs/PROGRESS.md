@@ -51,7 +51,9 @@ Review → Acceptance → cổng QC → PR. Sau đó người dùng muốn chạ
 **Sau đó (22/10):** run Foundation attendance đã merge (người dùng). Đã làm UI/UX U1+U2 (7b6a25b, thiết kế `poc-option-b/docs/ux-concepts-design.md`): Brand and UX trong yêu cầu SDS, 3–5 concept UI có prototype do controller vẽ, cổng UI concept, `docs/ui/` vào PR của SDS, design system trong Foundation, mục UI ở cổng QC; U3 ở BACKLOG 3.19. Sửa thêm trong lúc chạy: task sửa lỗi sửa/tạo mọi file trong thư mục cho phép, ruling Keep giữ qua các lần chạy, file test do Developer tự viết bị bỏ, bộ test Acceptance viết lại khi tài khoản demo đổi, onboarding revision bắt đầu từ bản trước và Tech Lead tự sửa được file onboarding ở cổng, Back to onboarding lúc đang code quay lại code, Code Reviewer nhận quyết định của người và thông tin nền tảng, đối chiếu ghi chú lỗi với SDS. Tiếp theo: người dùng test các phần khác rồi reset attendance và chạy lại toàn bộ chuỗi.
 
 **Bài học vận hành:** không chạy bộ test nền tảng (có test Docker) khi run đang code: gây exit 137 và test Docker
-chập chờn (`test_a_project_environment_builds_its_image_and_reaches_its_services`).
+chập chờn (`test_a_project_environment_builds_its_image_and_reaches_its_services`). Nguyên nhân tìm ra 23/10:
+`kill_orphans()` trong test xoá mọi container `sdlc-validate-*` (kể cả của run thật) và một test kiểm mọi network có
+tiền tố đó; nay bộ test dùng tiền tố `sdlc-test-` (conftest). Vẫn nên tránh test Docker khi run code (bộ nhớ).
 
 ## Việc đang làm: Discovery (tài liệu thô → baseline → SRS và SDS)
 

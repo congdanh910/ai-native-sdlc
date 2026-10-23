@@ -66,6 +66,9 @@ class Settings(BaseSettings):
     # Worker and integrations. Per-project limits (session timeouts, retries, container) are in .sdlc/project.yaml.
     job_lease_seconds: int = Field(default=120, ge=10)  # a claimed job is renewed while it runs; expiry frees it
     job_max_attempts: int = Field(default=3, ge=1, le=10)  # retries of a job without side effects
+    # validation runs again this many times when its environment broke (a service down, a container gone, exit 137)
+    # before the task stops; the Developer is never asked to fix that
+    validation_infra_retries: int = Field(default=1, ge=0, le=5)
     job_retry_base_seconds: int = Field(default=10, ge=1)  # back-off doubles on each retry
     capacity_wait_seconds: int = Field(default=120, ge=5)  # GX10 busy: wait this long, then try again
     subscription_wait_seconds: int = Field(default=900, ge=60)  # a CLI subscription window is used up

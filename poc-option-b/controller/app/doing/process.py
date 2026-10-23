@@ -46,7 +46,9 @@ class ProcessResult:
 # Processes and containers of the running job, so a cancellation can stop them, and PID files so that a
 # restarted worker can stop sessions a crashed worker left behind.
 SESSIONS_DIR = DATA_DIR / "run" / "sessions"
-CONTAINER_PREFIX = "sdlc-validate-"
+# The platform's test suite sets its own prefix (controller/tests/conftest.py): cleaning up after a test must never
+# remove the containers of a run that validates at the same moment (Manage Positions T1, 23/10).
+CONTAINER_PREFIX = os.environ.get("SDLC_CONTAINER_PREFIX", "sdlc-validate-")
 _lock = threading.Lock()
 _active: dict[int, subprocess.Popen] = {}
 _containers: set[str] = set()

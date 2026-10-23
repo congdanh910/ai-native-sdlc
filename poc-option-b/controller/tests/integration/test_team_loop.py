@@ -551,3 +551,47 @@ def test_tests_that_already_pass_can_be_kept_as_guards_of_code_already_built(db,
             run = session.get(Run, run_id)
             run.status, run.status_reason = RunStatus.NEEDS_HUMAN, "something else"
             services.resume(session, run, actor=OPERATOR, decision="already_built", reason="x")
+
+
+class BrokenEnvironment(MockTeam):
+    """Validation whose services do not start the first `broken` times; counts the Developer's attempts."""
+    def __init__(self, broken: int):
+        self.broken, self.implemented = broken, 0
+
+    def implement(self, *args, **kwargs):
+        self.implemented += 1
+        return super().implement(*args, **kwargs)
+
+    def validate(self, context, task, attempt=1):
+        if self.broken:
+            self.broken -= 1
+            report = {"name": "service-postgres", "ok": False, "exit_code": 1, "seconds": 60.0, "timed_out": True,
+                      "log_path": "", "tail": "postgres was not ready after 60s\nError response from daemon: No such container"}
+            return StepResult(False, "service-postgres TIMED OUT", evidence={"reports": [report], "failures": report["tail"]})
+        return super().validate(context, task, attempt)
+
+
+def test_a_broken_validation_environment_is_tried_again_and_never_sent_to_the_developer(db, sample_repo):
+    run_id = new_run(add_project(sample_repo))
+    drain()
+    approve_spec(run_id)
+    drain()
+    approve_plan(run_id)
+    team = BrokenEnvironment(broken=1)  # down once, then up: the task passes with the Developer's first attempt
+    drain(team)
+    assert status(run_id) == RunStatus.WAITING_PR_APPROVAL and team.implemented == 2  # T1 and T2, no remediation
+
+
+def test_validation_that_cannot_run_stops_the_task_as_an_environment_problem(db, sample_repo):
+    run_id = new_run(add_project(sample_repo))
+    drain()
+    approve_spec(run_id)
+    drain()
+    approve_plan(run_id)
+    team = BrokenEnvironment(broken=10)
+    drain(team)
+    with session_scope() as session:
+        run = session.get(Run, run_id)
+        assert run.status == RunStatus.NEEDS_HUMAN and team.implemented == 1  # no remediation on a broken environment
+        assert "validation could not run, so the code was not judged: service postgres" in run.status_reason
+        assert "Resume" in run.status_reason

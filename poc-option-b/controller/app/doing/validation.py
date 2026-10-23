@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 import functools
 import hashlib
+import re
 from pathlib import Path
 import time
 import uuid
@@ -222,6 +223,44 @@ class ValidationGate:
 def summary(reports: list[CommandReport]) -> str:
     return "; ".join(f"{r.name} {'passed' if r.ok else 'TIMED OUT' if r.timed_out else f'failed (exit {r.exit_code})'}"
                      for r in reports)
+
+
+# Output that says the validation environment broke, not the code: the Developer cannot fix it
+INFRASTRUCTURE_SIGNS = (
+    ("Temporary failure in name resolution", "a service of the validation network could not be reached"),
+    ("No such container", "a container of the validation environment disappeared"),
+    ("Cannot connect to the Docker daemon", "Docker is not running"),
+    ("was not ready after", "a service did not get ready in time"),
+    ("no space left on device", "Docker has no disk space left"),
+)
+
+
+def infrastructure_problem(reports: list[dict]) -> str:
+    """Why validation could not judge the code (a service down, a container gone, out of memory), or ""."""
+    for report in reports:
+        if report.get("ok"):
+            continue
+        tail = report.get("tail") or ""
+        if str(report.get("name", "")).startswith("service-"):
+            line = next((l for l in reversed(tail.splitlines()) if l.strip()), "")
+            return f"service {report['name'][8:]} of the validation environment did not start ({line[:200]})"
+        if report.get("exit_code") == 137:
+            return f"{report['name']} was killed with exit 137 (Docker ran out of memory)"
+        for sign, meaning in INFRASTRUCTURE_SIGNS:
+            if sign.lower() in tail.lower():
+                return f"{report['name']}: {meaning} ({sign})"
+    return ""
+
+
+def first_error(reports: list[dict]) -> str:
+    """The first line of the failing output that names the error, for a person reading the stop."""
+    for report in reports:
+        if report.get("ok"):
+            continue
+        for line in (report.get("tail") or "").splitlines():
+            if re.search(r"Error|FAILED|assert|Traceback|error:|failed", line):
+                return f"{report['name']}: {line.strip()[:240]}"
+    return ""
 
 
 def failures(reports: list[CommandReport]) -> str:

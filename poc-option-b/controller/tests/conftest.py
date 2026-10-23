@@ -11,6 +11,7 @@ from controller.app.config import PROJECT_ROOT, Settings
 os.environ["SDLC_TEAM_MODE"] = "mock"
 os.environ["SDLC_DOING_MODE"] = "mock"
 os.environ["SDLC_ENGINES"] = ""  # never route a test to a real CLI
+os.environ["SDLC_CONTAINER_PREFIX"] = "sdlc-test-"  # never the containers of the platform's own runs
 
 TEST_DB = os.environ.get("SDLC_TEST_DATABASE_URL")
 if TEST_DB:
