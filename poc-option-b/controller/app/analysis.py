@@ -90,7 +90,10 @@ def before_coding(criteria: list[Criterion], plan: PlanPayload, tests: TestPlan)
 
 
 def after_coding(plan: PlanPayload, tests: TestPlan, statuses: dict[str, str], changed: list[str],
-                 test_paths: list[str], documents: tuple[str, ...] = ("specs/", ".sdlc/", "SRS.md", "SDS.md")) -> list[dict]:
+                 test_paths: list[str], documents: tuple[str, ...] = ("specs/", ".sdlc/", "SRS.md", "SDS.md"),
+                 also_allowed: list[str] = ()) -> list[dict]:
+    """also_allowed: what the tasks added after the plan may change (a fix task for a person's defects, the task that
+    resolves conflicts with main; their files are patterns of the allowed paths), so their changes are planned too."""
     findings = []
     for task in plan.tasks:
         status = statuses.get(task.id, "missing")
@@ -99,7 +102,8 @@ def after_coding(plan: PlanPayload, tests: TestPlan, statuses: dict[str, str], c
     planned = {p for t in plan.tasks for p in [*t.modify, *t.create]}
     test_files = {c.target_file for c in tests.cases}
     for path in changed:
-        if path.startswith(documents) or matches_any(path, test_paths) or path in planned or path in test_files:
+        if path.startswith(documents) or matches_any(path, test_paths) or path in planned or path in test_files \
+                or (also_allowed and matches_any(path, list(also_allowed))):
             continue
         findings.append(_finding("High", "scope", f"{path} changed but no task plans it"))
     untouched = sorted(planned - set(changed))

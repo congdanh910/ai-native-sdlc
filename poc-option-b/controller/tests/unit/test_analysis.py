@@ -47,3 +47,12 @@ def test_a_test_on_a_later_task_may_prove_what_its_dependency_built():
          "validation": ["u"]}])
     findings = analysis.before_coding(CRITERIA, layered, cases_of(("TC-1", "T2", "AC-01"), ("TC-2", "T2", "EC-01")))
     assert [f for f in findings if f["severity"] in analysis.BLOCKING] == []
+
+
+def test_files_a_fix_or_conflict_task_may_change_count_as_planned():
+    findings = analysis.after_coding(plan(("T1", ["AC-01"])), cases_of(("TC-1", "T1", "AC-01")), {"T1": "PASSED"},
+                                     ["src/tasks.js", "test/tasks.test.js", "src/a.js",
+                                      "backend/migrations/versions/0005_merge.py"], [],
+                                     also_allowed=["backend/**"])
+    assert [f["text"] for f in findings if f["category"] == "scope" and f["severity"] == "High"] == [
+        "src/a.js changed but no task plans it"]  # outside what the added task may change

@@ -1875,7 +1875,10 @@ def record_analysis(session: Session, run: Run, stage: str) -> None:
                                      capture_output=True, text=True).stdout.split()
             raw_policy = artifact(session, run.id, "effective_policy")
             test_paths = EffectivePolicy.model_validate_json(raw_policy).test_paths if raw_policy else []
-            findings = analysis.after_coding(payload, tests, statuses, changed, test_paths)
+            # tasks added after the plan (defects, conflicts with main) may change what their payload names
+            added = [p for t in current_tasks(session, run) if t.payload.get("defects") or t.payload.get("conflicts")
+                     for p in [*t.payload.get("modify", []), *t.payload.get("create", [])]]
+            findings = analysis.after_coding(payload, tests, statuses, changed, test_paths, also_allowed=added)
     document = add_document(session, run.id, "analysis", analysis.render(run.title, stage, findings), author_kind="ai",
                             author=TeamRole.COORDINATOR.value, data={"stage": stage, "findings": findings})
     document.commit_sha = commit_thread(session, run, f"analysis-{stage}", document.content,
