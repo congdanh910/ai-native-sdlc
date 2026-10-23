@@ -21,7 +21,8 @@ THINKING_ROLES = ("business_analyst", "tech_lead", "qa_analyst", "code_reviewer"
 DOING_ROLES = ("qa_engineer", "developer")
 THINKING_ENGINES = ("codex-readonly", "claude-readonly")
 DOING_ENGINES = ("codex", "claude")
-RESET_AT = re.compile(r"try again at (\d{1,2}):(\d{2})\s*([AP]M)?", re.IGNORECASE)
+# "try again at 7:44 PM" (Codex), "resets 7:40pm (Asia/Saigon)" (Claude)
+RESET_AT = re.compile(r"(?:try again at|resets(?: at)?)\s+(\d{1,2})(?::(\d{2}))?\s*([AP]M)?", re.IGNORECASE)
 
 
 def provider_of(engine: str) -> str:
@@ -74,7 +75,7 @@ def reset_time(message: str, now: datetime | None = None) -> datetime:
     now = now or datetime.now(timezone.utc)
     found = RESET_AT.search(message or "")
     if found:
-        hour, minute, half = int(found[1]), int(found[2]), (found[3] or "").upper()
+        hour, minute, half = int(found[1]), int(found[2] or 0), (found[3] or "").upper()
         hour = hour % 12 + (12 if half == "PM" else 0) if half else hour
         local = now.astimezone()
         at = local.replace(hour=hour, minute=minute, second=0, microsecond=0)

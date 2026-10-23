@@ -2,6 +2,13 @@
 
 _Cập nhật: 2026-10-23_
 
+## Tối 23/10: AI providers
+
+Trang AI providers (ffa9d6a): engine theo thứ tự cho từng vai, tự chuyển khi hết hạn mức, Mark available. **Theo yêu
+cầu người dùng, Claude đang tạm dừng cho SDLC**: mọi vai chỉ dùng Codex, fallback tắt (đổi lại trên trang AI providers).
+Codex hết hạn mức tới 22:12; Configure a Shift (f7c45031) T4 chờ Codex; Manage an Account (f662ce06) chờ duyệt plan.
+Departments và Positions đã merge (PR #12, #13).
+
 ## Chiều 23/10: chạy thật EMP-US-05/06 song song, sửa theo lỗi thật
 
 Hai run Manage Departments (e516e325) và Manage Positions (66736643) tự mở từ backlog. Sửa: ổ Docker đầy (tăng lên
