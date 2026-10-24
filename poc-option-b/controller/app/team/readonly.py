@@ -161,6 +161,10 @@ class ReadonlyTeam(LangflowTeam):
         self._in(context)  # reads SDS.md, SRS.md and the code the notes name
         return super().check_defects(context, notes)
 
+    def triage_regressions(self, context, failing):
+        self._in(context)  # reads the failing tests and the code the story changed
+        return super().triage_regressions(context, failing)
+
     def design_ui(self, context, brief):
         self._in(context)  # reads SRS.md and the repository
         return super().design_ui(context, brief)
@@ -295,6 +299,9 @@ class RoutingTeam:
 
     def check_defects(self, context, notes):
         return self._route(context, "code_reviewer", "check_defects", context, notes)
+
+    def triage_regressions(self, context, failing):
+        return self._route(context, "code_reviewer", "triage_regressions", context, failing)
 
     def design_ui(self, context, brief):  # the UX Designer reasons on the Tech Lead's engine, like the Architect
         return self._route(context, "tech_lead", "design_ui", context, brief)

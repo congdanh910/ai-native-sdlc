@@ -371,6 +371,23 @@ class DefectCheck(Contract):
     summary: str = ""
 
 
+class RegressionVerdict(Contract):
+    test: str = Field(min_length=1)  # the failing test's title
+    # outdated: it checks what this story changed on purpose (its spec or plan); broken: the story broke what it checks
+    verdict: Literal["outdated", "broken"]
+    evidence: list[str] = []  # the spec criterion, plan task, test line or code line that settles it
+    change: str = ""  # outdated: what the test must check now; broken: what the code broke
+
+
+class RegressionTriage(Contract):
+    """The acceptance tests of earlier stories that failed on this story's preview, each judged by the Code Reviewer:
+    a test outdated by an intended change is updated by the QA Engineer; a broken one is a defect for the QC."""
+    tests: list[RegressionVerdict] = Field(min_length=1)
+    confidence: Literal["high", "medium", "low"] = "low"
+    note: str = ""  # for the QA Engineer when tests are outdated: which assertions change to what, and what stays
+    summary: str = ""
+
+
 def render_review(title: str, review: Review, engine: str) -> str:
     rows = "\n".join(f"| {criterion} | {', '.join(cases) or 'none'} |" for criterion, cases in review.coverage.items())
     findings = "\n".join(f"- {f.severity.capitalize()}: {f.text}" + (f" (`{f.file}`)" if f.file else "")

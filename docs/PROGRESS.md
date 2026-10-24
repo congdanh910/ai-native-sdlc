@@ -10,7 +10,7 @@ Engineer nêu các thư mục đó; grounding + mục `test-run` ở cổng test
 file test thật đã commit); brief không đòi sửa file protected khi chuyển test là đủ. Đã restart và resume run. Server
 T2–T5 pass không cần người. T6 dừng sau 2 lần sửa (TC-36, TC-38 lỗi code; TC-44 test sai): sửa tiếp
 `failures()` đọc log đầy đủ hơn, brief nhận `failures`, quyết định amend_tests/keep_tests cho task fail validation
-(`failed_validation`), AI tự phân xử được. Server
+(`failed_validation`), AI tự phân xử được. Preview start luôn `down -v` trước (Acceptance lần 2 bị 429 vì database cũ). Test Acceptance của story trước fail được Code Reviewer phân loại (job `triage_regressions`, prompt `regression-triage.md`), test outdated thì tự cập nhật và chạy lại. Server
 GX10 (118.69.64.152) đã khảo sát chỉ đọc để deploy; người dùng tạm dừng việc deploy (cần quyết: tên thư mục thay
 `poc-option-b`, HTTPS với Caddy dùng chung, rootless Docker).
 

@@ -270,6 +270,7 @@ export interface RunDetail extends RunSummary {
   } | null;
   // technical disputes the Code Reviewer settled on its own (disputes.auto)
   auto_decisions?: { task: string; decision: string; reason: string; files: string[]; confidence: string; situation: string; stop: string; at: string }[];
+  regression_triage?: { tests: { test: string; verdict: "outdated" | "broken"; evidence: string[]; change: string }[]; confidence: string; note: string; summary: string } | null;
   // at the plan gate: open runs that change files this plan changes; the Tech Lead may let them finish first
   overlaps?: { run: string; title: string; status: string; files: string[] }[];
   // the last merge of the default branch into the run's branch (B3)

@@ -221,10 +221,32 @@ def run_detail(session: Session, run: Run) -> dict:
         "overlaps": _overlaps(session, run),
         "waiting_for": _waiting_for(session, run),
         "main_sync": json.loads(artifact(session, run.id, "main_sync") or "null"),
-        "auto_decisions": [{**(e.payload or {}), "at": e.created_at.isoformat()} for e in session.scalars(
-            select(Event).where(Event.run_id == run.id, Event.event_type == "dispute.auto_ruled").order_by(Event.id))],
+        "auto_decisions": [_auto_decision(e) for e in session.scalars(
+            select(Event).where(Event.run_id == run.id, Event.event_type.in_(("dispute.auto_ruled", "acceptance.auto_retest")))
+            .order_by(Event.id))],
+        "regression_triage": _regression_triage(session, run),
     })
     return detail
+
+
+def _auto_decision(event: Event) -> dict:
+    payload = dict(event.payload or {})
+    if event.event_type == "acceptance.auto_retest":  # earlier stories' tests this story outdated, updated without the QC
+        payload = {"task": "Acceptance", "decision": "update outdated tests", "reason": payload.get("note", ""),
+                   "confidence": payload.get("confidence", ""), "situation": payload.get("summary", ""),
+                   "files": [], "stop": ", ".join(payload.get("tests", []))}
+    return {**payload, "at": event.created_at.isoformat()}
+
+
+def _regression_triage(session: Session, run: Run) -> dict | None:
+    """The Code Reviewer's judgement of the earlier stories' tests that failed, for the QC's gate."""
+    from controller.app.coordinator import artifact
+    from controller.app.documents import latest_document
+    if run.status != "WAITING_ACCEPTANCE_APPROVAL":
+        return None
+    raw, document = artifact(session, run.id, "regression_triage"), latest_document(session, run.id, "acceptance")
+    stored = json.loads(raw) if raw else None
+    return stored["triage"] if stored and document and stored.get("document") == str(document.id) else None
 
 
 def _defect_check(session: Session, run: Run) -> dict | None:

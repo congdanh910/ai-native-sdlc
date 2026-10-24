@@ -40,7 +40,7 @@ def enqueue(session: Session, run: Run, kind: str, role: str, *, side_effects: b
 
 # Short jobs that change no code go first: a brief for the Tech Lead or a preview must not wait behind another run's
 # twenty-minute code task (Manage Departments, 23/10)
-QUICK_KINDS = ("advise", "check_defects", "preview", "preview_stop")
+QUICK_KINDS = ("advise", "check_defects", "triage_regressions", "preview", "preview_stop")
 
 
 def claim(session: Session, worker_id: str) -> Execution | None:

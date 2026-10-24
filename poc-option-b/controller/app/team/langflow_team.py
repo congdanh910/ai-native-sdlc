@@ -22,7 +22,7 @@ from controller.app.discovery.extract import Part, compact_items, repair_chunk, 
 from controller.app.discovery.inventory import ChunkResult, Consolidation, MinutesResult
 from controller.app.project_docs import SDS_PARTS, Options, Sds, Srs, sds_part_model, srs_features
 from controller.app.projects.config import matches_any, test_folders
-from controller.app.schemas import NOTES_HEADING, Advice, DefectCheck, Intent, Outcomes, PlanPayload, Review, Spec, TestPlan, parse_criteria
+from controller.app.schemas import NOTES_HEADING, Advice, DefectCheck, RegressionTriage, Intent, Outcomes, PlanPayload, Review, Spec, TestPlan, parse_criteria
 from controller.app.team import normalize
 from controller.app.team.base import CallRecord, CapacityBusy, RunContext
 from controller.app.team.mock import MockTeam
@@ -309,6 +309,13 @@ class LangflowTeam(MockTeam):
         payload = {"notes": notes, "spec": (context.spec_md or "").split(NOTES_HEADING)[0], "agents_md": context.agents_md}
         return self._ask("defect-check", payload, DefectCheck, normalize.defect_check, context.session_id,
                          retries=context.policy.max_format_retries)
+
+    def triage_regressions(self, context: RunContext, failing: dict) -> RegressionTriage:
+        """Each acceptance test of an earlier story that failed on this story's preview: outdated by an intended
+        change, or broken by the story."""
+        payload = {**failing, "spec": (context.spec_md or "").split(NOTES_HEADING)[0], "agents_md": context.agents_md}
+        return self._ask("regression-triage", payload, RegressionTriage, normalize.regression_triage,
+                         context.session_id, retries=context.policy.max_format_retries)
 
     # ------------------------------------------------------------ discovery
 

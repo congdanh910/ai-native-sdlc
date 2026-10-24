@@ -272,3 +272,58 @@ def test_the_qc_also_ticks_that_the_screens_follow_the_ui_concept(db, sample_rep
                                        checked=TICKS)
         services.decide_acceptance(session, run, actor=OPERATOR, decision="accept", document_id=report.id,
                                    checked=[*TICKS, "ui-concept"])
+
+
+def _with_regressions(monkeypatch, *errors):
+    """The mock acceptance run, plus earlier stories' tests failing with these errors until the QA Engineer is told
+    to update them."""
+    from controller.app import coordinator
+    accept = coordinator._accept
+
+    def run(team, loaded):
+        result = accept(team, loaded)
+        if result["ok"] and "update AC-17" not in loaded.extra.get("feedback", ""):
+            result["cases"] = result["cases"] + [
+                {"title": f"AC-17 earlier story check {n}", "criteria": [], "regression": True, "file": "e2e/access.spec.ts",
+                 "status": "failed", "error": error, "attachments": []} for n, error in enumerate(errors)]
+        return result
+    monkeypatch.setattr(coordinator, "_accept", run)
+
+
+def test_earlier_stories_tests_outdated_by_the_story_are_updated_without_the_qc(db, sample_repo, monkeypatch):
+    from sqlalchemy import select
+    from controller.app.models import Approval, Event
+    _with_regressions(monkeypatch, "OUTDATED: button 'Manage accounts' not found")
+    team = Recording()
+    with_preview(sample_repo)
+    run_id = new_run(add_project(sample_repo))
+    drain(team)
+    approve_spec(run_id)
+    drain(team)
+    approve_plan(run_id)
+    drain(team)
+    assert status(run_id) == RunStatus.WAITING_ACCEPTANCE_APPROVAL  # the second run passed: no problem left
+    assert any("update AC-17 earlier story check 0" in n for n in team.notes if n.startswith("acceptance: "))
+    with session_scope() as session:
+        assert latest_document(session, run_id, "acceptance").data["problems"] == []
+        retest = session.scalar(select(Approval).where(Approval.run_id == run_id, Approval.decision == "retest"))
+        assert retest.actor == "code_reviewer (auto)" and "Decided by the Code Reviewer" in retest.reason
+        assert session.scalar(select(Event).where(Event.run_id == run_id, Event.event_type == "acceptance.auto_retest"))
+
+
+def test_a_test_the_story_broke_goes_to_the_qc_with_the_judgement(db, sample_repo, monkeypatch):
+    from controller.app.api.views import _regression_triage
+    _with_regressions(monkeypatch, "Error: 500 Internal Server Error")
+    with_preview(sample_repo)
+    run_id = new_run(add_project(sample_repo))
+    drain()
+    approve_spec(run_id)
+    drain()
+    approve_plan(run_id)
+    drain()
+    assert status(run_id) == RunStatus.WAITING_ACCEPTANCE_APPROVAL
+    with session_scope() as session:
+        run = session.get(Run, run_id)
+        assert latest_document(session, run_id, "acceptance").data["problems"][0].startswith("regression: ")
+        triage = _regression_triage(session, run)
+        assert triage["tests"][0]["verdict"] == "broken" and triage["note"] == ""

@@ -10,7 +10,7 @@ import re
 
 from controller.app.project_docs import Sds, Srs, srs_features, srs_flows, srs_state_entities
 from controller.app.projects.config import matches_any
-from controller.app.schemas import (Advice, Criterion, DefectCheck, Intent, PlanPayload, PlanTask, Question, Review, Spec, TestCase,
+from controller.app.schemas import (Advice, Criterion, DefectCheck, RegressionTriage, Intent, PlanPayload, PlanTask, Question, Review, Spec, TestCase,
                                     TestPlan, parse_criteria)
 from controller.app.team.base import ReleaseResult, RunContext, StepResult
 
@@ -276,6 +276,14 @@ class MockTeam:
         verdict = "conflict" if "CONTRADICTS-SDS" in notes else "not_actionable" if "NO-CODE-CHANGE" in notes else "consistent"
         return DefectCheck(points=[{"point": notes[:200], "verdict": verdict, "evidence": ["SDS.md (mock)"]}],
                            summary=f"mock: {verdict}")
+
+    def triage_regressions(self, context, failing) -> RegressionTriage:
+        # tests choose the outcome: an error naming OUTDATED is a test the story changed on purpose
+        tests = [{"test": t["title"], "verdict": "outdated" if "OUTDATED" in t.get("error", "") else "broken",
+                  "evidence": ["mock"], "change": "check the new screen"} for t in failing["tests"]]
+        return RegressionTriage(tests=tests, confidence="high", summary="mock",
+                                note="; ".join(f"update {t['test']} to check the new screen" for t in tests
+                                               if t["verdict"] == "outdated"))
 
     def review(self, context, plan, tests, diff="", validation="") -> Review:
         coverage = {c.id: [case.id for case in tests.cases if case.criterion == c.id]

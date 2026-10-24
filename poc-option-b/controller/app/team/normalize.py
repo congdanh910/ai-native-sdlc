@@ -559,3 +559,20 @@ def ui_concepts(data: dict) -> dict:
         concepts.append(concept)
     data["concepts"] = concepts
     return data
+
+
+def regression_triage(data: dict) -> dict:
+    """Verdicts and confidence in loose spelling, evidence as one string."""
+    data = dict(data)
+    tests = []
+    for test in data.get("tests") or []:
+        if not isinstance(test, dict):
+            continue
+        verdict = str(test.get("verdict", "")).strip().lower().replace(" ", "_").replace("-", "_")
+        evidence = test.get("evidence") or []
+        tests.append({**test, "verdict": {"obsolete": "outdated", "stale": "outdated", "out_of_date": "outdated",
+                                          "regression": "broken", "defect": "broken"}.get(verdict, verdict),
+                      "evidence": [evidence] if isinstance(evidence, str) else evidence})
+    data["tests"] = tests
+    data["confidence"] = str(data.get("confidence") or "low").strip().lower()
+    return data

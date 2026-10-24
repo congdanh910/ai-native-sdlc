@@ -42,6 +42,9 @@ class CompositeTeam:
     def check_defects(self, *args, **kwargs):
         return self.thinking.check_defects(*args, **kwargs)
 
+    def triage_regressions(self, *args, **kwargs):
+        return self.thinking.triage_regressions(*args, **kwargs)
+
     def design_ui(self, *args, **kwargs):
         return self.thinking.design_ui(*args, **kwargs)
 

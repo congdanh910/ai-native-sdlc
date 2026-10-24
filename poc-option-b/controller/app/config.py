@@ -98,6 +98,8 @@ class Settings(BaseSettings):
     sdlc_preview_ports: str = "9100-9199"  # host ports a preview may take
     sdlc_logo_max_kb: int = 1024  # the customer's logo uploaded with an SDS request
     sdlc_defect_check_enabled: bool = True  # a person's defect notes are checked against the SDS (one model call)
+    # earlier stories' acceptance tests that fail are judged outdated or broken by the Code Reviewer (one model call)
+    sdlc_regression_triage_enabled: bool = True
     sdlc_advice_enabled: bool = True  # the Code Reviewer briefs the Tech Lead when a task stops (one model call)
     # comma-separated folders, besides the worktree and the tools on PATH, that an AI CLI session may read (macOS:
     # the command line tools that git and python3 need, and the OpenSSL configuration node reads)

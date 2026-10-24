@@ -77,6 +77,8 @@ KINDS: dict[str, tuple[TeamRole, bool, RunStatus]] = {
     "advise": (TeamRole.CODE_REVIEWER, False, None),
     # A person's defect notes checked against the SDS before the fix task gets them.
     "check_defects": (TeamRole.CODE_REVIEWER, False, None),
+    # earlier stories' acceptance tests that failed on the preview, judged before the QC's gate
+    "triage_regressions": (TeamRole.CODE_REVIEWER, False, RunStatus.ACCEPTANCE_TESTING),
     # main merged into the run's branch at a gate (B3); it belongs to the stage the run waits in
     "update_branch": (TeamRole.COORDINATOR, True, None),
 }
@@ -750,6 +752,8 @@ def load(session: Session, execution: Execution) -> Loaded:
                               "accessibility": brief.brand.accessibility or policy.ui.accessibility}
     if execution.kind == "check_defects":
         loaded.extra["defects"] = json.loads(artifact(session, run.id, "pending_defects"))
+    if execution.kind == "triage_regressions":
+        _load_regressions(session, run, loaded)
     if execution.kind == "code_task":
         # what the QC (acceptance) or the Code Owner (pull request) asked since the last review: the Developer's notes
         last_review = latest_document(session, run.id, "review")
@@ -809,6 +813,30 @@ def _load_advice(session: Session, run: Run, loaded: Loaded, task: Task) -> None
                  "acceptance_criteria": task.payload.get("acceptance_criteria", [])},
         "test_cases": cases, "steps": steps, "failures": failures, "earlier_commits": earlier,
         "rulings": [{k: r.get(k) for k in ("task", "decision", "reason", "dispute")} for r in rulings]}
+
+
+def _load_regressions(session: Session, run: Run, loaded: Loaded) -> None:
+    """The earlier stories' acceptance tests that failed, with what this story set out to change."""
+    document = latest_document(session, run.id, "acceptance")
+    cases = [c for c in document.data.get("cases", []) if c.get("regression") and c["status"] not in ("passed", "skipped")]
+    plan = latest_plan(session, run.id)
+    changed: list[str] = []
+    base = diff_base(session, run)
+    if run.worktree_path and base:
+        try:
+            changed = changes.changed_since(Path(run.worktree_path), base)
+        except GitError:
+            pass
+    story = (loaded.context.story or {}) if loaded.context else {}
+    loaded.extra["regressions"] = {
+        "document": str(document.id),
+        "story": {"id": story.get("story_id", ""), "title": run.title},
+        "tests": [{"title": c["title"], "file": c.get("file", ""), "error": (c.get("error") or "")[:1500]}
+                  for c in cases],
+        "changed_files": changed[:200],
+        "plan": [{"title": t.get("title"), "files": t.get("modify", []) + t.get("create", []),
+                  "acceptance_criteria": t.get("acceptance_criteria", [])} for t in (plan.payload or {}).get("tasks", [])]
+        if plan else []}
 
 
 def _ruling_of_plan(session: Session, run: Run, task: Task) -> bool:
@@ -903,6 +931,12 @@ def compute(team: Team, loaded: Loaded) -> dict:
         joblog.note("Code Reviewer checks the defect notes against the SDS")
         check = team.check_defects(context, loaded.extra["defects"]["reason"])
         result = {"check": check.model_dump(), "defects": loaded.extra["defects"]}
+        record()
+    elif loaded.kind == "triage_regressions":
+        joblog.note("Code Reviewer judges the earlier stories' acceptance tests that failed")
+        failing = {k: v for k, v in loaded.extra["regressions"].items() if k != "document"}
+        result = {"triage": team.triage_regressions(context, failing).model_dump(),
+                  "document": loaded.extra["regressions"]["document"]}
         record()
     elif loaded.kind == "advise":
         joblog.note("Code Reviewer prepares the Tech Lead's brief on the stopped task")
@@ -1037,7 +1071,8 @@ def apply(session: Session, loaded: Loaded, result: dict, team: Team) -> None:
                "onboarding": _apply_onboarding, "environment": _apply_environment, "ui_concepts": _apply_ui_concepts,
                "preview": _apply_preview, "preview_stop": _apply_preview,
                "acceptance": _apply_acceptance, "advise": _apply_advice,
-               "check_defects": _apply_check_defects, "update_branch": _apply_update_branch}[loaded.kind]
+               "check_defects": _apply_check_defects, "update_branch": _apply_update_branch,
+               "triage_regressions": _apply_triage}[loaded.kind]
     handler(session, run, execution, result, team)
     if execution.status == "running":
         finish(session, execution, "succeeded", result=result)
@@ -1561,9 +1596,45 @@ def _apply_acceptance(session: Session, run: Run, execution: Execution, result: 
                        reason=f"every criterion passed on the preview ({len(result['cases'])} test(s))")
         queue(session, run, "release")
         return
+    if any(p.startswith(REGRESSION) for p in problems) and get_settings().sdlc_regression_triage_enabled:
+        queue(session, run, "triage_regressions", key=f"triage:{document.id}")  # the run waits in acceptance
+        return
     transition_run(session, run, RunStatus.WAITING_ACCEPTANCE_APPROVAL, actor=TeamRole.QA_ENGINEER.value,
                    reason=f"{len(result['cases'])} acceptance test(s); " + ("all criteria passed" if not problems
                                                                           else f"{len(problems)} problem(s)"))
+
+
+REGRESSION = "regression: "
+
+
+def _apply_triage(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    """Every failure an earlier story's test, each outdated by this story's intended change, judged with high
+    confidence: the QA Engineer updates those tests and they run again, without the QC (disputes.auto, at most
+    disputes.max_auto_per_task times a run). Otherwise the QC's gate, with the judgement and its note."""
+    from controller.app.services import QC, _approval
+    triage = result["triage"]
+    store_artifact(session, run, "regression_triage", TeamRole.CODE_REVIEWER,
+                   json.dumps({"document": result["document"], "triage": triage, "engine": result.get("_engine")}))
+    document = latest_document(session, run.id, "acceptance")
+    problems = document.data.get("problems", [])
+    policy = EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy"))
+    taken = session.scalar(select(func.count()).select_from(Event).where(
+        Event.run_id == run.id, Event.event_type == "acceptance.auto_retest"))
+    outdated = [t for t in triage["tests"] if t["verdict"] == "outdated"]
+    if (policy.disputes.auto and str(document.id) == result["document"] and problems
+            and all(p.startswith(REGRESSION) for p in problems) and len(outdated) == len(triage["tests"])
+            and CONFIDENCE.get(triage.get("confidence"), 0) >= CONFIDENCE[policy.disputes.min_confidence]
+            and triage.get("note") and taken < policy.disputes.max_auto_per_task):
+        note = f"Decided by the Code Reviewer on its own: {triage['note']}"
+        _approval(session, run, "acceptance", "retest", AUTO_ACTOR, QC, reason=note)
+        record_event(session, "acceptance.auto_retest", actor=AUTO_ACTOR, run_id=run.id,
+                     payload={"tests": [t["test"] for t in outdated], "note": triage["note"],
+                              "confidence": triage.get("confidence"), "summary": triage.get("summary", "")})
+        # the run stays in acceptance: the QA Engineer updates those tests and they all run again
+        queue(session, run, "acceptance", key=f"auto-retest:{result['document']}")
+        return
+    transition_run(session, run, RunStatus.WAITING_ACCEPTANCE_APPROVAL, actor=TeamRole.QA_ENGINEER.value,
+                   reason=f"{len(document.data.get('cases', []))} acceptance test(s); {len(problems)} problem(s)")
 
 
 def expire_previews(session: Session) -> int:

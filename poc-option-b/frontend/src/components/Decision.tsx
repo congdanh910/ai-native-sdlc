@@ -141,6 +141,7 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
         <p className="m-0 text-sm text-muted">The QA Engineer's end-to-end tests ran against the story's preview. Try the story yourself with the demo accounts, check the evidence of every criterion, then accept it (the pull request opens) or send the defects back to the Developer.</p>
         <PreviewBox run={run} onChange={onDone} />
         <AcceptanceReport run={run} doc={report} />
+        {run.regression_triage ? <RegressionTriage triage={run.regression_triage} onUse={setReason} /> : null}
         {checklist}
         <Reason value={reason} onChange={setReason} placeholder="Defects: what you did, what you saw, what you expected. Or what is wrong with the tests, to have them written again" />
         <div className="flex flex-wrap gap-2">
@@ -695,5 +696,31 @@ function UiConceptPanel({ run, doc, checklist, checked, post }: {
         <ActionButton variant="danger" disabled={!reason.trim()} action={() => post("ui/redo", { reason })}>Ask for other concepts</ActionButton>
       </div>
     </Panel>
+  );
+}
+
+
+function RegressionTriage({ triage, onUse }: { triage: NonNullable<RunDetail["regression_triage"]>; onUse: (note: string) => void }) {
+  return (
+    <div className="rounded-lg border border-line p-3 text-sm">
+      <div className="font-semibold">Earlier stories' tests that failed, judged by the Code Reviewer <span className="text-xs font-normal text-muted">({triage.confidence} confidence)</span></div>
+      {triage.summary ? <p className="m-0 mt-1 text-ink-2">{triage.summary}</p> : null}
+      <ul className="m-0 mt-2 flex list-none flex-col gap-2 p-0">
+        {triage.tests.map((t) => (
+          <li key={t.test} className="rounded border border-line p-2">
+            <div className="flex flex-wrap items-center gap-2"><Badge tone={t.verdict === "outdated" ? "accent" : "bad"}>{t.verdict === "outdated" ? "test outdated by this story" : "broken by this story"}</Badge><span>{t.test}</span></div>
+            {t.change ? <p className="m-0 mt-1">{t.change}</p> : null}
+            {t.evidence.length ? <ul className="m-0 mt-1 pl-4 text-xs text-muted">{t.evidence.map((e, i) => <li key={i}>{e}</li>)}</ul> : null}
+          </li>
+        ))}
+      </ul>
+      {triage.note ? (
+        <div className="mt-2 flex flex-col gap-1">
+          <p className="m-0 text-xs text-muted">Note for the QA Engineer (outdated tests are updated, everything else stays):</p>
+          <p className="m-0 whitespace-pre-wrap rounded bg-panel p-2">{triage.note}</p>
+          <div><Button onClick={() => onUse(triage.note)}>Use this note, then Run the tests again</Button></div>
+        </div>
+      ) : null}
+    </div>
   );
 }
