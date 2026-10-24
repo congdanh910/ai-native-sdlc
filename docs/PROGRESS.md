@@ -65,6 +65,9 @@ T1, T2 pass. T3 khiếu nại: test `_grant` dùng `:code` cho hai cột khác k
 `cross_location_*` (cần file mới). Code Reviewer chỉ chọn được một quyết định nên hỏi người. Sửa (c47e1e4): `amend_tests`
 kèm `files` = QA sửa test và task được sửa thêm file cùng lúc (`_allow_files(decision=...)`, prompt advice, nút "Allow
 these files and let QA update the tests"). Đã áp dụng cho T3 với `0010_cross_location_grants.py`.
+T3 vẫn fail: Developer để migration 0010 rỗng vì seed quyền làm `validate_role_grants` (domain/access.py, ngoài file của
+task) từ chối. Code Reviewer: replan (high, không cần người). Sửa (0486c36): `replan` vào AUTO_DECISIONS khi cổng plan
+gated (người vẫn duyệt plan mới). Run 0e3654aa đang PLANNING theo brief đó.
 
 ## 24/10: test không được validation chạy
 
