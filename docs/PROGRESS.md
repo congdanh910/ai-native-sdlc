@@ -57,6 +57,10 @@ sạch, chờ QC duyệt test case.
 Sau khi duyệt test case: T1 (đã làm ở plan trước, không có test case mới) dừng "wrote no test" vì nền tảng vẫn bắt QA
 viết test. Sửa: task không có test case nào của plan thì bỏ qua viết test và red check, Developer code rồi validation
 quyết (`_code_and_validate`); Developer không phải đổi gì ở lần đầu thì "no change", validation quyết.
+Tiếp đó T1 fail validation vì `backend/tests/api/test_scoped_storage.py` do QA viết cho T2 của plan v4 (chưa từng pass)
+còn trên nhánh qua 3 lần replan. Sửa: khi duyệt test case của plan mới, `coordinator.drop_unfinished_tests` xoá các file
+test mà commit test(Tn) đã thêm cho task chưa từng PASSED (`changes.unfinished_test_files`, event `tests.dropped`). Run
+0e3654aa đã dọn file đó và resume.
 
 ## 24/10: test không được validation chạy
 
