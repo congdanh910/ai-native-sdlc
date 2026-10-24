@@ -492,6 +492,9 @@ def resume(session: Session, run: Run, *, actor: str, decision: str, reason: str
         coordinator_replan(session, run, actor=actor, reason=reason)
         return
     if decision in ("amend_tests", "keep_tests"):
+        if decision == "amend_tests" and files:  # the tests change and the plan forgot files: both at once
+            _allow_files(session, run, actor=actor, reason=reason, files=files, decision="amend_tests")
+            return
         _rule_on_dispute(session, run, actor=actor, decision=decision, reason=reason)
         return
     if decision == "allow_files":
@@ -574,7 +577,8 @@ def _rule_on_dispute(session: Session, run: Run, *, actor: str, decision: str, r
     coordinator.schedule_tasks(session, run)
 
 
-def _allow_files(session: Session, run: Run, *, actor: str, reason: str, files: list[str]) -> None:
+def _allow_files(session: Session, run: Run, *, actor: str, reason: str, files: list[str],
+                 decision: str = "keep_tests") -> None:
     """The Developer disputes because a file the work needs is outside the task's files (a plan that forgot it): the
     Tech Lead lets the task change these files too, inside the project's allowed paths and never a test file; the
     tests stand. Quicker than a replan for one missing file (Manage Departments T2, 23/10)."""
@@ -598,8 +602,9 @@ def _allow_files(session: Session, run: Run, *, actor: str, reason: str, files: 
     task.payload = payload
     record_event(session, "task.files_allowed", actor=actor, acting_role=TL, run_id=run.id,
                  payload={"task": task.external_task_id, "files": files, "reason": reason})
-    _rule_on_dispute(session, run, actor=actor, decision="keep_tests",
-                     reason=f"The Tech Lead allows this task to change {', '.join(files)} as well; the tests stand. {reason}")
+    stand = "the QA Engineer updates the tests as decided" if decision == "amend_tests" else "the tests stand"
+    _rule_on_dispute(session, run, actor=actor, decision=decision,
+                     reason=f"The Tech Lead allows this task to change {', '.join(files)} as well; {stand}. {reason}")
 
 
 ALREADY_PASS = "already pass before the implementation"

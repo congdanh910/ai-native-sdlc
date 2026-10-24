@@ -626,6 +626,20 @@ def test_a_file_the_plan_forgot_can_be_allowed_and_the_tests_stand(db, sample_re
     assert status(run_id) == RunStatus.CODING
 
 
+def test_a_wrong_test_and_a_forgotten_file_are_decided_at_once(db, sample_repo):
+    from controller.app.coordinator import artifact
+    run_id = _to_coding(sample_repo)
+    drain(DisputingDeveloper())
+    with session_scope() as session:
+        services.resume(session, services.get_run(session, run_id), actor=OPERATOR, decision="amend_tests",
+                        reason="the fixture reuses one parameter for two column types; the seed needs a migration",
+                        files=["src/store.js"])
+        task = session.scalar(select(Task).where(Task.run_id == run_id, Task.external_task_id == "T1"))
+        assert task.status == "READY" and "src/store.js" in task.payload["modify"]
+        ruling = json.loads(artifact(session, run_id, "ruling:T1"))
+        assert ruling["decision"] == "amend_tests" and "the QA Engineer updates the tests" in ruling["reason"]
+
+
 class ConfidentReviewer(DisputingDeveloper):
     """Disputes every time; the brief settles it with high confidence (or raises a reason for a person)."""
     def __init__(self, decision="keep_tests", needs_human="", files=()):

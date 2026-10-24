@@ -388,6 +388,8 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
                 aria-label="Files the task may change too" onChange={(e) => setAllowFiles(e.target.value)} />
               <ActionButton disabled={!allowFiles.trim() || !reason.trim()} title="The task may change these files too (inside the allowed paths, never a test file); the tests stand and the Developer tries again"
                 action={() => post("resume", { decision: "allow_files", reason, files: allowFiles.split(/[\s,]+/).filter(Boolean) })}>Allow these files, keep the tests</ActionButton>
+              <ActionButton disabled={!allowFiles.trim() || !reason.trim()} title="The QA Engineer updates the tests as your reason says, and the task may change these files too: both fixes at once"
+                action={() => post("resume", { decision: "amend_tests", reason, files: allowFiles.split(/[\s,]+/).filter(Boolean) })}>Allow these files and let QA update the tests</ActionButton>
             </div>
           </div>
         ) : null}
