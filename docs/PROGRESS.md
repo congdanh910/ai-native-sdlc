@@ -61,6 +61,10 @@ Tiếp đó T1 fail validation vì `backend/tests/api/test_scoped_storage.py` do
 còn trên nhánh qua 3 lần replan. Sửa: khi duyệt test case của plan mới, `coordinator.drop_unfinished_tests` xoá các file
 test mà commit test(Tn) đã thêm cho task chưa từng PASSED (`changes.unfinished_test_files`, event `tests.dropped`). Run
 0e3654aa đã dọn file đó và resume.
+T1, T2 pass. T3 khiếu nại: test `_grant` dùng `:code` cho hai cột khác kiểu (lỗi test) và plan quên migration seed quyền
+`cross_location_*` (cần file mới). Code Reviewer chỉ chọn được một quyết định nên hỏi người. Sửa (c47e1e4): `amend_tests`
+kèm `files` = QA sửa test và task được sửa thêm file cùng lúc (`_allow_files(decision=...)`, prompt advice, nút "Allow
+these files and let QA update the tests"). Đã áp dụng cho T3 với `0010_cross_location_grants.py`.
 
 ## 24/10: test không được validation chạy
 
