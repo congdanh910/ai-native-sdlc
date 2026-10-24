@@ -15,6 +15,14 @@ lần kia khi đang tạo venv (ensurepip exit 1) và để lại thư mục kh�
 "is not a working tree". Sửa: `registry.checking()` khoá theo project (fcntl, a65a311); `_remove_checkout` xoá thư mục
 sót (a6ca59c). Check again 15:53: ready. Worker cần restart (khi không có job chạy) để poller dùng khoá.
 
+Gốc của lỗi setup bị che: lệnh setup do Architect viết lúc onboarding là `sh -ec "...; then python -m venv x && pip
+install ...; fi; ..."`; dưới `sh -e` lệnh trước `&&` fail thì script vẫn chạy tiếp và trả exit 0, nền tảng ghi
+`setup.done` và mọi validation sau đó fail khó hiểu (23/10 exit 127 cũng vậy). Sửa cho mọi dự án (6f381ae):
+`config.masked_failure` chặn trong `setup`, `setup` của từng lệnh và `environment.lock` mọi lệnh đứng trước `&&` (trừ
+điều kiện `[ ... ]`, `test`, `command -v`) và script nhiều lệnh không có `-e`; onboarding sai thì Architect nhận lý do và
+làm lại; prompt onboarding yêu cầu `sh -ec` với `;`. Attendance: PR #17 (setup và ci.yml dùng `;`, thêm
+`SESSION_COOKIE_SECURE: 'false'` vào ci.yml) đã merge, CI xanh lần đầu từ Foundation.
+
 ## 24/10: test không được validation chạy
 
 Manage an Account (f662ce06) T2 dừng vì test ở `backend/tests/integration/` (không lệnh nào chạy) bị coi là "pass sẵn".
