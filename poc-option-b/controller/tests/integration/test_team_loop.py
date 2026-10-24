@@ -685,3 +685,34 @@ def test_while_the_code_reviewer_settles_a_dispute_nobody_is_asked(db, sample_re
         assert all(item["id"] != str(run_id) for item in inbox(session))
     run_once(team, worker_id="test")  # the brief: decided on its own
     assert status(run_id) == RunStatus.CODING
+
+
+def test_a_task_the_plan_gives_no_test_case_is_coded_and_validated_without_tests(db, sample_repo):
+    from controller.app.models import Task
+    from controller.app.schemas import TestPlan
+
+    class NoCasesOnT1(MockTeam):
+        """T1's case proves its criterion through T2, which runs on top of it (an earlier plan built T1)."""
+        def __init__(self):
+            self.wrote = []
+
+        def design_tests(self, context, plan):
+            tests = super().design_tests(context, plan)
+            return TestPlan.model_validate({**tests.model_dump(), "cases": [
+                {**c.model_dump(), "task_id": "T2"} if c.task_id == "T1" else c.model_dump() for c in tests.cases]})
+
+        def write_tests(self, context, task, tests, feedback="", amend=False):
+            self.wrote.append(task.id)
+            return super().write_tests(context, task, tests, feedback=feedback, amend=amend)
+
+    team = NoCasesOnT1()
+    run_id = new_run(add_project(sample_repo))
+    drain(team)
+    approve_spec(run_id)
+    drain(team)
+    approve_plan(run_id)
+    drain(team)
+    assert "T1" not in team.wrote and status(run_id) not in ("NEEDS_HUMAN", "FAILED")
+    with session_scope() as session:
+        t1 = session.scalar(select(Task).where(Task.run_id == run_id, Task.external_task_id == "T1"))
+        assert t1.status == "PASSED"

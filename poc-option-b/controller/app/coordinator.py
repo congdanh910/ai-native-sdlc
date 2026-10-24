@@ -991,6 +991,14 @@ def _work_task(team: Team, loaded: Loaded) -> list[dict]:
                 "dispute": result.dispute, "changed_files": result.changed_files, "evidence": result.evidence}
 
     ruling = loaded.extra.get("ruling")
+    if not any(c.task_id == task.id for c in tests.cases) and not loaded.task_payload.get("defects") and not ruling:
+        # no test case of the plan is this task's (a task an earlier plan already built, its tests kept as regression
+        # guards; a scaffold): nothing for the QA Engineer to write or the red check to see fail (Manage Employees
+        # Across Locations T1, 24/10: "wrote no test" twice, then a stop)
+        steps = [step(TaskStatus.WRITING_TESTS, TeamRole.QA_ENGINEER,
+                      StepResult(True, "skipped: the plan gives this task no test case; validation decides")),
+                 step(TaskStatus.RED_CHECK, TeamRole.VALIDATION_GATE, StepResult(True, "skipped: no new test"))]
+        return _code_and_validate(team, context, task, tests, steps, step)
     if loaded.task_payload.get("defects") and not ruling:  # a fix task: the tests of the defects come first
         first = team.write_tests(context, task, tests, amend=True,
                                  feedback=f"Defects a human found after every task passed; write or update the tests "
@@ -1037,7 +1045,13 @@ def _work_task(team: Team, loaded: Loaded) -> list[dict]:
     elif loaded.extra.get("changes"):  # sent back from the acceptance gate or the pull request
         upheld = "\n".join(["Changes asked after the review; make them where they concern this task:",
                              *loaded.extra["changes"], upheld]).strip()
-    steps.append(step(TaskStatus.CODING, TeamRole.DEVELOPER, team.implement(context, task, 1, tests, feedback=upheld)))
+    return _code_and_validate(team, context, task, tests, steps, step, upheld)
+
+
+def _code_and_validate(team: Team, context: RunContext, task: PlanTask, tests, steps: list[dict], step,
+                       feedback: str = "") -> list[dict]:
+    """The Developer codes, validation decides; a failure goes back to the Developer at most max_remediations times."""
+    steps.append(step(TaskStatus.CODING, TeamRole.DEVELOPER, team.implement(context, task, 1, tests, feedback=feedback)))
     max_remediations = context.policy.max_remediations
     for remediation in range(max_remediations + 1):
         if not steps[-1]["ok"] or steps[-1]["dispute"]:

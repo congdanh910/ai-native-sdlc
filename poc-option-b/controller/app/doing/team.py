@@ -319,6 +319,9 @@ class CliDoing:
         if earlier:  # resumed after a failure outside the code: the earlier implementation stands, validation decides
             return StepResult(True, f"no change: the implementation committed in {earlier[:10]} stays "
                                     f"({result.executor}, attempt {attempt})", evidence=self._evidence(result, label))
+        if not staged and attempt == 1:  # the branch already does what the task asks (an earlier plan built it)
+            return StepResult(True, f"no change: the code already does what {task.id} asks; validation decides "
+                                    f"({result.executor})", evidence=self._evidence(result, label))
         # tests are the QA Engineer's: test files the Developer wrote anyway (AGENTS.md often asks for tests with every
         # change) are dropped, the code stays and the QA Engineer's tests decide; changing them is a dispute
         own_tests = [c.path for c in staged if c.status == "A" and matches_any(c.path, context.policy.test_paths)]

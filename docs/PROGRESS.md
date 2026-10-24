@@ -54,6 +54,9 @@ của T4 nhưng plan chỉ gán cho T5). Cách sửa là nút Amend (thêm tiêu
 `coordinator._amend_forgotten_criteria` khi vào cổng test case, nếu mọi lỗi chặn đều sửa được bằng amend thì controller
 tự thêm hết trong một phiên bản plan (`services.amend_criteria`, event `plan.auto_amended`). Run 0e3654aa: plan v7, cổng
 sạch, chờ QC duyệt test case.
+Sau khi duyệt test case: T1 (đã làm ở plan trước, không có test case mới) dừng "wrote no test" vì nền tảng vẫn bắt QA
+viết test. Sửa: task không có test case nào của plan thì bỏ qua viết test và red check, Developer code rồi validation
+quyết (`_code_and_validate`); Developer không phải đổi gì ở lần đầu thì "no change", validation quyết.
 
 ## 24/10: test không được validation chạy
 
