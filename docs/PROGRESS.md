@@ -9,6 +9,12 @@ ghi hạn mức đã là 13:48:06 nên `providers.reset_time` cộng thêm một
 gần nhất (hôm qua/hôm nay/mai); mốc vừa trôi qua thì thử lại sau `subscription_wait_seconds`. Đã restart worker, Mark
 available cho Codex; T11 chạy lại lúc 15:42.
 
+Project attendance "not ready" (validation: setup exit 1): lúc 10:36 hai lần kiểm tra project (gỡ tay run 91b0c8c8 và
+poller khi PR #16 merge) chạy cùng lúc trên cùng checkout `.data/checks/attendance/<commit>`; lần này xoá worktree của
+lần kia khi đang tạo venv (ensurepip exit 1) và để lại thư mục không còn là worktree, nên mọi Check again sau đó lỗi 500
+"is not a working tree". Sửa: `registry.checking()` khoá theo project (fcntl, a65a311); `_remove_checkout` xoá thư mục
+sót (a6ca59c). Check again 15:53: ready. Worker cần restart (khi không có job chạy) để poller dùng khoá.
+
 ## 24/10: test không được validation chạy
 
 Manage an Account (f662ce06) T2 dừng vì test ở `backend/tests/integration/` (không lệnh nào chạy) bị coi là "pass sẵn".
