@@ -381,3 +381,26 @@ def test_review_findings_the_sds_contradicts_are_dropped_without_a_person(db, sa
     approve_plan(run_id)
     drain(team)
     assert status(run_id) == RunStatus.WAITING_ACCEPTANCE_APPROVAL and team.reviews == 1 and _fix_tasks(run_id) == []
+
+
+def test_earlier_stories_tests_the_story_broke_go_to_a_fix_task_before_the_qc(db, sample_repo, monkeypatch):
+    from sqlalchemy import select
+    from controller.app.models import Event
+    _with_regressions(monkeypatch, "Error: expected 200, received 500")
+    with_preview(sample_repo)
+    _sds(sample_repo)
+    team = Recording()  # the mock judges a test broken unless its error names OUTDATED
+    run_id = new_run(add_project(sample_repo))
+    drain(team)
+    approve_spec(run_id)
+    drain(team)
+    approve_plan(run_id)
+    drain(team)
+    fixes = _fix_tasks(run_id)
+    assert len(fixes) >= 1 and "AC-17 earlier story check 0 (an earlier story's acceptance test) fails" in fixes[0]
+    assert "expected 200, received 500" in fixes[0]
+    with session_scope() as session:
+        sent = session.scalars(select(Event).where(Event.run_id == run_id,
+                                                   Event.event_type == "acceptance.regressions_sent")).all()
+    assert 1 <= len(sent) <= 2  # disputes.max_auto_per_task, then the QC decides
+    assert status(run_id) == RunStatus.WAITING_ACCEPTANCE_APPROVAL

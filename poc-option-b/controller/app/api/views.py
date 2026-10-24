@@ -222,7 +222,8 @@ def run_detail(session: Session, run: Run) -> dict:
         "waiting_for": _waiting_for(session, run),
         "main_sync": json.loads(artifact(session, run.id, "main_sync") or "null"),
         "auto_decisions": [_auto_decision(e) for e in session.scalars(
-            select(Event).where(Event.run_id == run.id, Event.event_type.in_(("dispute.auto_ruled", "acceptance.auto_retest", "review.findings_sent")))
+            select(Event).where(Event.run_id == run.id, Event.event_type.in_(("dispute.auto_ruled", "acceptance.auto_retest", "review.findings_sent",
+                                                  "acceptance.regressions_sent")))
             .order_by(Event.id))],
         "regression_triage": _regression_triage(session, run),
     })
@@ -241,6 +242,11 @@ def _auto_decision(event: Event) -> dict:
                    "reason": "\n".join(f"{n}. {text}" for n, text in enumerate(found, 1)), "files": [],
                    "situation": f"Round {payload.get('round', 1)}: {len(found)} important finding(s) go to the "
                                 "Developer, checked against the SDS first", "stop": ""}
+    if event.event_type == "acceptance.regressions_sent":  # earlier stories' tests the story broke, to a fix task
+        tests = payload.get("tests", [])
+        payload = {"task": "Acceptance", "decision": "fix what the story broke", "confidence": "", "files": [],
+                   "reason": "\n".join(f"{n}. {t}" for n, t in enumerate(tests, 1)), "stop": "",
+                   "situation": payload.get("summary", "") or f"{len(tests)} earlier stories' test(s) broken"}
     return {**payload, "at": event.created_at.isoformat()}
 
 

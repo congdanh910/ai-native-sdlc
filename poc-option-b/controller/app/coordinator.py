@@ -1088,11 +1088,11 @@ def _apply_check_defects(session: Session, run: Run, execution: Execution, resul
     if run.status != RunStatus.CODING:
         return
     conflicts = [p for p in check["points"] if p["verdict"] in ("conflict", "not_actionable")]
-    if conflicts and defects["who"] == REVIEW_WHO:  # the team's own findings: the SDS wins, no person is asked
+    if conflicts and defects["who"] in (REVIEW_WHO, REGRESSION_WHO):  # the team's own findings: the SDS wins
         kept = [p for p in check["points"] if p not in conflicts]
         if not kept:
             transition_run(session, run, RunStatus.REVIEWING, actor=TeamRole.CODE_REVIEWER.value,
-                           reason="the SDS contradicts every important review finding; none is fixed")
+                           reason=f"the SDS contradicts every finding of the {defects['who']}; none is fixed")
             after_review(session, run, "concerns")
             return
         defects = {**defects, "reason": defects["reason"] + "\n\nThe SDS check found these do not hold; leave them: "
@@ -1642,8 +1642,37 @@ def _apply_triage(session: Session, run: Run, execution: Execution, result: dict
         # the run stays in acceptance: the QA Engineer updates those tests and they all run again
         queue(session, run, "acceptance", key=f"auto-retest:{result['document']}")
         return
+    if _send_broken_regressions(session, run, document, triage, policy):
+        return
     transition_run(session, run, RunStatus.WAITING_ACCEPTANCE_APPROVAL, actor=TeamRole.QA_ENGINEER.value,
                    reason=f"{len(document.data.get('cases', []))} acceptance test(s); {len(problems)} problem(s)")
+
+
+REGRESSION_WHO = "Code Reviewer (earlier stories' acceptance tests)"
+
+
+def _send_broken_regressions(session: Session, run: Run, document: Document, triage: dict, policy) -> bool:
+    """Earlier stories' tests this story broke go to a fix task with the failures, before the QC sees them
+    (disputes.auto, at most disputes.max_auto_per_task times a run); the outdated ones are judged again after it."""
+    from controller.app.services import _send_defects
+    broken = [t for t in triage["tests"] if t["verdict"] == "broken"]
+    sent = session.scalar(select(func.count()).select_from(Event).where(
+        Event.run_id == run.id, Event.event_type == "acceptance.regressions_sent"))
+    if not broken or not policy.disputes.auto or sent >= policy.disputes.max_auto_per_task \
+            or run.kind not in (RunKind.FEATURE, RunKind.FOUNDATION):
+        return False
+    errors = {c["title"]: (c.get("error") or "").strip() for c in document.data.get("cases", [])}
+    notes = "\n".join(f"{n}. {t['test']} (an earlier story's acceptance test) fails on this story's code: {t['change']}"
+                      + (f"\n   Error: {errors[t['test']][:400]}" if errors.get(t["test"]) else "")
+                      for n, t in enumerate(broken, 1))
+    record_event(session, "acceptance.regressions_sent", actor=AUTO_ACTOR, run_id=run.id,
+                 payload={"round": sent + 1, "tests": [t["test"] for t in broken], "summary": triage.get("summary", "")})
+    transition_run(session, run, RunStatus.CODING, actor=TeamRole.CODE_REVIEWER.value,
+                   reason=f"this story broke {len(broken)} earlier stories' acceptance test(s); the Developer fixes "
+                          "the code before the QC's gate")
+    _send_defects(session, run, actor=AUTO_ACTOR, who=REGRESSION_WHO,
+                  reason=(triage.get("summary", "") + "\n" + notes).strip())
+    return True
 
 
 def expire_previews(session: Session) -> int:
