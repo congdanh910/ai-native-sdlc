@@ -14,6 +14,11 @@ T2–T5 pass không cần người. T6 dừng sau 2 lần sửa (TC-36, TC-38 l�
 GX10 (118.69.64.152) đã khảo sát chỉ đọc để deploy; người dùng tạm dừng việc deploy (cần quyết: tên thư mục thay
 `poc-option-b`, HTTPS với Caddy dùng chung, rootless Docker).
 
+**Trạng thái lúc bàn giao (24/10):** Manage an Account (f662ce06) đang CODING T11 (sửa lỗi 500 "session timestamps must
+be ordered" do T10 gây ra, làm 34–36 test Acceptance cũ fail); test QA đã viết, red check đỏ, Developer chờ Codex hết
+hạn mức (13:48) rồi tự chạy lại. Prompt Developer/QA Engineer giờ cấm tự dựng database/server/container (328ce0d).
+Worker đã restart với prompt mới. Tiếp theo: theo dõi run → review → acceptance → triage → cổng QC.
+
 ## Tối 23/10: AI providers
 
 Trang AI providers (ffa9d6a): engine theo thứ tự cho từng vai, tự chuyển khi hết hạn mức, Mark available. **Theo yêu
