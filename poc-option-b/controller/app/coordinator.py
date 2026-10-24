@@ -834,6 +834,7 @@ def _load_regressions(session: Session, run: Run, loaded: Loaded) -> None:
         "tests": [{"title": c["title"], "file": c.get("file", ""), "error": (c.get("error") or "")[:1500]}
                   for c in cases],
         "changed_files": changed[:200],
+        "server_errors": document.data.get("server_errors", []),
         "plan": [{"title": t.get("title"), "files": t.get("modify", []) + t.get("create", []),
                   "acceptance_criteria": t.get("acceptance_criteria", [])} for t in (plan.payload or {}).get("tasks", [])]
         if plan else []}
@@ -1569,6 +1570,9 @@ def _accept(team: Team, loaded: Loaded) -> dict:
             ran, cases = run_tests()
     if not ran["ok"]:
         return {**result, "ok": False, "detail": ran["detail"]}
+    if any(c["status"] != "passed" for c in cases):  # the tests see a 500; the traceback behind it is in the logs
+        result["server_errors"] = preview.server_errors(run_id, get_settings().server_error_chars)
+        joblog.note(f"{len(result['server_errors'])} distinct error(s) in the preview's logs")
     return {**result, "ok": True, "cases": cases, "detail": ran["detail"]}
 
 
@@ -1595,10 +1599,14 @@ def _apply_acceptance(session: Session, run: Run, execution: Execution, result: 
     proven = proven_by_tests(session, run)
     content = render_acceptance(run.title, result["criteria"], result["cases"], url,
                                 f"/api/runs/{run.id}/evidence/{result['attempt']}", proven)
+    if result.get("server_errors"):
+        content += "\n## Errors the application logged during the tests\n\n" + "\n\n".join(
+            f"```\n{error}\n```" for error in result["server_errors"]) + "\n"
     problems = coverage(list(result["criteria"]), result["cases"], proven)
     document = add_document(session, run.id, "acceptance", content, author_kind="ai", author=TeamRole.QA_ENGINEER.value,
                             data={"cases": result["cases"], "criteria": result["criteria"], "attempt": result["attempt"],
-                                  "url": url, "problems": problems, "tests": result["tests"], "proven": proven})
+                                  "url": url, "problems": problems, "tests": result["tests"], "proven": proven,
+                                  "server_errors": result.get("server_errors", [])})
     document.commit_sha = commit_thread(session, run, "acceptance", content, "sdlc: acceptance report")
     if stage_mode(run, "acceptance") == "auto" and not problems:
         transition_run(session, run, RunStatus.PR_OPEN, actor=TeamRole.QA_ENGINEER.value,

@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import fcntl
 import json
+import re
 from pathlib import Path
 import socket
 import time
@@ -146,6 +147,49 @@ def _failed_services(run_id: str, worktree: Path, preview: Preview, override: Pa
                                         service["Service"]), timeout=60)
             failed.append((f"{service['Service']} (exit {service['ExitCode']})", logs.tail(15)))
     return failed
+
+
+# the start of an error the application logged: a Python traceback, a Node or Java exception, a log line at ERROR
+ERROR_START = re.compile(r"^(Traceback \(most recent call last\):|\S*(Error|Exception)\b.*|.*\b(ERROR|FATAL|panic)\b.*)")
+
+
+def server_errors(run_id: str, budget: int) -> list[str]:
+    """The distinct errors the preview's services logged (a traceback behind a 500): the acceptance tests only see
+    the status code, and the code's own tests call one request at a time (attendance 24/10: concurrent requests of
+    one page raised "session timestamps must be ordered"; two fix tasks with only "Received: 500" missed it)."""
+    project = ["docker", "compose", "-p", project_name(run_id)]
+    listed = run_bounded([*project, "ps", "-a", "--services"], timeout=60)
+    blocks: list[list[str]] = []
+    for service in listed.output.split() if listed.ok else []:  # one service at a time: interleaved lines cut tracebacks
+        logs = run_bounded([*project, "logs", "--no-color", "--no-log-prefix", service], timeout=120)
+        if logs.ok:
+            blocks += _error_blocks(logs.output)
+    fullest: dict[str, list[str]] = {}  # one per error; the log's start may be cut, so the longest copy wins
+    for block in blocks:
+        # a traceback is named by its exception line; a cut one is that line alone; timestamps and ids do not count
+        key = re.sub(r"[\d:.\-\[\]]+", "", block[-1] if block[0].startswith("Traceback") else block[0]).strip()[:200]
+        if len(block) > len(fullest.get(key, [])):
+            fullest[key] = block
+    errors, used = [], 0
+    for block in fullest.values():
+        text = "\n".join(block[-30:] if block[0].startswith("Traceback") else block[:30])
+        if used + len(text) > budget:
+            break
+        errors.append(text)
+        used += len(text)
+    return errors
+
+
+def _error_blocks(output: str) -> list[list[str]]:
+    blocks: list[list[str]] = []
+    for line in output.splitlines():
+        if line.startswith("Traceback (most recent call last):") or (ERROR_START.match(line) and not (
+                blocks and blocks[-1][0].startswith("Traceback") and blocks[-1][-1].startswith(" "))):
+            blocks.append([line])
+        elif blocks and (line.startswith((" ", "\t")) or (blocks[-1][0].startswith("Traceback")
+                                                          and blocks[-1][-1].startswith(" "))):
+            blocks[-1].append(line)  # frames, then the exception line that ends a traceback
+    return blocks
 
 
 def stop(run_id: str, worktree: Path | None = None, preview: Preview | None = None) -> dict:

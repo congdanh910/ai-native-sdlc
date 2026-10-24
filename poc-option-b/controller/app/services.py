@@ -848,8 +848,17 @@ def _add_fix_task(session: Session, run: Run, *, actor: str, who: str, reason: s
     re-running every task in order had the first one dispute what it could not change (attendance, AC-24). The QA
     Engineer first writes or updates the tests the defects break (a human's decision, so existing lines may change),
     then the Developer fixes the code; review and acceptance follow."""
+    defects = f"{who}: {reason}"
+    if "acceptance" in who:  # the QC's notes and the earlier stories' tests come from a run on the preview
+        from controller.app.documents import latest_document
+        document = latest_document(session, run.id, "acceptance")
+        errors = (document.data or {}).get("server_errors", []) if document else []
+        if errors:
+            defects += ("\n\nErrors the application logged while the acceptance tests ran on the preview (the tests "
+                        "only saw the status code; reproduce the cause, such as concurrent requests of one page, in a "
+                        "test):\n" + "\n\n".join(errors))
     coordinator.add_fix_task(session, run, actor=actor, title=f"Fix the defects found by the {who}",
-                             fields={"defects": f"{who}: {reason}"}, reason=reason)
+                             fields={"defects": defects}, reason=reason)
 
 
 def preview_locked(run: Run, *, start: bool) -> str | None:

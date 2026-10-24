@@ -74,6 +74,8 @@ class Settings(BaseSettings):
     validation_infra_retries: int = Field(default=1, ge=0, le=5)
     # how much of the failing commands' logs the Developer and the Code Reviewer's brief read
     validation_failure_chars: int = Field(default=16000, ge=2000, le=100000)
+    # how much of the errors the preview's services logged during failed acceptance tests the triage and fix read
+    server_error_chars: int = Field(default=8000, ge=1000, le=100000)
     job_retry_base_seconds: int = Field(default=10, ge=1)  # back-off doubles on each retry
     capacity_wait_seconds: int = Field(default=120, ge=5)  # GX10 busy: wait this long, then try again
     subscription_wait_seconds: int = Field(default=900, ge=60)  # a CLI subscription window is used up

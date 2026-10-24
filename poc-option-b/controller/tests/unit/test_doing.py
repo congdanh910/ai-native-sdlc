@@ -993,3 +993,28 @@ def test_every_prompt_the_thinking_roles_ask_for_is_known_and_exists():
     assert asked and asked <= set(ROLES), sorted(asked - set(ROLES))
     for role in asked:
         assert (PROMPTS / f"{role}.md").is_file() and role_prompt(role)
+
+
+def test_the_errors_behind_a_500_are_read_from_the_preview_logs_one_service_at_a_time(monkeypatch):
+    from controller.app import preview
+    from controller.app.doing.process import ProcessResult
+    frames = "".join(f'  File "/srv/app/x{n}.py", line {n}, in f\n    call()\n' for n in range(40))
+    api = ('INFO:     "GET /api/v1/employees HTTP/1.0" 500 Internal Server Error\n'
+           "ERROR:    Exception in ASGI application\nTraceback (most recent call last):\n" + frames +
+           '  File "/srv/app/domain.py", line 199, in evaluate\n    raise ValueError("session timestamps must be ordered")\n'
+           "ValueError: session timestamps must be ordered\n")
+    logs = {"api": "ValueError: session timestamps must be ordered\n" + api + api,  # the start was cut, then twice
+            "web": "/docker-entrypoint.sh: Configuration complete\n"}
+
+    def bounded(args, timeout):
+        if "ps" in args:
+            return ProcessResult(args, 0, "api\nweb\n", 0.1, False)
+        return ProcessResult(args, 0, logs[args[-1]], 0.1, False)
+
+    monkeypatch.setattr(preview, "run_bounded", bounded)
+    errors = preview.server_errors("f662ce06", 8000)
+    traceback = next(e for e in errors if "ValueError" in e)
+    assert len([e for e in errors if "ValueError" in e]) == 1  # once, the full copy
+    assert 'domain.py", line 199' in traceback and traceback.endswith("must be ordered")
+    assert not any("docker-entrypoint" in e for e in errors)
+    assert sum(map(len, preview.server_errors("f662ce06", 1000))) <= 1000
