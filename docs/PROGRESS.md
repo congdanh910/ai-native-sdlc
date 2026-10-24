@@ -28,6 +28,15 @@ worker/API của SDLC dùng hera@kegmil.co (`~/.claude`). Restart từ phiên Cl
 `CLAUDE_CONFIG_DIR` của phiên. Sửa: `processes.platform_env` bỏ biến đó (hoặc dùng `SDLC_CLAUDE_CONFIG_DIR`) khi
 `sdlc up` khởi động API/worker; doctor hiện email và tổ chức của account Claude nền tảng.
 
+Manage an Account (f662ce06) dừng ở cổng QC sau 2 vòng tự sửa regression (T11, T12; `disputes.max_auto_per_task`):
+30–32 test Acceptance của các story trước fail với 500. Log preview cho thấy race trong code attendance: trang gọi nhiều
+request song song, request lấy `now` trước rồi chờ khoá session, request khác đã cập nhật `last_seen_at` muộn hơn →
+`evaluate_session_lifetime` raise "session timestamps must be ordered" (persistence/foundation.py:904,
+domain/foundation.py:199). Developer chỉ thấy "Received: 500" và test backend gọi tuần tự nên hai lần sửa đều trượt.
+Sửa nền tảng (fd04270): Acceptance thất bại thì đọc log từng service của preview (`preview.server_errors`, traceback
+đầy đủ, không trùng, `SERVER_ERROR_CHARS`), lưu vào tài liệu acceptance (mục "Errors the application logged"), đưa
+vào triage (`server_errors`) và vào task sửa lỗi của QC/regression. Run chờ người dùng ở cổng QC.
+
 ## 24/10: test không được validation chạy
 
 Manage an Account (f662ce06) T2 dừng vì test ở `backend/tests/integration/` (không lệnh nào chạy) bị coi là "pass sẵn".
