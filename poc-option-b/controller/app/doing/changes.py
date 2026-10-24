@@ -250,6 +250,24 @@ def commits_touching(worktree: Path, base: str, until: str, paths: list[str]) ->
     return commits
 
 
+def unfinished_test_files(worktree: Path, base: str) -> list[str]:
+    """Test files a test(Tn): commit since base added for a task that has no feat(Tn): commit after it: the QA Engineer
+    wrote them for a plan that was replaced before the Developer made them pass (Manage Employees Across Locations,
+    24/10: plan v4's T2 tests stayed through three replans and failed the new T1's validation)."""
+    added: dict[str, set[str]] = {}
+    for line in reversed(_git("log", "--first-parent", "--format=%H %s", f"{base}..HEAD", cwd=worktree).splitlines()):
+        sha, _, subject = line.partition(" ")
+        found = re.match(r"(test|feat)\((T\d+)\):", subject)
+        if not found:
+            continue
+        if found[1] == "feat":
+            added.pop(found[2], None)  # its tests were made to pass
+        else:
+            added.setdefault(found[2], set()).update(
+                _git("show", "--format=", "--name-only", "--diff-filter=A", sha, cwd=worktree).split())
+    return sorted(f for files in added.values() for f in files if (worktree / f).is_file())
+
+
 def files_of(worktree: Path, commit: str) -> list[str]:
     """The paths a commit changed."""
     return [line for line in _git("show", "--format=", "--name-only", commit, cwd=worktree).splitlines() if line]

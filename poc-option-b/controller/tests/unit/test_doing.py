@@ -1018,3 +1018,24 @@ def test_the_errors_behind_a_500_are_read_from_the_preview_logs_one_service_at_a
     assert 'domain.py", line 199' in traceback and traceback.endswith("must be ordered")
     assert not any("docker-entrypoint" in e for e in errors)
     assert sum(map(len, preview.server_errors("f662ce06", 1000))) <= 1000
+
+
+def test_tests_of_a_task_no_code_followed_are_found_and_those_made_to_pass_stay(tmp_path):
+    import subprocess
+    from controller.app.doing.changes import unfinished_test_files
+
+    def commit(files: dict[str, str], message: str) -> None:
+        for path, text in files.items():
+            (tmp_path / path).parent.mkdir(parents=True, exist_ok=True)
+            (tmp_path / path).write_text(text)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "add", "-A"], cwd=tmp_path, check=True)
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", message], cwd=tmp_path, check=True)
+
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
+    commit({"README.md": "x"}, "base")
+    base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=tmp_path, capture_output=True, text=True).stdout.strip()
+    commit({"tests/test_rules.py": "t1"}, "test(T1): rules")
+    commit({"app/rules.py": "c1"}, "feat(T1): rules")
+    commit({"tests/test_storage.py": "t2"}, "test(T2): storage")  # plan v4's T2: replanned before its code
+    commit({"plan.md": "v5"}, "sdlc: plan v5 approved")
+    assert unfinished_test_files(tmp_path, base) == ["tests/test_storage.py"]

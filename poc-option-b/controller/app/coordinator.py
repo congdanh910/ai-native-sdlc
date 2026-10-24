@@ -1048,6 +1048,21 @@ def _work_task(team: Team, loaded: Loaded) -> list[dict]:
     return _code_and_validate(team, context, task, tests, steps, step, upheld)
 
 
+def drop_unfinished_tests(session: Session, run: Run) -> list[str]:
+    """Before a new plan's tasks start: the tests an earlier plan's unfinished tasks added go, the new plan's QA Engineer
+    writes its own; otherwise they fail every validation of the new plan's earlier tasks."""
+    if not run.worktree_path or not run.base_commit or not Path(run.worktree_path).is_dir():
+        return []
+    worktree = Path(run.worktree_path)
+    files = changes.unfinished_test_files(worktree, run.base_commit)
+    if not files:
+        return []
+    changes._git("rm", "--quiet", "--", *files, cwd=worktree)
+    changes.commit(worktree, "sdlc: drop the tests of an earlier plan's unfinished tasks", "coordinator")
+    record_event(session, "tests.dropped", actor=COORDINATOR, run_id=run.id, payload={"files": files})
+    return files
+
+
 def _code_and_validate(team: Team, context: RunContext, task: PlanTask, tests, steps: list[dict], step,
                        feedback: str = "") -> list[dict]:
     """The Developer codes, validation decides; a failure goes back to the Developer at most max_remediations times."""
