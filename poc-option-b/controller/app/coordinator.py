@@ -1146,7 +1146,7 @@ def _apply_advice(session: Session, run: Run, execution: Execution, result: dict
 
 AUTO_ACTOR = "code_reviewer (auto)"
 # decisions the team may take on its own: none changes what a criterion means or what the plan builds
-AUTO_DECISIONS = ("amend_tests", "keep_tests", "allow_files", "already_built")
+AUTO_DECISIONS = ("amend_tests", "keep_tests", "allow_files", "already_built", "replan")
 CONFIDENCE = {"low": 0, "medium": 1, "high": 2}
 
 
@@ -1167,7 +1167,10 @@ def auto_rule(session: Session, run: Run, result: dict) -> str | None:
     decision = advice.get("recommendation", "")
     taken = sum(1 for payload in session.scalars(select(Event.payload).where(
         Event.run_id == run.id, Event.event_type == "dispute.auto_ruled")) if (payload or {}).get("task") == task)
-    why_not = (f"{decision} is the Tech Lead's call" if decision not in AUTO_DECISIONS
+    # a replan the Code Reviewer is sure of starts on its own only when a person approves the new plan at its gate
+    # (Manage Employees Across Locations T3, 24/10: the plan forgot a file; high confidence, nothing for a person)
+    gated_plan = decision != "replan" or stage_mode(run, "plan") == "gated"
+    why_not = (f"{decision} is the Tech Lead's call" if decision not in AUTO_DECISIONS or not gated_plan
                else advice["needs_human"] if advice.get("needs_human")
                else f"the brief's confidence is {advice.get('confidence')}" if CONFIDENCE.get(advice.get("confidence"), 0)
                < CONFIDENCE[policy.disputes.min_confidence]

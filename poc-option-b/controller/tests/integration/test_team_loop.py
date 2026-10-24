@@ -11,7 +11,7 @@ from controller.app import coordinator, jobs, services
 from controller.app.checklists import HUMAN_ITEMS
 from controller.app.db import session_scope
 from controller.app.documents import latest_document, latest_plan
-from controller.app.models import Execution, Plan, Project, PullRequest, Run, Task
+from controller.app.models import Event, Execution, Plan, Project, PullRequest, Run, Task
 from controller.app.projects import registry
 from controller.app.projects.repo import Mirror
 from controller.app.schemas import Intent
@@ -683,6 +683,14 @@ def test_the_team_allows_a_file_the_plan_forgot_on_its_own(db, sample_repo):
     with session_scope() as session:
         task = session.scalar(select(Task).where(Task.run_id == run_id, Task.external_task_id == "T1"))
         assert "src/store.js" in task.payload["modify"]
+
+
+def test_a_replan_the_code_reviewer_is_sure_of_starts_on_its_own_and_waits_at_the_plan_gate(db, sample_repo):
+    run_id = _to_coding(sample_repo)
+    drain(ConfidentReviewer(decision="replan"))
+    assert status(run_id) == RunStatus.WAITING_PLAN_APPROVAL  # a person still approves the new plan
+    with session_scope() as session:
+        assert session.scalar(select(Event).where(Event.run_id == run_id, Event.event_type == "dispute.auto_ruled"))
 
 
 def test_while_the_code_reviewer_settles_a_dispute_nobody_is_asked(db, sample_repo):
