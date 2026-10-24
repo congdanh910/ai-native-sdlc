@@ -44,6 +44,12 @@ vòng tự sửa review tính theo mỗi lần code đổi vì lý do khác (tas
 `title`), sửa do chính review không reset; vấn đề important còn mở (`coordinator.open_review_findings`) hiện ở cổng QC
 và PR, nút gửi một lần bấm (Request changes để trống gửi chúng).
 
+Manage Employees Across Locations (0e3654aa) dừng Needs human ở cổng plan: PR #15 merge đưa migration 0008/0009 vào
+main, nhánh có 0007_multi_site_management trên 0006 → 2 head. Sửa: `mainline.rechain_migrations` khi merge main tự trỏ
+migration đầu tiên của nhánh sang head mới nhất của main (down_revision + dòng Revises) nếu chỉ có một chuỗi của nhánh
+và một head của main; Resume từ Needs human về đúng cổng mà merge main dừng (`services._back_to_gate`, kiểm migration
+và conflict marker trước; cổng QC thì chạy lại Acceptance). Run 0e3654aa đã nối lại migration (commit 1ae77f0).
+
 ## 24/10: test không được validation chạy
 
 Manage an Account (f662ce06) T2 dừng vì test ở `backend/tests/integration/` (không lệnh nào chạy) bị coi là "pass sẵn".

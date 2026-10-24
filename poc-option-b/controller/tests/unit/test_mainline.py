@@ -97,3 +97,25 @@ def test_a_branch_whose_pull_request_was_merged_is_not_updated_and_its_merge_is_
     assert only_main_merges(repo, pushed, synced)  # merged at pushed: the run completes
     later = commit(repo, {"app.py": "x = 3\n"}, "feat(T2): more")
     assert not only_main_merges(repo, pushed, later)  # work after the merged head: not all of it was merged
+
+
+def test_the_branch_migration_is_made_to_follow_main_after_another_story_merged_first(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, "init", "--quiet", "-b", "main")
+    v = "backend/migrations/versions/"
+    commit(repo, {v + "0006_e.py": '"""E\n\nRevision ID: 0006_e\nRevises: 0005\n"""\nrevision = "0006_e"\ndown_revision = None\n'}, "base")
+    git(repo, "checkout", "--quiet", "-b", "run")  # this story: 0007 and 0007b on 0006_e
+    commit(repo, {v + "0007_sites.py": '"""Sites\n\nRevision ID: 0007_sites\nRevises: 0006_e\n"""\n'
+                                      'revision = "0007_sites"\ndown_revision = "0006_e"\n',
+                  v + "0007b_more.py": 'revision = "0007b_more"\ndown_revision = "0007_sites"\n'}, "run")
+    git(repo, "checkout", "--quiet", "main")  # another story merged 0008 and 0009 on 0006_e first
+    main = commit(repo, {v + "0008_m.py": 'revision = "0008_m"\ndown_revision = "0006_e"\n',
+                         v + "0009_login.py": 'revision = "0009_login"\ndown_revision = "0008_m"\n'}, "other story")
+    git(repo, "checkout", "--quiet", "run")
+    result = merge_main(repo, main)
+    assert result["migrations"] == []
+    assert result["notes"] == [f"{v}0007_sites.py: now follows 0009_login (main's latest migration) instead of 0006_e"]
+    text = (repo / v / "0007_sites.py").read_text()
+    assert 'down_revision = "0009_login"' in text and "Revises: 0009_login" in text
+    assert git(repo, "status", "--porcelain") == ""  # part of the merge commit

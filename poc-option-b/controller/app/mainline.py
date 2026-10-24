@@ -102,33 +102,85 @@ def tc_collisions(path: str, ours: str, merged: str, story: str) -> list[str]:
     return [f"{path}: {tc} is used by another story too" for tc in sorted(mine & others)]
 
 
+REVISION = re.compile(r"^revision\s*(?::\s*\w+)?\s*=\s*['\"]([^'\"]+)['\"]", re.MULTILINE)
+DOWN = re.compile(r"^down_revision\s*(?::[^=]+)?=\s*(.+)$", re.MULTILINE)
+
+
+def _migration_folders(worktree: Path) -> list[Path]:
+    return sorted({p.parent for p in worktree.glob("**/versions/*.py")
+                   if "node_modules" not in p.parts and ".venv" not in p.parts})
+
+
+def _revisions(folder: Path) -> dict[str, list[tuple[Path, list[str]]]]:
+    """Alembic revision id -> the files defining it, each with its down revisions."""
+    revisions: dict[str, list[tuple[Path, list[str]]]] = {}
+    for file in sorted(folder.glob("*.py")):
+        text = file.read_text(errors="replace")
+        found = REVISION.search(text)
+        if not found:
+            continue
+        down = DOWN.search(text)
+        revisions.setdefault(found[1], []).append((file, re.findall(r"['\"]([^'\"]+)['\"]", down[1]) if down else []))
+    return revisions
+
+
+def _heads(revisions: dict) -> list[str]:
+    parents = {p for defined in revisions.values() for _, downs in defined for p in downs}
+    return sorted(r for r in revisions if r not in parents)
+
+
 def migration_problems(worktree: Path) -> list[str]:
     """Alembic folders with more than one head, or a revision id used twice."""
     problems = []
-    for folder in sorted({p.parent for p in worktree.glob("**/versions/*.py")
-                          if "node_modules" not in p.parts and ".venv" not in p.parts}):
-        revisions: dict[str, list[str]] = {}
-        parents: set[str] = set()
-        for file in sorted(folder.glob("*.py")):
-            text = file.read_text(errors="replace")
-            found = re.search(r"^revision\s*(?::\s*\w+)?\s*=\s*['\"]([^'\"]+)['\"]", text, re.MULTILINE)
-            if not found:
-                continue
-            revisions.setdefault(found[1], []).append(file.name)
-            down = re.search(r"^down_revision\s*(?::[^=]+)?=\s*(.+)$", text, re.MULTILINE)
-            if down:
-                parents.update(re.findall(r"['\"]([^'\"]+)['\"]", down[1]))
+    for folder in _migration_folders(worktree):
+        revisions = _revisions(folder)
         if not revisions:
             continue
         relative = folder.relative_to(worktree)
-        for revision, files in revisions.items():
-            if len(files) > 1:
-                problems.append(f"{relative}: revision {revision} is defined in {', '.join(files)}")
-        heads = sorted(r for r in revisions if r not in parents)
+        for revision, defined in revisions.items():
+            if len(defined) > 1:
+                problems.append(f"{relative}: revision {revision} is defined in {', '.join(f.name for f, _ in defined)}")
+        heads = _heads(revisions)
         if len(heads) > 1:
             problems.append(f"{relative}: {len(heads)} heads ({', '.join(heads)}); the branch's migration must "
                             f"follow main's latest one")
     return problems
+
+
+def rechain_migrations(worktree: Path, main: str) -> list[str]:
+    """After main is merged: when the branch's own migrations and main's end in two heads, the branch's first own
+    migration is made to follow main's head (its down_revision and its Revises line), as a person would do after
+    another story merged first. Several own chains, a merge revision or a revision id used twice are left alone."""
+    own = {Path(f) for f in _git(worktree, "diff", "--name-only", "--diff-filter=A", main, "HEAD").stdout.split()}
+    notes = []
+    for folder in _migration_folders(worktree):
+        revisions = _revisions(folder)
+        if any(len(defined) > 1 for defined in revisions.values()):
+            continue
+        heads = _heads(revisions)
+        mine = [h for h in heads if revisions[h][0][0].relative_to(worktree) in own]
+        theirs = [h for h in heads if h not in mine]
+        if len(heads) != 2 or len(mine) != 1 or len(theirs) != 1:
+            continue
+        root = mine[0]
+        while True:  # down the branch's own chain to its first migration
+            downs = revisions[root][0][1]
+            if len(downs) != 1 or downs[0] not in revisions:
+                break
+            if revisions[downs[0]][0][0].relative_to(worktree) not in own:
+                break
+            root = downs[0]
+        file, downs = revisions[root][0]
+        if len(downs) != 1:
+            continue
+        text = file.read_text()
+        text = DOWN.sub(f'down_revision = "{theirs[0]}"', text, count=1)
+        text = re.sub(r"^Revises:.*$", f"Revises: {theirs[0]}", text, count=1, flags=re.MULTILINE)
+        file.write_text(text)
+        _git(worktree, "add", "--", str(file.relative_to(worktree)))
+        notes.append(f"{file.relative_to(worktree)}: now follows {theirs[0]} (main's latest migration) instead of "
+                     f"{downs[0]}")
+    return notes
 
 
 def is_up_to_date(worktree: Path, main: str) -> bool:
@@ -177,6 +229,7 @@ def merge_main(worktree: Path, main: str, story: str = "") -> dict:
             notes += tc_collisions(path, ours.stdout, merged, story)
     if left:
         _git(worktree, "add", "--", *left)  # with their markers: the Developer's task resolves them
+    notes += rechain_migrations(worktree, main)
     message = (f"{MERGE_SUBJECT}{main[:12]} from the default branch"
                + (f"; {len(left)} conflict(s) left for the Developer" if left else ""))
     _git(worktree, "commit", "--no-verify", "-m", message)

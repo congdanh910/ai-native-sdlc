@@ -512,11 +512,32 @@ def resume(session: Session, run: Run, *, actor: str, decision: str, reason: str
                 transition_task(session, task, TaskStatus.READY, actor=actor, reason=reason)
         coordinator.schedule_tasks(session, run)
         return
+    if target in coordinator.SYNC_BEFORE_CODING + coordinator.SYNC_AFTER_CODING:
+        _back_to_gate(session, run, target, actor=actor, reason=reason)
+        return
     if target not in kinds:
         raise DecisionError(f"cannot resume at {target}; replan or cancel instead")
     transition_run(session, run, target, actor=actor, acting_role=TL, reason=reason)
     # a key of its own: the job that failed holds the stage's usual key, and would stand for this one
     coordinator.queue(session, run, kinds[target], key=f"resume:{datetime.now(timezone.utc).isoformat()}")
+
+
+def _back_to_gate(session: Session, run: Run, target: RunStatus, *, actor: str, reason: str) -> None:
+    """A merge of main stopped the run at a gate (migration heads, conflicts): once the branch holds none, the run
+    waits at that gate again; the acceptance evidence was about the code before the merge, so its tests run again."""
+    from controller.app import mainline
+    worktree = Path(run.worktree_path or "")
+    sync = json.loads(coordinator.artifact(session, run.id, "main_sync") or "{}")
+    left = (mainline.migration_problems(worktree) + [f"conflict markers in {f}" for f in
+                                                     mainline.markers_left(worktree, sync.get("conflicts", []))]) \
+        if worktree.is_dir() else ["the run has no branch"]
+    if left:
+        raise DecisionError("the branch still has: " + "; ".join(left))
+    if target == RunStatus.WAITING_ACCEPTANCE_APPROVAL:
+        transition_run(session, run, RunStatus.ACCEPTANCE_TESTING, actor=actor, acting_role=TL, reason=reason)
+        coordinator.queue(session, run, "acceptance", key=f"resume:{datetime.now(timezone.utc).isoformat()}")
+        return
+    transition_run(session, run, target, actor=actor, acting_role=TL, reason=reason or "the branch is sound again")
 
 
 def _rule_on_dispute(session: Session, run: Run, *, actor: str, decision: str, reason: str) -> None:
