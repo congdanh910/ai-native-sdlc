@@ -1,121 +1,397 @@
-from pathlib import PurePosixPath
+"""Contracts between team roles: intent, spec, plan, test plan, review."""
+
+import re
 from typing import Literal
-from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from controller.app.projects.repo import safe_repo_path
 
-class StrictModel(BaseModel):
+TASK_ID = re.compile(r"T\d{1,3}")
+CRITERION = re.compile(r"^- (AC-\d{1,3}):\s*(\S.*)$", re.MULTILINE)  # older runs: "- AC-1: text"
+# The company format: "- **AC-01 — Short name:**" then indented Given / When / Then lines.
+GWT_CRITERION = re.compile(r"^- \*\*((?:AC|EC)-\d{2,3}) — (.+?):\*\*[ \t]*\n((?:(?:[ \t]+.*)?\n?)*)", re.MULTILINE)
+
+
+class Contract(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class RunCreate(StrictModel):
-    repo_id: str = Field(min_length=1, max_length=255)
-    base_commit: str = Field(pattern=r"^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$")
-    requirement: str = Field(min_length=1)
-    idempotency_key: str = Field(min_length=1, max_length=255)
-    executor: Literal["codex", "claude"] = "codex"
+class Intent(Contract):
+    title: str = Field(min_length=3, max_length=200)
+    problem: str = Field(min_length=1)
+    outcome: str = Field(min_length=1)
+    users_and_systems: str = ""
+    constraints: str = ""
+    open_questions: str = ""
+    story: str = ""  # the SRS user story this run delivers, such as AT-US-01; empty for projects without an SRS
 
 
-class PlanTask(StrictModel):
-    id: str = Field(pattern=r"^[A-Za-z0-9_-]+$", max_length=255)
-    description: str = Field(min_length=1)
-    dependencies: list[str] = Field(default_factory=list)
-    allowed_paths: list[str] = Field(min_length=1)
+def render_intent(intent: Intent) -> str:
+    story = f"Delivers {intent.story} from SRS.md.\n\n" if intent.story else ""
+    sections = [("Problem", intent.problem), ("Desired outcome", intent.outcome),
+                ("Affected users and systems", intent.users_and_systems), ("Constraints", intent.constraints),
+                ("Open questions", intent.open_questions)]
+    body = "\n\n".join(f"## {heading}\n\n{text.strip() or '_None._'}" for heading, text in sections)
+    return f"# Intent: {intent.title}\n\n{story}{body}\n"
+
+
+class SelfCheck(Contract):
+    """A role's answer to one item of its gate's checklist."""
+    id: str
+    status: Literal["pass", "deferred", "fail", "n/a"]
+    note: str = ""
+
+
+class Question(Contract):
+    question: str
+    blocking: bool
+
+
+class FeedbackReply(Contract):
+    """How a rewrite handled one point of the reviewer's feedback, so the reviewer can check it at the next gate."""
+    feedback: str  # the point, in short
+    change: str  # what changed for it, or why nothing did
+    where: list[str] = []  # sections or elements it touched
+
+
+class Criterion(Contract):
+    id: str
+    text: str  # the short name, 2-4 words in the company format
+    given: str = ""  # several conditions: one per line, each extra one joined with "and"
+    when: str = ""
+    then: str = ""
+
+    @property
+    def full(self) -> str:
+        """One line for roles that read criteria as text: the name and its Given / When / Then."""
+        parts = [f"{word} {' and '.join(line.strip() for line in value.splitlines() if line.strip())}"
+                 for word, value in (("Given", self.given), ("when", self.when), ("then", self.then)) if value.strip()]
+        joined = ", ".join(parts)
+        return f"{self.text}: {joined}" if joined else self.text
+
+
+class Spec(Contract):
+    goal: str
+    user_stories: list[str]
+    acceptance_criteria: list[Criterion] = Field(min_length=1)
+    edge_cases: list[Criterion] = []
+    self_check: list[SelfCheck] = []
+    assumptions: list[str] = []
+    concerns: list[str] = []
+    questions: list[Question] = []
+    feedback_replies: list[FeedbackReply] = []
+
+
+NOTES_HEADING = "### Business Analyst notes"
+
+
+def gwt_lines(criterion: Criterion) -> list[str]:
+    """Given / When / Then, each on its own line; extra conditions as indented **and** lines (company template)."""
+    lines = [f"- **{criterion.id} — {criterion.text}:**  "]
+    clauses = [("Given", criterion.given), ("When", criterion.when), ("Then", criterion.then)]
+    clauses = [(word, [part.strip().rstrip(",.") for part in value.splitlines() if part.strip()]) for word, value in clauses]
+    clauses = [(word, parts) for word, parts in clauses if parts]
+    rendered = []
+    for word, parts in clauses:
+        rendered.append(f"  **{word}** {parts[0]},")
+        rendered += [f"    **and** {part}," for part in parts[1:]]
+    if rendered:
+        rendered[-1] = rendered[-1][:-1] + "."
+    return lines + [line + "  " for line in rendered[:-1]] + rendered[-1:]
+
+
+def render_spec(title: str, spec: Spec, *, story: dict | None = None) -> str:
+    """One user story section in the company spec template. `story` (from the SRS) gives the id, statement and
+    feature group; without it the section is headed by the run title (projects without an SRS)."""
+    def bullets(items: list[str]) -> str:
+        return "\n".join(f"- {item}" for item in items) or "_None._"
+    if story:
+        lines = [f"## {story['id']}: {story['title']}", "",
+                 "> **Jira Story:** TBD  ", f"> **Feature group:** {story['feature_group']}", "", story["statement"]]
+    else:
+        lines = [f"## {title}", "", *(spec.user_stories[:1] or [f"**As a** user, **I want to** {title.lower()}."])]
+    lines += ["", "### Acceptance Criteria", ""]
+    for criterion in spec.acceptance_criteria:
+        lines += gwt_lines(criterion)
+    if spec.edge_cases:
+        lines += ["", "### Edge Cases", ""]
+        for criterion in spec.edge_cases:
+            lines += gwt_lines(criterion)
+    open_items = "\n".join(f"- {'[blocking] ' if q.blocking else ''}{q.question}" for q in spec.questions)
+    lines += ["", NOTES_HEADING, "", f"**Goal:** {spec.goal}", "", "**Assumptions**", "", bullets(spec.assumptions), "",
+              "**Concerns**", "", bullets(spec.concerns), "", "**Open questions**", "", open_items or "_None._"]
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _parse_gwt(name: str, body: str) -> tuple[str, str, str]:
+    clauses = {"Given": [], "When": [], "Then": []}
+    current = None
+    for raw in body.splitlines():
+        line = raw.strip().rstrip()
+        match = re.match(r"\*\*(Given|When|Then|and)\*\*\s*(.*)", line)
+        if not match:
+            continue
+        word, text = match[1], match[2].strip().rstrip(",.").strip()
+        if word != "and":
+            current = word
+        if current and text:
+            clauses[current].append(text)
+    return tuple("\n".join(clauses[w]) for w in ("Given", "When", "Then"))
+
+
+def parse_criteria(spec_markdown: str) -> list[Criterion]:
+    """Acceptance criteria and edge cases of a spec, in either format: the company template
+    (`- **AC-01 — Name:**` with Given / When / Then lines) or the older `- AC-1: text` lines."""
+    criteria = []
+    for match in GWT_CRITERION.finditer(spec_markdown.split(NOTES_HEADING)[0]):
+        given, when, then = _parse_gwt(match[2], match[3])
+        criteria.append(Criterion(id=match[1], text=match[2].strip(), given=given, when=when, then=then))
+    if not criteria:
+        criteria = [Criterion(id=m[0], text=m[1].strip()) for m in CRITERION.findall(spec_markdown)]
+    if not criteria:
+        raise ValueError("spec must list acceptance criteria like `- **AC-01 — Short name:**` followed by "
+                         "Given / When / Then lines")
+    if len({c.id for c in criteria}) != len(criteria):
+        raise ValueError("acceptance criterion ids must be unique")
+    if not any(c.id.startswith("AC-") for c in criteria):
+        raise ValueError("spec needs at least one acceptance criterion (AC-01)")
+    return criteria
+
+
+class Reference(Contract):
+    file: str
+    symbol: str | None = None
+
+
+class PlanTask(Contract):
+    id: str
+    title: str = Field(min_length=3)
+    depends_on: list[str] = []
+    modify: list[str] = []
+    create: list[str] = []
+    provides: list[str] = []
+    references: list[Reference] = []
     acceptance_criteria: list[str] = Field(min_length=1)
+    validation: list[str] = Field(min_length=1)
 
-    @field_validator("allowed_paths")
+    @field_validator("id")
     @classmethod
-    def validate_paths(cls, paths: list[str]) -> list[str]:
-        for path in paths:
-            parsed = PurePosixPath(path)
-            if (
-                not path or path == "." or path.startswith("/") or ".." in parsed.parts
-                or "\\" in path or "\x00" in path or parsed.as_posix() != path
-            ):
-                raise ValueError("allowed paths must be relative POSIX paths without traversal")
-        return paths
+    def _id(cls, value: str) -> str:
+        if not TASK_ID.fullmatch(value):
+            raise ValueError("task id must look like T1")
+        return value
+
+    @field_validator("modify", "create")
+    @classmethod
+    def _paths(cls, value: list[str]) -> list[str]:
+        return [safe_repo_path(path) for path in value]
 
 
-class PlanPayload(StrictModel):
-    tasks: list[PlanTask] = Field(min_length=1, max_length=5)
+class DesignFinding(Contract):
+    """A spec gap (G), ambiguity (A) or design review finding (D) the Tech Lead found and how it is resolved."""
+    type: str = "Gap"
+    criterion: str = ""
+    finding: str
+    resolution: str = ""
+
+
+class Row(Contract):
+    name: str
+    detail: str
+    extra: str = ""
+
+
+class Sequence(Contract):
+    title: str
+    mermaid: str  # a sequenceDiagram body; happy path first, one alt per error, steps tagged [AC-01]
+
+
+class PlanDesign(Contract):
+    """The company plan template's Architecture sections. All optional: a small change may need few of them."""
+    preflight: list[DesignFinding] = []  # spec gaps and ambiguities found before designing
+    findings: list[DesignFinding] = []  # design review findings against the project's rules
+    domain_objects: list[Row] = []  # domain object | database entity | key fields
+    business_rules: list[Row] = []  # rule | source AC | enforcement
+    sequences: list[Sequence] = []
+    error_flows: list[Row] = []  # scenario | HTTP status or outcome | error code
+    rule_notes: list[Row] = []  # project rule id | Satisfied / Required / Note | note
+    element_ids: list[Row] = []  # UI element | id | file
+
+
+class PlanPayload(Contract):
+    summary: str
+    tasks: list[PlanTask] = Field(min_length=1)
+    design: PlanDesign = PlanDesign()
+    self_check: list[SelfCheck] = []
 
     @model_validator(mode="after")
-    def validate_dag(self) -> "PlanPayload":
+    def _dag(self) -> "PlanPayload":
         ids = [task.id for task in self.tasks]
         if len(ids) != len(set(ids)):
             raise ValueError("task ids must be unique")
-        dependencies = {task.id: set(task.dependencies) for task in self.tasks}
-        for task_id, parents in dependencies.items():
-            if task_id in parents or not parents.issubset(dependencies):
-                raise ValueError("dependencies must refer to other tasks in the plan")
-        visiting: set[str] = set()
-        visited: set[str] = set()
+        known = set(ids)
+        for task in self.tasks:
+            unknown = set(task.depends_on) - known
+            if unknown:
+                raise ValueError(f"{task.id} depends on unknown tasks {sorted(unknown)}")
+        visiting, done = set(), set()
 
         def visit(task_id: str) -> None:
-            if task_id in visiting:
-                raise ValueError("task dependency cycle")
-            if task_id in visited:
+            if task_id in done:
                 return
+            if task_id in visiting:
+                raise ValueError(f"dependency cycle through {task_id}")
             visiting.add(task_id)
-            for parent in dependencies[task_id]:
-                visit(parent)
-            visiting.remove(task_id)
-            visited.add(task_id)
-
-        for task_id in dependencies:
+            for dependency in next(t for t in self.tasks if t.id == task_id).depends_on:
+                visit(dependency)
+            visiting.discard(task_id)
+            done.add(task_id)
+        for task_id in ids:
             visit(task_id)
         return self
 
 
-class AnalysisResult(StrictModel):
-    summary: str = Field(min_length=1)
-    acceptance_criteria: list[str] = Field(min_length=1)
-    questions: list[str] = Field(default_factory=list)
-    assumptions: list[str] = Field(default_factory=list)
+class TestCase(Contract):
+    __test__ = False  # not a pytest class
+    id: str
+    task_id: str
+    criterion: str
+    description: str
+    expected: str
+    target_file: str
+    expected_pass: bool = False
+    name: str = ""  # short test name for test_cases.md
+    type: Literal["unit", "integration", "e2e"] = "unit"
+    severity: Literal["Critical", "Major", "Minor"] = "Major"
+
+    @field_validator("target_file")
+    @classmethod
+    def _path(cls, value: str) -> str:
+        return safe_repo_path(value)
 
 
-class ReviewFinding(StrictModel):
-    severity: str = Field(pattern=r"^(low|medium|high)$")
-    path: str = Field(min_length=1)
-    message: str = Field(min_length=1)
+class TestPlan(Contract):
+    __test__ = False
+    cases: list[TestCase] = Field(min_length=1)
+    self_check: list[SelfCheck] = []
 
 
-class ReviewResult(StrictModel):
-    verdict: str = Field(pattern=r"^(pass|needs_changes)$")
-    findings: list[ReviewFinding] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def require_finding_for_changes(self) -> "ReviewResult":
-        if self.verdict == "needs_changes" and not self.findings:
-            raise ValueError("needs_changes requires at least one finding")
-        return self
-
-
-class PlanDecision(StrictModel):
-    plan_id: UUID
-    plan_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    expected_run_version: int = Field(ge=0)
-    actor: str = Field(min_length=1, max_length=255)
-    reason: str | None = None
-
-
-class PlanRevision(StrictModel):
-    expected_run_version: int = Field(ge=0)
-    actor: str = Field(min_length=1, max_length=255)
-    reason: str = Field(min_length=1)
-    plan: PlanPayload
-
-
-class VersionedDecision(StrictModel):
-    expected_run_version: int = Field(ge=0)
-    actor: str = Field(min_length=1, max_length=255)
-    reason: str | None = None
+def render_plan(title: str, version: int, plan: PlanPayload, tests: TestPlan, grounding: dict | None) -> str:
+    lines = [f"# Plan v{version}: {title}", "", plan.summary, "", "## Tasks", ""]
+    for task in plan.tasks:
+        lines.append(f"### {task.id} {task.title}")
+        if task.depends_on:
+            lines.append(f"- Depends on: {', '.join(task.depends_on)}")
+        if task.modify:
+            lines.append(f"- Modify: {', '.join(f'`{p}`' for p in task.modify)}")
+        if task.create:
+            lines.append(f"- Create: {', '.join(f'`{p}`' for p in task.create)}")
+        if task.provides:
+            lines.append(f"- Provides: {', '.join(f'`{name}`' for name in task.provides)}")
+        lines.append(f"- Acceptance criteria: {', '.join(task.acceptance_criteria)}")
+        lines.append(f"- Validation: {', '.join(task.validation)}")
+        lines.append("")
+    lines += ["## Test plan", "", "| Case | Task | Criterion | Test | Expected | File |", "|---|---|---|---|---|---|"]
+    for case in tests.cases:
+        mark = " (expected pass)" if case.expected_pass else ""
+        lines.append(f"| {case.id} | {case.task_id} | {case.criterion} | {case.description}{mark} | "
+                     f"{case.expected} | `{case.target_file}` |")
+    status = (grounding or {}).get("status", "not run")
+    lines += ["", f"## Grounding check: {status}", ""]
+    for finding in (grounding or {}).get("findings", []):
+        lines.append(f"- {finding}")
+    for warning in (grounding or {}).get("warnings", []):
+        lines.append(f"- Warning: {warning}")
+    return "\n".join(lines).rstrip() + "\n"
 
 
-class FailureClassification(StrictModel):
-    category: str = Field(pattern=r"^(AMBIGUOUS_SPEC|MISSING_CONTEXT|WEAK_TESTS|MODEL_LIMITATION|INFRASTRUCTURE|OTHER)$")
-    stage: str = Field(pattern=r"^(analysis|planning|coding|validation|review)$")
-    note: str = Field(min_length=1)
-    corrective_action: str = Field(min_length=1)
-    actor: str = Field(min_length=1, max_length=255)
+class Finding(Contract):
+    severity: Literal["important", "nit"]
+    file: str | None = None
+    text: str
+
+
+class Review(Contract):
+    verdict: Literal["pass", "concerns"]
+    findings: list[Finding] = []
+    coverage: dict[str, list[str]] = {}
+    markdown: str = ""
+
+
+DECISIONS = ("amend_tests", "keep_tests", "already_built", "replan", "resume", "back_to_onboarding")
+
+
+class OutcomeLine(Contract):
+    text: str = Field(min_length=3)
+    source: str = ""
+
+
+class Outcomes(Contract):
+    """Suggested desired outcomes of a feature request for one user story; the person edits them."""
+    outcomes: list[OutcomeLine] = Field(min_length=1, max_length=12)
+    notes: str = ""
+
+
+class AdviceSide(Contract):
+    party: str = Field(min_length=1)  # who says it: Developer, QA Engineer, the approved test case, the code, the SDS
+    claim: str = Field(min_length=1)
+    evidence: list[str] = []  # file:line with the line, a test case id, a commit, an SDS section
+
+
+class Advice(Contract):
+    """A thinking role's brief for the Tech Lead when a task stops (a dispute, a red check, an unclear decision):
+    what happened, who says what with which evidence, and a decision with a reason ready to use. A human decides."""
+    situation: str = Field(min_length=1)
+    sides: list[AdviceSide] = []
+    recommendation: Literal["amend_tests", "keep_tests", "already_built", "allow_files", "replan", "resume",
+                            "back_to_onboarding"]
+    confidence: Literal["high", "medium", "low"]
+    reason: str = Field(min_length=1)  # what the Tech Lead's reason would say: which test, which value, which file
+    files: list[str] = []  # allow_files: the files the task may change besides its plan's files
+    # why a person must decide (the call changes what an AC or EC means, contradicts the SDS or the spec, weakens a
+    # security or project rule, or needs a design change); empty when the team may settle it on its own
+    needs_human: str = ""
+    risk: str = ""  # what goes wrong if this is the wrong call
+    checks: list[str] = []  # what the Tech Lead verifies before deciding
+
+
+class DefectPoint(Contract):
+    point: str = Field(min_length=1)  # one defect or change of the notes, in a few words
+    # against the SDS, the SRS and the spec; not_actionable: no change of the code or its tests can do it
+    verdict: Literal["consistent", "conflict", "not_covered", "not_actionable"]
+    evidence: list[str] = []  # the section and the quoted line that settle it
+    note: str = ""  # for a conflict: what the documents say instead
+
+
+class DefectCheck(Contract):
+    """The QC's or Code Owner's notes checked against the SDS before the team acts on them: a note that contradicts
+    the design goes back to the person first."""
+    points: list[DefectPoint] = Field(min_length=1)
+    summary: str = ""
+
+
+class RegressionVerdict(Contract):
+    test: str = Field(min_length=1)  # the failing test's title
+    # outdated: it checks what this story changed on purpose (its spec or plan); broken: the story broke what it checks
+    verdict: Literal["outdated", "broken"]
+    evidence: list[str] = []  # the spec criterion, plan task, test line or code line that settles it
+    change: str = ""  # outdated: what the test must check now; broken: what the code broke
+
+
+class RegressionTriage(Contract):
+    """The acceptance tests of earlier stories that failed on this story's preview, each judged by the Code Reviewer:
+    a test outdated by an intended change is updated by the QA Engineer; a broken one is a defect for the QC."""
+    tests: list[RegressionVerdict] = Field(min_length=1)
+    confidence: Literal["high", "medium", "low"] = "low"
+    note: str = ""  # for the QA Engineer when tests are outdated: which assertions change to what, and what stays
+    summary: str = ""
+
+
+def render_review(title: str, review: Review, engine: str) -> str:
+    rows = "\n".join(f"| {criterion} | {', '.join(cases) or 'none'} |" for criterion, cases in review.coverage.items())
+    findings = "\n".join(f"- {f.severity.capitalize()}: {f.text}" + (f" (`{f.file}`)" if f.file else "")
+                         for f in review.findings) or "_None._"
+    return (f"# Review: {title}\n\nVerdict: **{review.verdict}** (Code Reviewer, {engine})\n\n"
+            f"## Acceptance-criteria coverage\n\n| Criterion | Test cases |\n|---|---|\n{rows}\n\n"
+            f"## Findings\n\n{findings}\n")

@@ -1,0 +1,157 @@
+import json
+
+import httpx
+import pytest
+
+from controller.app.integrations import langflow
+from controller.app.integrations.langflow import InvalidModelOutput, LangflowClient, extract_json, role_prompt
+from controller.app.projects.config import effective_policy, parse_project_config
+from controller.app.config import PROJECT_ROOT
+from controller.app.team import normalize
+from controller.app.team.base import CapacityBusy, RunContext
+from controller.app.team.langflow_team import LangflowTeam
+
+
+def envelope(text: str) -> dict:
+    return {"outputs": [{"outputs": [{"results": {"message": {"text": text}}}]}]}
+
+
+def test_every_role_prompt_loads_without_braces():
+    for role in langflow.ROLES:
+        prompt = role_prompt(role)
+        assert "untrusted data" in prompt.text and len(prompt.version) == 12
+        assert prompt.endpoint == f"sdlc-v3-{role}"
+
+
+def test_extract_json_tolerates_fences_and_chatter():
+    assert extract_json('```json\n{"a": 1}\n```') == {"a": 1}
+    assert extract_json('Here it is: {"a": 1} hope this helps') == {"a": 1}
+    with pytest.raises(InvalidModelOutput):
+        extract_json("no json at all")
+    with pytest.raises(InvalidModelOutput):
+        extract_json("[1, 2]")
+
+
+def test_client_parses_one_chat_output_and_sends_api_key():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["key"] = request.headers["x-api-key"]
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json=envelope('{"ok": true}'))
+    client = LangflowClient("http://127.0.0.1:7870", "secret", transport=httpx.MockTransport(handler))
+    assert client.run("sdlc-v3-spec", {"x": 1}, session_id="s") == '{"ok": true}'
+    assert seen["key"] == "secret" and json.loads(seen["body"]["input_value"]) == {"x": 1}
+
+
+def test_client_refuses_remote_urls_and_reports_http_errors():
+    with pytest.raises(ValueError):
+        LangflowClient("http://langflow.example.com", "k")
+    client = LangflowClient("http://127.0.0.1:7870", "k",
+                            transport=httpx.MockTransport(lambda r: httpx.Response(500, text="boom")))
+    with pytest.raises(langflow.LangflowError, match="HTTP 500"):
+        client.run("sdlc-v3-spec", {}, session_id="s")
+
+
+def test_normalize_repairs_shape_only():
+    intent = normalize.intent({"problem": "p", "outcome": ["- a", "b"], "open_questions": ["[blocking] - when?"]}, "T")
+    assert intent["outcome"] == "- a\n- b" and intent["open_questions"] == "- [blocking] when?"
+    spec = normalize.spec({"acceptance_criteria": ["x", {"text": "y"}], "questions": ["why?"]})
+    assert [c["id"] for c in spec["acceptance_criteria"]] == ["AC-01", "AC-02"]
+    assert spec["questions"] == [{"question": "why?", "blocking": False}]
+    plan = normalize.plan({"tasks": [{"id": "T1", "modify": "src/a.js", "references": ["src/a.js"]}]}, ["unit-tests"])
+    assert plan["tasks"][0]["modify"] == ["src/a.js"] and plan["tasks"][0]["validation"] == ["unit-tests"]
+    assert plan["tasks"][0]["references"] == [{"file": "src/a.js", "symbol": None}]
+
+
+class FakeClient:
+    def __init__(self, answers):
+        self.answers, self.calls = list(answers), []
+
+    def run(self, endpoint, payload, *, session_id):
+        self.calls.append((endpoint, payload))
+        return self.answers.pop(0)
+
+
+def context() -> RunContext:
+    text = (PROJECT_ROOT / "examples/task-board/.sdlc/project.yaml").read_text()
+    return RunContext(title="Due dates", policy=effective_policy(parse_project_config(text)), agents_md="a",
+                      review_md=None, intent_md="# Intent", files=["src/tasks.js"], spec_md="- AC-1: x",
+                      repository={"files": ["src/tasks.js"], "symbols": {}, "selected_files": []})
+
+
+SPEC = {"goal": "g", "user_stories": ["s"], "acceptance_criteria": [{"id": "AC-1", "text": "x"}]}
+
+
+def test_invalid_answer_is_sent_back_with_the_error(settings):
+    client = FakeClient(["not json", json.dumps({"goal": "g"}), json.dumps(SPEC)])
+    team = LangflowTeam(settings, client=client, check_capacity=lambda: [], check_ollama=lambda: None)
+    spec = team.specify(context())
+    assert spec.acceptance_criteria[0].id == "AC-01"
+    assert team.last_call.attempts == 3 and team.last_call.engine == "qwen3:30b-instruct"
+    assert "format_feedback" not in client.calls[0][1] and "format_feedback" in client.calls[2][1]
+
+
+def test_gives_up_after_three_invalid_answers(settings):
+    team = LangflowTeam(settings, client=FakeClient(["x", "y", "z"]), check_capacity=lambda: [], check_ollama=lambda: None)
+    with pytest.raises(InvalidModelOutput, match="after 3 attempts"):
+        team.specify(context())
+
+
+def test_busy_gx10_stops_before_any_model_call(settings):
+    client = FakeClient([json.dumps(SPEC)])
+    team = LangflowTeam(settings, client=client, check_capacity=lambda: ["GPU utilization 95% is above 20%"],
+                        check_ollama=lambda: None)
+    with pytest.raises(CapacityBusy, match="GPU"):
+        team.specify(context())
+    assert client.calls == []
+
+
+def test_doing_roles_remain_mocked(settings):
+    team = LangflowTeam(settings, client=FakeClient([]), check_capacity=lambda: [], check_ollama=lambda: None)
+    assert team.validate(context(), None).detail.startswith("mock:")
+
+
+def test_normalize_joins_list_sentences_in_test_cases():
+    data = normalize.test_plan({"cases": [{"task_id": "T1", "criterion": "AC-1", "description": ["given", "when"],
+                                           "expected": ["a", "b"], "target_file": "tests/x.test.js"}]})
+    case = data["cases"][0]
+    assert case["expected"] == "a; b" and case["description"] == "given; when" and case["id"] == "TC-1"
+
+
+def test_unreachable_ollama_postpones_instead_of_failing(settings, monkeypatch):
+    from controller.app.team import langflow_team
+    from controller.app.tunnel import TunnelStatus
+    monkeypatch.setattr(langflow_team, "tunnel_status", lambda s: TunnelStatus("external"))
+    team = LangflowTeam(settings, client=FakeClient([json.dumps(SPEC)]), check_capacity=lambda: [])
+    monkeypatch.setattr(team, "_ollama_reachable", lambda: False)
+    with pytest.raises(CapacityBusy, match="does not answer"):
+        team.specify(context())
+
+
+def test_tech_lead_sees_ui_files_but_not_test_contents(settings):
+    plan = {"summary": "s", "tasks": [{"id": "T1", "title": "Add due date", "modify": ["src/tasks.js"],
+                                       "acceptance_criteria": ["AC-1"]}]}
+    client = FakeClient([json.dumps(plan)])
+    team = LangflowTeam(settings, client=client, check_capacity=lambda: [], check_ollama=lambda: None)
+    base = context()
+    files = ["src/tasks.js", "src/index.html", "src/styles.css", "docs/page.html", "test/tasks.test.js"]
+    selected = [{"path": "src/tasks.js", "content": "x", "truncated": False},
+                {"path": "test/tasks.test.js", "content": "y", "truncated": False}]
+    team.plan(RunContext(**{**base.__dict__, "repository": {"files": files, "symbols": {}, "selected_files": selected}}))
+    repository = client.calls[0][1]["repository"]
+    assert [f["path"] for f in repository["selected_files"]] == ["src/tasks.js"]
+    assert repository["ui_files"] == ["src/index.html", "src/styles.css"]
+
+
+def test_a_long_constitution_is_cut_for_qwen_but_not_for_subscription_clis():
+    from controller.app.config import Settings
+    from controller.app.team.base import RunContext
+    from controller.app.team.langflow_team import LangflowTeam
+    from controller.app.team.readonly import ReadonlyTeam
+    settings = Settings(constitution_char_budget=20)
+    context = RunContext(title="t", policy=None, agents_md="", review_md=None, intent_md="", files=[],
+                         constitution_md="R" * 50)
+    qwen = LangflowTeam(settings, client=object(), check_capacity=lambda: [], check_ollama=lambda: None)
+    assert qwen._constitution(context).startswith("R" * 20 + "\n\n[cut:")
+    assert ReadonlyTeam(settings, "claude", client=object())._constitution(context) == "R" * 50

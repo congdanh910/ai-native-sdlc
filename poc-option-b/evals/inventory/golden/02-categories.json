@@ -1,0 +1,31 @@
+{
+  "tasks": [
+    {
+      "id": "category-model",
+      "description": "Add optional normalized category to Item and filter_by_category in items.py",
+      "dependencies": [],
+      "allowed_paths": [
+        "inventory/items.py"
+      ],
+      "acceptance_criteria": []
+    },
+    {
+      "id": "category-store",
+      "description": "Load files without category as none and save it",
+      "dependencies": [],
+      "allowed_paths": [
+        "inventory/store.py"
+      ],
+      "acceptance_criteria": []
+    },
+    {
+      "id": "category-cli",
+      "description": "Add --category, list --category and the category column",
+      "dependencies": [],
+      "allowed_paths": [
+        "inventory/cli.py"
+      ],
+      "acceptance_criteria": []
+    }
+  ]
+}

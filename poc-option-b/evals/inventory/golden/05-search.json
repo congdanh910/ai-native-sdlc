@@ -1,0 +1,22 @@
+{
+  "tasks": [
+    {
+      "id": "search-model",
+      "description": "Add search_items(items, text) in items.py",
+      "dependencies": [],
+      "allowed_paths": [
+        "inventory/items.py"
+      ],
+      "acceptance_criteria": []
+    },
+    {
+      "id": "search-cli",
+      "description": "Add list --search and the no-match line",
+      "dependencies": [],
+      "allowed_paths": [
+        "inventory/cli.py"
+      ],
+      "acceptance_criteria": []
+    }
+  ]
+}

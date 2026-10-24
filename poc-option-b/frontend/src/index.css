@@ -1,0 +1,116 @@
+@import "tailwindcss";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Design tokens: light by default, dark under .dark on <html>. Components use only these names. */
+:root {
+  --bg: #f7f7f5;
+  --panel: #ffffff;
+  --sunken: #f2f2ef;
+  --side: #fbfbfa;
+  --line: #e4e4df;
+  --line-strong: #d4d4ce;
+  --ink: #16181d;
+  --ink-2: #3a3f4a;
+  --muted: #5f6470;
+  --accent: #2448e8;
+  --accent-ink: #1a35b0;
+  --accent-soft: #ebedfd;
+  --good: #15803d;
+  --good-soft: #e8f5ec;
+  --warn: #9a4a0a;
+  --warn-soft: #fdf1e4;
+  --flag: #8a5a00;
+  --flag-soft: #fff4d6;
+  --bad: #b91c1c;
+  --bad-soft: #fdecec;
+  --violet: #5b2db0;
+  --violet-soft: #f1ecfb;
+  --code-bg: #16181d;
+  --code-ink: #e6e6e3;
+}
+.dark {
+  --bg: #0f1013;
+  --panel: #16181d;
+  --sunken: #1d2026;
+  --side: #121418;
+  --line: #2a2d35;
+  --line-strong: #3a3e48;
+  --ink: #ededea;
+  --ink-2: #c9cbd1;
+  --muted: #9a9fab;
+  --accent: #7c93ff;
+  --accent-ink: #a9b8ff;
+  --accent-soft: #1d2447;
+  --good: #4ade80;
+  --good-soft: #13281c;
+  --warn: #fdba74;
+  --warn-soft: #2c1d10;
+  --flag: #facc15;
+  --flag-soft: #2a240c;
+  --bad: #f87171;
+  --bad-soft: #2d1414;
+  --violet: #c4b5fd;
+  --violet-soft: #231a3b;
+  --code-bg: #0b0c0f;
+  --code-ink: #e6e6e3;
+}
+
+@theme inline {
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, monospace;
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-sunken: var(--sunken);
+  --color-side: var(--side);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-good: var(--good);
+  --color-good-soft: var(--good-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-flag: var(--flag);
+  --color-flag-soft: var(--flag-soft);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --color-violet: var(--violet);
+  --color-violet-soft: var(--violet-soft);
+  --color-code-bg: var(--code-bg);
+  --color-code-ink: var(--code-ink);
+}
+
+/* Base styles live in the base layer so Tailwind utilities (text colours on links and buttons) win. */
+@layer base {
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { color: var(--accent-ink); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+}
+
+/* Rendered markdown of the artifact thread (intent, spec, review, report). */
+.md h1 { font-size: 20px; margin: 0 0 12px; letter-spacing: -0.01em; }
+.md h2 { font-size: 16px; margin: 20px 0 8px; }
+.md h3 { font-size: 14px; margin: 16px 0 6px; }
+/* not inside a diagram: Mermaid measures its labels at the page line-height, a taller one clips their last line */
+.md :is(p, li):not(svg *) { line-height: 1.6; color: var(--ink-2); }
+.md ul, .md ol { padding-left: 20px; }
+.md code { font-family: var(--font-mono); font-size: 12.5px; background: var(--sunken); padding: 1px 5px; border-radius: 5px; }
+.md table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 13px; }
+.md th, .md td { border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
+.md th { color: var(--muted); font-weight: 600; }

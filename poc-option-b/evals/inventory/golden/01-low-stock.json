@@ -1,0 +1,31 @@
+{
+  "tasks": [
+    {
+      "id": "threshold-model",
+      "description": "Add threshold to Item with default 0, validation, set_threshold and low_stock_items in items.py",
+      "dependencies": [],
+      "allowed_paths": [
+        "inventory/items.py"
+      ],
+      "acceptance_criteria": []
+    },
+    {
+      "id": "threshold-store",
+      "description": "Load files without threshold as 0 and save it",
+      "dependencies": [],
+      "allowed_paths": [
+        "inventory/store.py"
+      ],
+      "acceptance_criteria": []
+    },
+    {
+      "id": "threshold-cli",
+      "description": "Add --threshold, the threshold command and list --low",
+      "dependencies": [],
+      "allowed_paths": [
+        "inventory/cli.py"
+      ],
+      "acceptance_criteria": []
+    }
+  ]
+}

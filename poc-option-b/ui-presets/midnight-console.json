@@ -1,0 +1,31 @@
+{
+  "id": "midnight-console",
+  "name": "Midnight console",
+  "layout": "sidebar",
+  "template": "console",
+  "density": "compact",
+  "best_for": "control rooms and monitoring: dark, dense, glowing accents (in the style of Linear)",
+  "tokens": {
+    "colors": {
+      "primary": "#9D8CFF",
+      "on_primary": "#0B0D12",
+      "accent": "#22D3EE",
+      "background": "#0B0D12",
+      "surface": "#141821",
+      "text": "#E7E9EE",
+      "muted": "#9AA3B2",
+      "border": "#262C38",
+      "success": "#34D399",
+      "warning": "#FBBF24",
+      "danger": "#F87171",
+      "sidebar": "#0F1218",
+      "on_sidebar": "#C9CED8"
+    },
+    "font_family": "Inter, 'SF Pro Text', -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+    "heading_font": "Inter, 'SF Pro Text', -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+    "base_size": 14,
+    "radius": 10,
+    "spacing": 8,
+    "shadow": "0 0 0 1px rgba(157,140,255,.06), 0 8px 24px rgba(0,0,0,.35)"
+  }
+}

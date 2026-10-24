@@ -1,0 +1,21 @@
+# Plan-only eval suite: the five Task Board features of the v1 pilot.
+# Golden plans are the human-approved plans of that pilot (plan v2 of each feature).
+name: task-board
+project: task-board                  # register it on branch sdlc-v3/onboarding of ai-native-product-demo
+base_commit: 69c0dd74c3329bdc7e9b981cde82ab4fca201aa5  # pilot base ec9cdeb plus onboarding files only
+cases:
+  - id: search-filter
+    feature: features/01-search-filter.md
+    golden: golden/01-search-filter.json
+  - id: due-dates
+    feature: features/02-due-dates.md
+    golden: golden/02-due-dates.json
+  - id: priority
+    feature: features/03-priority.md
+    golden: golden/03-priority.json
+  - id: archive
+    feature: features/04-archive.md
+    golden: golden/04-archive.json
+  - id: backup
+    feature: features/05-backup.md
+    golden: golden/05-backup.json

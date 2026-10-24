@@ -1,0 +1,40 @@
+# Copy to the root of a repository as .sdlc/project.yaml and adapt it.
+schema_version: 1
+project: task-board                  # must equal the key used when adding the project
+default_branch: main
+validation_image: node-20            # pinned toolchain image (used from B4)
+setup: ["npm", "ci", "--ignore-scripts"]
+validation:                          # argument arrays, never shell strings
+  - name: unit-tests
+    run: ["npm", "test"]
+    timeout_seconds: 300
+  - name: syntax
+    run: ["node", "--check", "src/app.js"]
+paths:
+  allowed: ["src/**"]                # the Developer may only change these
+  tests: ["test/**"]                 # the QA Engineer may only add tests here
+  protected: []                      # added to the platform's protected paths
+testing:
+  red_check: true
+context:
+  include: ["src/**", "test/**", "README.md", "package.json"]
+  exclude: []
+executors: [codex, claude]
+default_executor: codex
+limits:
+  max_tasks: 6
+  max_changed_files: 15
+  # Optional; the values below are the defaults.
+  # session_timeout_minutes: 20        # one QA Engineer or Developer CLI session
+  # thinking_timeout_minutes: 10       # one call of a read-only CLI thinking role (BA, Tech Lead, ...)
+  # setup_timeout_minutes: 15          # the setup commands in the container
+  # max_remediations: 2                # Developer retries after a failed validation
+  # max_format_retries: 2              # thinking-role retries after an answer breaks the contract
+  # container: {cpus: 2, memory_mb: 2048, pids: 512, tmp_mb: 256}   # validation container resources
+stages:                              # manual | gated | auto
+  spec: gated
+  plan: gated                        # always gated (or manual)
+  coding: auto
+  review: auto
+artifacts:
+  commit_to_repo: true

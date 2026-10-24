@@ -1,0 +1,348 @@
+"""Thinking roles on a subscription CLI in read-only mode (`claude-readonly`, `codex-readonly`), for experiments.
+
+The CLI gets the same role prompt and the same JSON input as Qwen3, may read the
+run's worktree to check names, and writes nothing. Its answer goes through the
+same normalisation, contract validation, retries and grounding check, so engines
+can be compared on the same eval suite. Approved by the operator on 2026-10-13
+for eval runs and experiment runs; on 2026-10-14, after the engine comparison,
+also for the Tech Lead and QA Analyst of normal runs (SDLC_ENGINES).
+"""
+
+import json
+from pathlib import Path
+import shlex
+import sys
+import tempfile
+
+from controller.app import joblog
+from controller.app.config import Settings
+from controller.app.doing.executors import GUARD, LIMIT, _base_env, sandboxed_env
+from controller.app.doing.process import run_bounded
+from controller.app.doing.sandbox import codex_args
+from controller.app.integrations.langflow import FLOW_PREFIX, LangflowError, role_prompt
+from controller.app.team.base import CallRecord, RunContext, SubscriptionLimit
+from controller.app.team.langflow_team import LangflowTeam
+
+ENGINES = ("qwen3", "claude-readonly", "codex-readonly")
+THINKING_ROLES = ("business_analyst", "tech_lead", "qa_analyst", "code_reviewer")
+READONLY_NOTE = ("You may read the files in the current directory: the repository, to check file names, functions and "
+                 "tests, or in discovery the raw requirement source the input names. "
+                 "Do not change, create or run anything. The input JSON follows.")
+
+
+class CliReasoningClient:
+    """Stands in for the Langflow client: the same endpoint and payload, answered by a read-only CLI session."""
+
+    def __init__(self, cli: str, runner=run_bounded, timeout: float = 600):
+        self.cli, self.runner = cli, runner
+        self.cwd: str | None = None
+        self.timeout = timeout  # set per call from the project's limits.thinking_timeout_minutes
+        self.last_usage: dict = {}
+
+    model, effort = "", ""  # set per call by RoutingTeam from the AI providers settings; empty: the CLI's default
+
+    def args(self, cwd: str, last_message: Path) -> list[str]:
+        if self.cli == "claude":
+            tools = ["Read", "Glob", "Grep"]
+            hook = f"{shlex.quote(sys.executable)} -I {shlex.quote(str(GUARD))}"  # reads stay in the folder
+            settings = {"hooks": {"PreToolUse": [{"matcher": "Read|Glob|Grep",
+                                                  "hooks": [{"type": "command", "command": hook}]}]}}
+            return ["claude", "-p", "--output-format", "stream-json", "--verbose", "--permission-mode", "dontAsk",
+                    "--no-session-persistence", "--setting-sources", "local", "--strict-mcp-config",
+                    *(["--model", self.model] if self.model else []),
+                    "--tools", ",".join(tools), "--allowedTools", *tools, "--settings", json.dumps(settings)]
+        # A discovery reads its sources folder, which is not a git repository; the folder is read-only to it.
+        return ["codex", "exec", "--cd", cwd, "--ephemeral", "--skip-git-repo-check", *codex_args(Path(cwd), write=False),
+                *(["-m", self.model] if self.model else []),
+                *(["-c", f'model_reasoning_effort="{self.effort}"'] if self.effort else []),
+                "-c", 'approval_policy="never"', "--json", "--output-last-message", str(last_message), "-"]
+
+    def run(self, endpoint: str, payload: dict, *, session_id: str) -> str:
+        role = endpoint.removeprefix(FLOW_PREFIX)
+        prompt = f"{role_prompt(role).text}\n{READONLY_NOTE}\n\n{json.dumps(payload, indent=1, ensure_ascii=False)}\n"
+        joblog.save_prompt(f"{role}-{self.cli}", prompt)
+        with tempfile.TemporaryDirectory(prefix="sdlc-readonly-") as tmp:
+            cwd = self.cwd if self.cwd and Path(self.cwd).is_dir() else tmp
+            last = Path(tmp) / "last-message.txt"
+            env = _base_env() | {"SDLC_GUARD_ROOT": cwd, "SDLC_GUARD_ALLOW": "[]"} if self.cli == "claude" \
+                else sandboxed_env()
+            result = self.runner(self.args(cwd, last), cwd=Path(cwd), timeout=self.timeout, input_text=prompt, env=env)
+            message = last.read_text() if last.exists() else ""
+        self.last_usage = {"seconds": result.seconds}
+        if self.cli == "claude":
+            try:
+                data = json.loads(result.output.strip().splitlines()[-1])
+                message = str(data.get("result") or "")
+                self.last_usage.update({"cost_usd": data.get("total_cost_usd"), "turns": data.get("num_turns"),
+                                        **(data.get("usage") or {})})
+                failed = bool(data.get("is_error")) or not result.ok
+            except (ValueError, IndexError, AttributeError):
+                message, failed = result.output, True
+        else:
+            failed = not result.ok
+            for line in result.output.splitlines():
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(event, dict) and isinstance(event.get("usage"), dict):
+                    self.last_usage.update(event["usage"])
+        if failed:
+            text = message or result.tail(5)
+            if LIMIT.search(text):
+                raise SubscriptionLimit(f"{self.cli} subscription limit reached: {text[-200:]}")
+            raise LangflowError(f"{self.cli} read-only session failed: {text[-300:]}")
+        return message
+
+
+class ReadonlyTeam(LangflowTeam):
+    """LangflowTeam's contracts and retries, with a read-only CLI in place of Langflow and Qwen3."""
+
+    def __init__(self, settings: Settings, cli: str, client: CliReasoningClient | None = None):
+        super().__init__(settings, client=client or CliReasoningClient(cli, timeout=settings.thinking_timeout_seconds),
+                         check_capacity=lambda: [],
+                         check_ollama=lambda: None)
+        self.engine = f"{cli}-readonly"
+
+    def _ensure_capacity(self) -> None:  # no GX10 involved
+        return None
+
+    def _ask(self, role, payload, contract, repair, session_id, retries=None):
+        result = super()._ask(role, payload, contract, repair, session_id, retries=retries)
+        call = self.last_call
+        self.last_call = CallRecord(self.engine, call.prompt_version, call.attempts, usage=dict(self.client.last_usage))
+        return result
+
+    def _constitution(self, context: RunContext) -> str:
+        return context.constitution_md or ""  # subscription CLIs have room for the whole file
+
+    def _in(self, context: RunContext):
+        self.client.cwd = context.worktree or None
+        if hasattr(self.client, "timeout") and context.policy is not None:
+            self.client.timeout = context.policy.thinking_timeout_seconds
+
+    def specify(self, context):
+        self._in(context)
+        return super().specify(context)
+
+    def write_srs(self, context):
+        self._in(context)
+        return super().write_srs(context)
+
+    def write_sds(self, context):
+        self._in(context)
+        return super().write_sds(context)
+
+    def plan(self, context):
+        self._in(context)
+        return super().plan(context)
+
+    def design_options(self, context):
+        self._in(context)
+        return super().design_options(context)
+
+    def write_onboarding(self, context):
+        self._in(context)
+        return super().write_onboarding(context)
+
+    def design_tests(self, context, plan):
+        self._in(context)
+        return super().design_tests(context, plan)
+
+    def review(self, context, plan, tests, diff="", validation=""):
+        self._in(context)
+        return super().review(context, plan, tests, diff=diff, validation=validation)
+
+    def advise(self, context, stop):
+        self._in(context)  # reads the tests and the code it quotes
+        return super().advise(context, stop)
+
+    def check_defects(self, context, notes):
+        self._in(context)  # reads SDS.md, SRS.md and the code the notes name
+        return super().check_defects(context, notes)
+
+    def triage_regressions(self, context, failing):
+        self._in(context)  # reads the failing tests and the code the story changed
+        return super().triage_regressions(context, failing)
+
+    def design_ui(self, context, brief):
+        self._in(context)  # reads SRS.md and the repository
+        return super().design_ui(context, brief)
+
+    def suggest_outcomes(self, story):
+        self.client.cwd = None  # the excerpts are in the input; nothing to read
+        return super().suggest_outcomes(story)
+
+    def order_backlog(self, context):
+        self.client.cwd = None  # the SRS and SDS excerpts are in the input
+        return super().order_backlog(context)
+
+    @property
+    def reads_files(self) -> bool:  # Claude Code's Read tool opens PDFs (20 pages a call) and images
+        return self.engine == "claude-readonly"
+
+    def extract_part(self, context, part):
+        self._in(context)
+        self.client.cwd = context.sources_dir or None  # the raw files, never the repository
+        return super().extract_part(context, part)
+
+    def consolidate(self, context, items, gaps, decisions=(), asked=(), round_info=None):
+        self._in(context)
+        self.client.cwd = None  # the inventory is in the input; nothing to read
+        return super().consolidate(context, items, gaps, decisions, asked, round_info)
+
+    def read_minutes(self, context, part, questions, items):
+        self._in(context)
+        self.client.cwd = context.sources_dir or None
+        return super().read_minutes(context, part, questions, items)
+
+
+class RoutingTeam:
+    """Picks the engine of each thinking role from the run (pinned at creation); everything else goes to the base."""
+
+    def __init__(self, base, settings: Settings, factory=None):
+        self.base, self.settings = base, settings
+        self.factory = factory or (lambda cli: ReadonlyTeam(settings, cli))
+        self._teams: dict[str, object] = {}
+        self.last_call = None
+
+    @property
+    def engine(self) -> str:
+        return self.base.engine
+
+    def _for(self, context: RunContext, role: str):
+        engine = (context.engines or {}).get(role, self.settings.sdlc_default_engine)
+        if engine == "qwen3":
+            return self.base
+        if engine not in ENGINES:
+            raise ValueError(f"unknown reasoning engine {engine!r}")
+        cli = engine.removesuffix("-readonly")
+        if cli not in self._teams:
+            self._teams[cli] = self.factory(cli)
+        return self._teams[cli]
+
+    def _route(self, context: RunContext, role: str, method: str, *args, **kwargs):
+        """The role's engines in order (AI providers); one whose subscription is used up is marked limited and the
+        next one answers in the same job. Experiments keep their pinned engine: they compare engines."""
+        from controller.app import providers
+        first = (context.engines or {}).get(role, self.settings.sdlc_default_engine)
+        engines = [first] if getattr(context, "experiment", False) else providers.chain("thinking", role, first)
+        free, back = providers.available(engines)
+        if not free:
+            raise SubscriptionLimit(f"every engine of the {role} is out of quota ({', '.join(engines)})", until=back)
+        last: SubscriptionLimit | None = None
+        for engine in free:
+            team = self._team(engine)
+            client = getattr(team, "client", None)
+            if client is not None and hasattr(client, "model"):  # the Admin's model for this role on this provider
+                client.model, client.effort = providers.model_for(role, engine)
+                if client.model or client.effort:
+                    from controller.app import joblog
+                    joblog.note(f"{role} on {engine}: model {client.model or 'default'}"
+                                + (f", effort {client.effort}" if client.effort else ""))
+            try:
+                return self._call(team, method, *args, **kwargs)
+            except SubscriptionLimit as exc:
+                last = exc
+                until = providers.mark_limited(engine, str(exc))
+                from controller.app import joblog
+                joblog.note(f"{engine} is out of quota until {until.astimezone():%H:%M}; the {role} moves to the next engine")
+        _, back = providers.available(engines)
+        raise SubscriptionLimit(f"every engine of the {role} is out of quota: {last}", until=back)
+
+    def _team(self, engine: str):
+        if engine == "qwen3":
+            return self.base
+        if engine not in ENGINES:
+            raise ValueError(f"unknown reasoning engine {engine!r}")
+        cli = engine.removesuffix("-readonly")
+        if cli not in self._teams:
+            self._teams[cli] = self.factory(cli)
+        return self._teams[cli]
+
+    def _call(self, team, method: str, *args, **kwargs):
+        try:
+            return getattr(team, method)(*args, **kwargs)
+        finally:
+            self.last_call = getattr(team, "last_call", None)
+
+    def draft_intent(self, *args, **kwargs):
+        return self._call(self.base, "draft_intent", *args, **kwargs)
+
+    def specify(self, context):
+        return self._route(context, "business_analyst", "specify", context)
+
+    def write_srs(self, context):
+        return self._route(context, "business_analyst", "write_srs", context)
+
+    def write_sds(self, context):  # the Architect reasons on the Tech Lead's engine
+        return self._route(context, "tech_lead", "write_sds", context)
+
+    def plan(self, context):
+        return self._route(context, "tech_lead", "plan", context)
+
+    def design_options(self, context):  # the Architect reasons on the Tech Lead's engine
+        return self._route(context, "tech_lead", "design_options", context)
+
+    def write_onboarding(self, context):  # the Architect reasons on the Tech Lead's engine
+        return self._route(context, "tech_lead", "write_onboarding", context)
+
+    def design_tests(self, context, plan):
+        return self._route(context, "qa_analyst", "design_tests", context, plan)
+
+    def review(self, context, plan, tests, diff="", validation=""):
+        return self._route(context, "code_reviewer", "review", context, plan, tests, diff=diff,
+                          validation=validation)
+
+    def advise(self, context, stop):  # the Code Reviewer reads tests and code for a living
+        return self._route(context, "code_reviewer", "advise", context, stop)
+
+    def check_defects(self, context, notes):
+        return self._route(context, "code_reviewer", "check_defects", context, notes)
+
+    def triage_regressions(self, context, failing):
+        return self._route(context, "code_reviewer", "triage_regressions", context, failing)
+
+    def design_ui(self, context, brief):  # the UX Designer reasons on the Tech Lead's engine, like the Architect
+        return self._route(context, "tech_lead", "design_ui", context, brief)
+
+    def extract_part(self, context, part):
+        return self._route(context, "business_analyst", "extract_part", context, part)
+
+    def consolidate(self, context, items, gaps, decisions=(), asked=(), round_info=None):
+        return self._route(context, "business_analyst", "consolidate", context, items, gaps, decisions, asked,
+                          round_info)
+
+    def read_minutes(self, context, part, questions, items):
+        return self._route(context, "business_analyst", "read_minutes", context, part, questions, items)
+
+    def __getattr__(self, name):  # doing roles and anything else
+        return getattr(self.base, name)
+
+
+def validate_engines(engines: dict | None, default: str | None = None, qwen_enabled: bool | None = None) -> dict:
+    """Every thinking role's engine; a role not named gets `default` (SDLC_DEFAULT_ENGINE). With Qwen disabled
+    (SDLC_QWEN_ENABLED=false) no role may use qwen3."""
+    if default is None or qwen_enabled is None:
+        from controller.app.config import get_settings
+        settings = get_settings()
+        default = settings.sdlc_default_engine if default is None else default
+        qwen_enabled = settings.sdlc_qwen_enabled if qwen_enabled is None else qwen_enabled
+    engines = dict(engines or {})
+    for role, engine in engines.items():
+        if role not in THINKING_ROLES:
+            raise ValueError(f"unknown thinking role {role!r}; use {', '.join(THINKING_ROLES)}")
+        if engine not in ENGINES:
+            raise ValueError(f"unknown engine {engine!r} for {role}; use {', '.join(ENGINES)}")
+    if default not in ENGINES:
+        raise ValueError(f"unknown SDLC_DEFAULT_ENGINE {default!r}; use {', '.join(ENGINES)}")
+    resolved = {role: engines.get(role, default) for role in THINKING_ROLES}
+    if not qwen_enabled and "qwen3" in resolved.values():
+        roles = [role for role, engine in resolved.items() if engine == "qwen3"]
+        raise ValueError(f"Qwen is disabled (SDLC_QWEN_ENABLED=false) but {', '.join(roles)} would use qwen3; "
+                         "set SDLC_DEFAULT_ENGINE or SDLC_ENGINES to a read-only CLI")
+    return resolved
+
+
+def describe(engines: dict) -> str:
+    return " ".join(shlex.quote(f"{role}={engine}") for role, engine in engines.items() if engine != "qwen3") or "qwen3"

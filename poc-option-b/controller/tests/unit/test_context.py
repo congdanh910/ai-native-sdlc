@@ -1,0 +1,196 @@
+from controller.app.context.builder import build_context, keywords, symbols_of
+from controller.app.context.grounding import check_plan
+from controller.app.projects.config import effective_policy, parse_project_config
+from controller.app.projects.repo import Mirror
+from controller.app.schemas import Criterion, PlanPayload, TestPlan
+from controller.tests.conftest import git
+from controller.app.config import PROJECT_ROOT
+
+JS = """export const STORAGE_KEY = "board:v1";
+export function createTask(tasks, input) { return tasks; }
+function render() {}
+class Board {}
+"""
+
+
+def test_symbols_for_js_and_python():
+    assert symbols_of("src/tasks.js", JS) == ["createTask", "STORAGE_KEY", "render", "Board"]
+    assert symbols_of("app/x.py", "def load():\n    pass\nclass Store:\n    pass\nLIMIT = 3\n") == ["load", "Store", "LIMIT"]
+    assert symbols_of("README.md", "# x") == []
+
+
+def test_keywords_drop_short_and_common_words():
+    assert keywords("Each task can have an optional due date") == {"optional", "date"}
+
+
+def test_bundle_prefers_relevant_files_and_their_imports(sample_repo, tmp_path):
+    (sample_repo / "src" / "dates.js").write_text("export function parseDueDate(text) { return text; }\n")
+    (sample_repo / "src" / "app.js").write_text("import { parseDueDate } from './dates.js';\n")
+    (sample_repo / "src" / "other.js").write_text("export function unrelated() {}\n")
+    git(sample_repo, "add", ".")
+    git(sample_repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "-m", "more")
+    mirror = Mirror(tmp_path / "m.git")
+    mirror.clone(str(sample_repo))
+    commit = mirror.resolve("main")
+    files = mirror.list_files(commit)
+    bundle = build_context(mirror, commit, files, ["Show due date on src/app.js cards"], budget=5000)
+    selected = [f["path"] for f in bundle.selected_files]
+    assert selected[0] == "src/app.js" and "src/dates.js" in selected
+    assert "parseDueDate" in bundle.symbols["src/dates.js"]
+    small = build_context(mirror, commit, files, ["due date"], budget=0)
+    assert small.selected_files == [] and small.symbols
+
+
+def policy():
+    text = (PROJECT_ROOT / "examples/task-board/.sdlc/project.yaml").read_text()
+    return effective_policy(parse_project_config(text))
+
+
+FILES = {"src/tasks.js", "src/app.js", "test/tasks.test.js"}
+SYMBOLS = {"src/tasks.js": {"createTask", "STORAGE_KEY"}}
+CRITERIA = [Criterion(id="AC-1", text="a"), Criterion(id="AC-2", text="b")]
+
+
+def plan(**task):
+    base = {"id": "T1", "title": "Add due date", "modify": ["src/tasks.js"], "acceptance_criteria": ["AC-1", "AC-2"],
+            "validation": ["unit-tests"], "references": [{"file": "src/tasks.js", "symbol": "createTask"}]}
+    return PlanPayload(summary="s", tasks=[{**base, **task}])
+
+
+def tests(*cases):
+    default = [{"id": "TC-1", "task_id": "T1", "criterion": "AC-1", "description": "d", "expected": "e",
+                "target_file": "test/tasks.test.js"},
+               {"id": "TC-2", "task_id": "T1", "criterion": "AC-2", "description": "d", "expected": "e",
+                "target_file": "test/tasks.test.js"}]
+    return TestPlan(cases=list(cases) or default)
+
+
+def test_grounded_plan_passes():
+    assert check_plan(plan(), tests(), CRITERIA, policy(), FILES, SYMBOLS) == {"status": "pass", "findings": [],
+                                                                              "warnings": []}
+
+
+def test_markup_without_stylesheet_is_a_warning_not_a_failure():
+    files = FILES | {"src/index.html", "src/styles.css"}
+    report = check_plan(plan(modify=["src/tasks.js", "src/index.html"]), tests(), CRITERIA, policy(), files, SYMBOLS)
+    assert report["status"] == "pass" and "no stylesheet (src/styles.css)" in report["warnings"][0]
+    styled = check_plan(plan(modify=["src/index.html", "src/styles.css"]), tests(), CRITERIA, policy(), files, SYMBOLS)
+    assert styled["warnings"] == []
+
+
+def test_grounding_catches_the_pilot_mistakes():
+    bad = plan(modify=["src/board.js"], references=[{"file": "src/app.js", "symbol": "renderBoard"}],
+               create=["src/tasks.js"], validation=["lint"])
+    findings = check_plan(bad, tests(), CRITERIA, policy(), FILES, SYMBOLS)["findings"]
+    text = "\n".join(findings)
+    assert "src/board.js, which neither exists" in text
+    assert "renderBoard in src/app.js, which is not defined there" in text
+    assert "creates src/tasks.js, which already exists" in text
+    assert "unknown validation lint" in text
+
+
+def test_grounding_checks_paths_and_coverage():
+    bad = plan(modify=["test/tasks.test.js", ".github/workflows/ci.yml"], acceptance_criteria=["AC-1", "AC-9"])
+    one_case = tests({"id": "TC-1", "task_id": "T7", "criterion": "AC-1", "description": "d", "expected": "e",
+                      "target_file": "src/tasks.js"})
+    text = "\n".join(check_plan(bad, one_case, CRITERIA, policy(), FILES | {".github/workflows/ci.yml"}, SYMBOLS)["findings"])
+    for expected in ("changes test file test/tasks.test.js", "touches protected path .github/workflows/ci.yml",
+                     "unknown acceptance criterion AC-9", "no task delivers AC-2", "unknown task T7",
+                     "outside the test paths", "no test case proves AC-2"):
+        assert expected in text, expected
+
+
+def test_references_to_symbols_added_by_a_dependency_are_grounded():
+    tasks = [
+        {"id": "T1", "title": "Add filter model", "modify": ["src/tasks.js"], "provides": ["filterTasks"],
+         "acceptance_criteria": ["AC-1"], "validation": ["unit-tests"]},
+        {"id": "T2", "title": "Wire the filter", "depends_on": ["T1"], "modify": ["src/app.js"],
+         "references": [{"file": "src/tasks.js", "symbol": "filterTasks"}], "acceptance_criteria": ["AC-2"],
+         "validation": ["unit-tests"]},
+        {"id": "T3", "title": "Unrelated", "modify": ["src/app.js"],
+         "references": [{"file": "src/tasks.js", "symbol": "filterTasks"}], "acceptance_criteria": ["AC-2"],
+         "validation": ["unit-tests"]},
+    ]
+    report = check_plan(PlanPayload(summary="s", tasks=tasks), tests(), CRITERIA, policy(), FILES, SYMBOLS)
+    assert report["findings"] == ["T3 references filterTasks in src/tasks.js, which is not defined there"]
+
+
+def test_references_to_files_created_by_a_dependency_are_grounded():
+    """A new project starts empty: later tasks use the modules earlier tasks create (attendance AUTH-US-01)."""
+    tasks = [
+        {"id": "T1", "title": "Add security helpers", "create": ["src/security.js"], "provides": ["hashPassword"],
+         "acceptance_criteria": ["AC-1"], "validation": ["unit-tests"]},
+        {"id": "T2", "title": "Wire login", "depends_on": ["T1"], "modify": ["src/app.js"],
+         "references": [{"file": "src/security.js", "symbol": "hashPassword"},
+                        {"file": "src/security.js", "symbol": "hashPassword"}],
+         "acceptance_criteria": ["AC-2"], "validation": ["unit-tests"]},
+        {"id": "T3", "title": "No dependency", "modify": ["src/app.js"],
+         "references": [{"file": "src/security.js", "symbol": "hashPassword"}], "acceptance_criteria": ["AC-2"],
+         "validation": ["unit-tests"]},
+        {"id": "T4", "title": "Wrong name", "depends_on": ["T1"], "modify": ["src/app.js"],
+         "references": [{"file": "src/security.js", "symbol": "verify"}], "acceptance_criteria": ["AC-2"],
+         "validation": ["unit-tests"]},
+    ]
+    report = check_plan(PlanPayload(summary="s", tasks=tasks), tests(), CRITERIA, policy(), FILES, SYMBOLS)
+    assert report["findings"] == [
+        "T3 references src/security.js, which does not exist and no task it depends on creates",
+        "T4 references verify in src/security.js, which is not defined there"]
+
+
+def test_a_task_may_modify_a_file_a_task_it_depends_on_creates():
+    """Foundation (attendance): T4 creates backend/app/main.py, T5 (after T4) adds its readiness routes to it."""
+    tasks = [
+        {"id": "T1", "title": "Create the API entry point", "create": ["src/main.js"], "acceptance_criteria": ["AC-1"],
+         "validation": ["unit-tests"]},
+        {"id": "T2", "title": "Add readiness routes", "depends_on": ["T1"], "modify": ["src/main.js"],
+         "acceptance_criteria": ["AC-2"], "validation": ["unit-tests"]},
+        {"id": "T3", "title": "No dependency", "modify": ["src/main.js"], "acceptance_criteria": ["AC-2"],
+         "validation": ["unit-tests"]},
+    ]
+    findings = check_plan(PlanPayload(summary="s", tasks=tasks), tests(), CRITERIA, policy(), FILES, SYMBOLS)["findings"]
+    assert findings == ["T3 modifies src/main.js, which neither exists at the base commit nor is created by a task "
+                        "it depends on"]
+
+
+def test_a_part_needs_its_dependency_manifest_before_its_code():
+    """Attendance foundation: T1 wrote backend tests, backend/pyproject.toml came in T2, every python command failed."""
+    tasks = [
+        {"id": "T1", "title": "Domain rules", "create": ["src/rules.js", "src/store.js"], "acceptance_criteria": ["AC-1"],
+         "validation": ["unit-tests"]},
+        {"id": "T2", "title": "Manifest and config", "create": ["src/package.json", "src/config.js"],
+         "acceptance_criteria": ["AC-2"], "validation": ["unit-tests"]},
+        {"id": "T3", "title": "After the manifest", "depends_on": ["T2"], "create": ["src/api.js"],
+         "acceptance_criteria": ["AC-2"], "validation": ["unit-tests"]},
+    ]
+    strict = policy().model_copy(update={"setup_inputs": ["src/package.json", "src/*.lock"]})
+    findings = check_plan(PlanPayload(summary="s", tasks=tasks), tests(), CRITERIA, strict, FILES, SYMBOLS)["findings"]
+    assert findings == ["T1 builds in src/ before src/package.json exists (T2 creates it later); setup installs that "
+                        "part's tools from it, so create it in this task or depend on the task that does"]
+
+
+def test_a_task_may_name_its_own_new_file_among_its_references():
+    """List Employees T3 created web/src/features/employees/EmployeeList.tsx and listed it as a reference too."""
+    tasks = [{"id": "T1", "title": "Build the list", "create": ["src/list.js"], "modify": ["src/app.js"],
+              "references": [{"file": "src/list.js", "symbol": "renderList"}, {"file": "src/app.js", "symbol": None}],
+              "acceptance_criteria": ["AC-1", "AC-2"], "validation": ["unit-tests"]}]
+    report = check_plan(PlanPayload(summary="s", tasks=tasks), tests(), CRITERIA, policy(), FILES, SYMBOLS)
+    assert not any("src/list.js" in f for f in report["findings"]), report["findings"]
+
+
+def test_a_test_case_in_a_folder_no_validation_runs_fails_grounding_and_the_tests_gate():
+    from controller.app import checklists
+    from controller.app.projects.config import ValidationCommand
+    commands = [ValidationCommand(name="unit-tests", run=["node", "--test", "test/unit"])]
+    runs_unit = policy().model_copy(update={"validation": commands})
+    unit_plan = plan(validation=["unit-tests"])
+    case = {"id": "TC-1", "task_id": "T1", "criterion": "AC-1", "description": "d", "expected": "e",
+            "target_file": "test/integration/tasks.test.js"}
+    findings = check_plan(unit_plan, tests(case, {**case, "id": "TC-2", "criterion": "AC-2",
+                                                  "target_file": "test/unit/tasks.test.js"}),
+                          CRITERIA, runs_unit, FILES, SYMBOLS)["findings"]
+    assert findings == ["TC-1 targets test/integration/tasks.test.js, which no validation command runs (they run "
+                        "tests in test/unit); put it in one of those"]
+    gate = {r["id"]: r for r in checklists.check_tests(tests(case), unit_plan, CRITERIA, ["test/**"], commands)}
+    assert not gate["test-run"]["ok"] and "TC-1: test/integration/tasks.test.js" in gate["test-run"]["detail"]
+    assert gate["test-run"]["fixes"][0]["action"] == "redesign_tests"
+    assert {r["id"]: r for r in checklists.check_tests(tests(case), unit_plan, CRITERIA, ["test/**"])}["test-run"]["ok"]

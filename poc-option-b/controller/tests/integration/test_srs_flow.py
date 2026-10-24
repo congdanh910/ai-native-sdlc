@@ -1,0 +1,407 @@
+"""The project SRS run: brief, Business Analyst, SRS gate, SRS.md in a draft PR."""
+
+import json
+import subprocess
+import uuid
+
+from fastapi.testclient import TestClient
+import pytest
+
+from controller.app.db import session_scope
+from controller.app.main import app
+from controller.app.models import Run
+from controller.app.project_docs import ProjectBrief, render_brief, render_srs
+from controller.app.schemas import FeedbackReply
+from controller.app.team.base import RunContext
+from controller.app.team.mock import MockTeam
+from controller.tests.integration.test_team_loop import TICKS, drain
+
+pytestmark = pytest.mark.integration
+client = TestClient(app, headers={"X-SDLC-Client": "web"})
+
+BRIEF = {"title": "Attendance", "summary": "Employees check in with a camera; HR sees attendance.",
+         "users": "- EMPLOYEE: checks in and out\n- HR: manages employees and reads reports",
+         "features": "- Check in with the camera\n- Attendance report for HR"}
+
+
+def post(path: str, body: dict | None = None, status: int = 200) -> dict:
+    response = client.post(path, json=body or {})
+    assert response.status_code == status, response.text
+    return response.json()
+
+
+def srs_document(run_id: str) -> dict:
+    detail = client.get(f"/api/runs/{run_id}").json()
+    return [d for d in detail["documents"] if d["kind"] == "srs"][-1]
+
+
+def test_srs_run_goes_from_brief_to_a_pull_request(db, sample_repo):
+    project = post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
+    assert {"name": "SRS.md", "status": "warn"}.items() <= next(
+        i for i in project["report"] if i["name"] == "SRS.md").items()
+
+    run = post("/api/runs", {"project": "task-board", "brief": BRIEF, "idempotency_key": str(uuid.uuid4())},
+               status=201)
+    assert run["kind"] == "srs" and run["title"] == "SRS: Attendance"
+    drain()
+
+    assert [(i["role"], i["action"]) for i in client.get("/api/inbox").json()] == [
+        ("product_owner", "waiting_spec_approval")]
+    srs = srs_document(run["id"])
+    assert srs["content"].startswith("# Attendance - Software Requirements Specification (SRS)")
+    for section in ("## 1. Introduction", "## 2. Conceptual Domain Model", "## 3. Functional Requirements (FR)",
+                    "## 6. Business Flows", "## 7. Features and User Stories", "## 8. External Dependencies"):
+        assert section in srs["content"]
+    assert "#### 7.1.1 CIW-US-01: Check in with the camera (EMPLOYEE)" in srs["content"]
+    assert "| CIW-FR-01 |" in srs["content"]
+
+    broken = client.post(f"/api/runs/{run['id']}/revise-spec", json={"content": "# SRS\n\nno sections"})
+    assert broken.status_code == 409 and "section '1. Introduction' is missing" in broken.json()["detail"]
+    edited = srs["content"].replace("Employees check in with a camera", "Employees check in with a face camera")
+    post(f"/api/runs/{run['id']}/revise-spec", {"content": edited, "reason": "name the camera"})
+    srs = srs_document(run["id"])
+    assert srs["version"] == 2 and srs["author_kind"] == "human"
+
+    post(f"/api/runs/{run['id']}/approve-spec", {"document_id": srs["id"], "sha256": srs["sha256"], "checked": TICKS})
+    drain()
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    assert detail["status"] == "WAITING_PR_APPROVAL" and detail["pull_request"]["simulated"]
+    assert detail["plans"] == [] and detail["tasks"] == []
+    with session_scope() as session:
+        worktree = session.get(Run, uuid.UUID(run["id"])).worktree_path
+    committed = subprocess.run(["git", "-C", worktree, "show", "HEAD~1:SRS.md"], capture_output=True, text=True,
+                               check=True).stdout
+    assert committed == edited
+    report = [d for d in detail["documents"] if d["kind"] == "report"][-1]["content"]
+    assert "| SRS.md | v2 |" in report
+
+    detail = post(f"/api/runs/{run['id']}/pr-decision", {"decision": "approve", "checked": TICKS})
+    assert detail["status"] == "COMPLETED"
+
+
+def test_srs_rejection_sends_the_reason_back_to_the_business_analyst(db, sample_repo):
+    post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
+    run = post("/api/runs", {"project": "task-board", "brief": BRIEF, "idempotency_key": str(uuid.uuid4())},
+               status=201)
+    drain()
+    post(f"/api/runs/{run['id']}/reject-spec", {"reason": "split the report by month"})
+    seen = []
+
+    class Recording:
+        def __getattr__(self, name):
+            return getattr(self.team, name)
+
+        def write_srs(self, context):
+            seen.append(context.feedback)
+            srs = self.team.write_srs(context)
+            return srs.model_copy(update={"purpose": srs.purpose + " Reports are split by month.",
+                                          "feedback_replies": [FeedbackReply(feedback="split by month",
+                                                                             change="Reports are split by month",
+                                                                             where=["1.1 Purpose"])]})
+
+    recording = Recording()
+    recording.team = MockTeam()
+    drain(recording)
+    assert seen == [["Reviewer asked for changes: split the report by month"]]
+    document = srs_document(run["id"])
+    assert document["version"] == 2
+    # the next gate shows what was asked, the reply, the sections that changed and the diff with v1
+    revision = document["revision"]
+    assert revision["from_version"] == 1 and revision["feedback"] == ["split the report by month"]
+    assert revision["replies"] == [{"feedback": "split by month", "change": "Reports are split by month",
+                                    "where": ["1.1 Purpose"]}]
+    assert [s["heading"] for s in revision["sections"]] == ["1.1 Purpose"]
+    diff = client.get(f"/api/runs/{run['id']}/documents/srs/diff", params={"base": 1, "head": 2}).json()["diff"]
+    assert "+" in diff and "Reports are split by month." in diff
+
+
+def test_blocking_question_in_the_brief_waits_for_the_product_owner(db, sample_repo):
+    post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
+    brief = {**BRIEF, "constraints": "- [blocking] Which camera model?"}
+    run = post("/api/runs", {"project": "task-board", "brief": brief, "idempotency_key": str(uuid.uuid4())},
+               status=201)
+    drain()
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    assert detail["status"] == "NEEDS_CLARIFICATION"
+    question = detail["clarifications"][0]
+    post(f"/api/runs/{run['id']}/answers", {"answers": {question["id"]: "Hikvision DS-K1T"}})
+    drain()
+    assert "Hikvision DS-K1T" in srs_document(run["id"])["content"]
+
+
+def test_a_run_takes_either_an_intent_or_a_brief(db, sample_repo):
+    post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
+    response = client.post("/api/runs", json={"project": "task-board", "idempotency_key": str(uuid.uuid4())})
+    assert response.status_code == 422
+
+
+ARCHITECTURE = {"title": "Attendance", "stack": "Node 20, PostgreSQL", "deployment": "One VM on the office network",
+                "integrations": "", "notes": ""}
+
+
+def with_srs(sample_repo) -> str:
+    """Put a rendered SRS on main, as if the SRS pull request had been merged."""
+    context = RunContext(title="Attendance", policy=None, agents_md="", review_md=None,
+                         intent_md=render_brief(ProjectBrief(**BRIEF)), files=[])
+    content = render_srs(MockTeam().write_srs(context), author="t")
+    (sample_repo / "SRS.md").write_text(content)
+    for args in (["add", "SRS.md"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "-m", "srs"]):
+        subprocess.run(["git", "-C", str(sample_repo), *args], check=True)
+    return content
+
+
+def choose_ui(run_id) -> None:
+    """The Product Owner picks the first UI concept, ticking the gate's items."""
+    detail = client.get(f"/api/runs/{run_id}").json()
+    assert detail["status"] == "WAITING_UI_APPROVAL"
+    concepts = [d for d in detail["documents"] if d["kind"] == "ui_concepts"][-1]
+    post(f"/api/runs/{run_id}/ui/choose", {"document_id": concepts["id"], "concept": concepts["ui"]["concepts"][0]["id"],
+                                           "reason": "fits the HR back office",
+                                           "checked": [h["id"] for h in detail["checklist"]["human"]]})
+    drain()
+
+
+def test_sds_needs_the_srs_first(db, sample_repo):
+    post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
+    response = client.post("/api/runs", json={"project": "task-board", "architecture": ARCHITECTURE,
+                                              "idempotency_key": str(uuid.uuid4())})
+    assert response.status_code == 409 and "no SRS.md" in response.json()["detail"]
+
+
+def test_sds_run_designs_every_srs_story_and_waits_for_the_tech_lead(db, sample_repo):
+    with_srs(sample_repo)
+    project = post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
+    assert next(i for i in project["report"] if i["name"] == "SRS.md")["detail"] == "present; 2 user stories in section 7"
+    assert next(i for i in project["report"] if i["name"] == "SDS.md")["status"] == "warn"
+    run = post("/api/runs", {"project": "task-board", "architecture": ARCHITECTURE,
+                             "idempotency_key": str(uuid.uuid4())}, status=201)
+    assert run["kind"] == "sds"
+    drain()
+    assert [(i["role"], i["action"]) for i in client.get("/api/inbox").json()] == [
+        ("solution_architect", "waiting_options_approval")]
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    options = [d for d in detail["documents"] if d["kind"] == "options"][-1]
+    assert "| Summary |" in options["content"] and "**Recommendation:** PA1." in options["content"]
+    assert detail["checklist"]["gate"] == "options" and all(c["ok"] for c in detail["checklist"]["controller"])
+    refused = client.post(f"/api/runs/{run['id']}/options/choose", json={"document_id": options["id"], "option": "PA2",
+                                                                         "reason": "", "checked": []})
+    assert refused.status_code == 409 and "say why" in refused.json()["detail"]
+    post(f"/api/runs/{run['id']}/options/choose", {"document_id": options["id"], "option": "PA2",
+                                                    "reason": "the customer runs its own cloud account",
+                                                    "checked": [h["id"] for h in detail["checklist"]["human"]]})
+    drain()
+    choose_ui(run["id"])  # the UI Concept gate comes after the options
+    assert [(i["role"], i["action"]) for i in client.get("/api/inbox").json()] == [
+        ("tech_lead", "waiting_spec_approval")]
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    sds = [d for d in detail["documents"] if d["kind"] == "sds"][-1]
+    assert sds["content"].startswith("# Attendance - Software Design Specification (SDS)")
+    assert "#### 5.1.1 CIW-US-01: Check in with the camera (EMPLOYEE)" in sds["content"]
+    assert "Let EMPLOYEE check in with the camera." in sds["content"]
+    assert "| `API-CIW-01` | `GET /api/v1/ciw` | CIW |" in sds["content"]
+    assert "| Application | Node 20, PostgreSQL |" in sds["content"]
+    assert sds["findings"] == ["SRS entity Check has no row in SDS §2.1 traceability",
+                               "SRS entity Attendance has no row in SDS §2.1 traceability"]
+
+    dropped = sds["content"].replace("#### 5.1.1 CIW-US-01", "#### 5.1.1 XX-US-09")
+    response = client.post(f"/api/runs/{run['id']}/revise-spec", json={"content": dropped})
+    assert response.status_code == 409 and "no entry for SRS stories CIW-US-01" in response.json()["detail"]
+
+    post(f"/api/runs/{run['id']}/approve-spec", {"document_id": sds["id"], "sha256": sds["sha256"], "checked": TICKS})
+    drain()
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    assert detail["status"] == "WAITING_PR_APPROVAL"
+    assert [a["role"] for a in detail["approvals"]] == ["solution_architect", "product_owner", "tech_lead"]
+    with session_scope() as session:
+        worktree = session.get(Run, uuid.UUID(run["id"])).worktree_path
+    committed = subprocess.run(["git", "-C", worktree, "show", "HEAD~1:SDS.md"], capture_output=True, text=True,
+                               check=True).stdout
+    assert committed == sds["content"]
+
+
+def test_the_sds_records_the_chosen_option_in_section_9(db, sample_repo):
+    with_srs(sample_repo)
+    post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
+    run = post("/api/runs", {"project": "task-board", "architecture": ARCHITECTURE, "idempotency_key": str(uuid.uuid4())},
+               status=201)
+    drain()
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    options = [d for d in detail["documents"] if d["kind"] == "options"][-1]
+    post(f"/api/runs/{run['id']}/options/redo", {"reason": "compare an on-premise option too"})
+    drain()
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    assert [d["version"] for d in detail["documents"] if d["kind"] == "options"] == [1, 2]
+    options = [d for d in detail["documents"] if d["kind"] == "options"][-1]
+    # every option has hosting variants on the project's platforms (default aws, azure, ...), one recommended
+    choices = {o["id"]: o for o in options["choices"]["options"]}
+    assert [v["id"] for v in choices["PA2"]["hosting"]] == ["PA2-H1", "PA2-H2"] and choices["PA2"]["recommended_hosting"] == "PA2-H1"
+    assert "### PA2 Managed cloud: hosting" in options["content"]
+    assert {c["id"]: c["ok"] for c in detail["checklist"]["controller"]}["compared"] is True
+    refused = client.post(f"/api/runs/{run['id']}/options/choose", json={
+        "document_id": options["id"], "option": "PA2", "hosting": "PA1-H1", "reason": "own cloud",
+        "checked": [h["id"] for h in detail["checklist"]["human"]]})
+    assert refused.status_code == 409 and "hosting variants of PA2" in refused.text
+    post(f"/api/runs/{run['id']}/options/choose", {"document_id": options["id"], "option": "PA2", "hosting": "PA2-H2",
+                                                    "reason": "own cloud", "checked": [h["id"] for h in detail["checklist"]["human"]]})
+    drain()
+    choose_ui(run["id"])  # the UI Concept gate comes after the options
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    sds = [d for d in detail["documents"] if d["kind"] == "sds"][-1]["content"]
+    assert "### 9.1 Architecture Option" in sds and "PA2 Managed cloud, hosted as PA2-H2 Mock hosting on on_premise: own cloud" in sds
+    assert {c["id"]: c["ok"] for c in detail["checklist"]["controller"]}["option"] is True
+    from controller.app.project_docs import check_chosen_option
+    chosen = {"id": "PA2", "name": "Managed cloud", "hosting": {"id": "PA2-H2", "name": "Mock hosting on on_premise"}}
+    assert check_chosen_option(sds, chosen) == []
+    assert check_chosen_option(sds.replace("PA2 Managed cloud", "a cloud").replace("PA2-H2 Mock hosting on on_premise", "x"),
+                               chosen) == ["section 9 does not record the chosen option PA2 Managed cloud",
+                                           "section 9 does not record the chosen hosting PA2-H2 Mock hosting on on_premise"]
+
+
+def test_changes_asked_on_an_srs_pull_request_rewrite_the_document_from_its_last_draft(db, sample_repo):
+    from controller.app.coordinator import build_context
+    post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
+    run = post("/api/runs", {"project": "task-board", "brief": BRIEF, "idempotency_key": str(uuid.uuid4())}, status=201)
+    drain()
+    srs = srs_document(run["id"])
+    post(f"/api/runs/{run['id']}/approve-spec", {"document_id": srs["id"], "sha256": srs["sha256"], "checked": TICKS})
+    drain()
+    refused = client.post(f"/api/runs/{run['id']}/pr-decision", json={"decision": "request_changes", "reason": ""})
+    assert refused.status_code == 409
+    detail = post(f"/api/runs/{run['id']}/pr-decision", {"decision": "request_changes",
+                                                         "reason": "Split check-in and check-out into two stories"})
+    assert detail["status"] == "SPECIFYING"
+    with session_scope() as session:
+        from controller.app.models import Run as RunModel
+        context = build_context(session, session.get(RunModel, uuid.UUID(run["id"])), kind="specify")
+        assert context.srs_md == srs["content"]  # the last draft, not the empty SRS of the base commit
+    drain()
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    assert detail["status"] == "WAITING_SPEC_APPROVAL"
+    assert [d["version"] for d in detail["documents"] if d["kind"] == "srs"] == [1, 2]
+    assert [(a["stage"], a["decision"]) for a in detail["approvals"]][-1] == ("pr", "request_changes")
+
+
+def test_the_architect_proposes_the_stack_and_the_solution_architect_adjusts_it(db, sample_repo):
+    with_srs(sample_repo)
+    post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
+    refused = client.post("/api/runs", json={"project": "task-board", "architecture": {"title": "Attendance"},
+                                              "idempotency_key": str(uuid.uuid4())})
+    assert refused.status_code == 422  # no stack and no proposal asked for
+    run = post("/api/runs", {"project": "task-board", "idempotency_key": str(uuid.uuid4()), "architecture": {
+        "title": "Attendance", "propose_stack": True, "deployment": "Must run on the office network"}}, status=201)
+    drain()
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    brief = [d for d in detail["documents"] if d["kind"] == "intent"][-1]["content"]
+    assert "The Architect proposes the stack" in brief and "## Deployment and infrastructure (constraint)" in brief
+    options = [d for d in detail["documents"] if d["kind"] == "options"][-1]
+    assert "### PA1 Single server: stack" in options["content"] and "| backend | Node.js 20 |" in options["content"]
+    post(f"/api/runs/{run['id']}/options/choose", {"document_id": options["id"], "option": "PA1", "reason": "office network",
+                                                    "adjustments": "Use SQLite for the first site",
+                                                    "checked": [h["id"] for h in detail["checklist"]["human"]]})
+    drain()
+    choose_ui(run["id"])  # the UI Concept gate comes after the options
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    sds = [d for d in detail["documents"] if d["kind"] == "sds"][-1]["content"]
+    assert "Adjustments: Use SQLite for the first site" in sds and "backend: Node.js 20" in sds
+    assert detail["approvals"][0]["reason"].endswith("| adjustments: Use SQLite for the first site")
+
+
+def test_a_merge_after_the_project_check_is_seen_when_the_next_run_starts(db, sample_repo):
+    post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)  # checked before the SRS
+    with_srs(sample_repo)  # the SRS pull request merged afterwards
+    run = post("/api/runs", {"project": "task-board", "architecture": ARCHITECTURE, "idempotency_key": str(uuid.uuid4())},
+               status=201)
+    assert run["kind"] == "sds"
+    project = client.get("/api/projects").json()[0]
+    assert next(i for i in project["report"] if i["name"] == "SRS.md")["status"] == "ok"
+
+
+def test_a_stated_platform_shapes_the_hosting_and_an_open_one_asks_the_sa_why(db, sample_repo):
+    from controller.app.coordinator import artifact
+    with_srs(sample_repo)
+    post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
+    proposal = {"title": "Attendance", "propose_stack": True}
+    refused = client.post("/api/runs", json={"project": "task-board", "idempotency_key": str(uuid.uuid4()),
+                                             "architecture": {**proposal, "deployment_context": {"platform": "mainframe"}}})
+    assert refused.status_code == 409 and "not one of task-board's architecture.hosting_platforms" in refused.text
+
+    # stated: every variant runs on the customer's platform, the recommended one is preselected
+    run = post("/api/runs", {"project": "task-board", "idempotency_key": str(uuid.uuid4()), "architecture": {
+        **proposal, "deployment_context": {"platform": "On-Premise", "data_residency": "in Vietnam"}}}, status=201)
+    drain()
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    brief = [d for d in detail["documents"] if d["kind"] == "intent"][-1]["content"]
+    assert "- Hosting platform: On-premise" in brief and "- Data residency: in Vietnam" in brief
+    options = [d for d in detail["documents"] if d["kind"] == "options"][-1]
+    assert options["choices"]["hosting_basis"] == "stated"
+    assert {v["platform"] for o in options["choices"]["options"] for v in o["hosting"]} == {"On-premise"}
+    assert {c["id"]: c["ok"] for c in detail["checklist"]["controller"]}["compared"] is True
+
+    # open: the Architect's recommendation is an assumption, so the SA picks a variant and says why
+    run = post("/api/runs", {"project": "task-board", "idempotency_key": str(uuid.uuid4()), "architecture": proposal},
+               status=201)
+    drain()
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    brief = [d for d in detail["documents"] if d["kind"] == "intent"][-1]["content"]
+    assert "Hosting platform: not decided" in brief
+    options = [d for d in detail["documents"] if d["kind"] == "options"][-1]
+    assert options["choices"]["hosting_basis"] == "assumed"
+    assert {c["id"]: c["ok"] for c in detail["checklist"]["controller"]}["compared"] is True  # cloud and on-premise
+    ticks = [h["id"] for h in detail["checklist"]["human"]]
+    choice = {"document_id": options["id"], "option": "PA1", "reason": "central", "checked": ticks}
+    refused = client.post(f"/api/runs/{run['id']}/options/choose", json=choice)
+    assert refused.status_code == 409 and "hosting variants of PA1" in refused.text  # nothing preselected
+    refused = client.post(f"/api/runs/{run['id']}/options/choose", json={**choice, "hosting": "PA1-H2"})
+    assert refused.status_code == 409 and "say why this hosting" in refused.text
+    post(f"/api/runs/{run['id']}/options/choose", {**choice, "hosting": "PA1-H2", "hosting_reason": "HR runs on Azure"})
+    with session_scope() as session:
+        chosen = json.loads(artifact(session, uuid.UUID(run["id"]), "chosen_option"))
+    assert chosen["hosting"]["id"] == "PA1-H2" and chosen["hosting_reason"] == "HR runs on Azure"
+
+
+def test_the_ui_concept_is_chosen_in_the_customers_brand_and_lands_in_docs_ui(db, sample_repo):
+    import base64
+    with_srs(sample_repo)
+    post("/api/projects", {"key": "task-board", "repo_url": str(sample_repo)}, status=201)
+    logo = {"name": "acme.png", "data": base64.b64encode(b"\x89PNG fake").decode()}
+    run = post("/api/runs", {"project": "task-board", "idempotency_key": str(uuid.uuid4()), "architecture": {
+        **ARCHITECTURE, "brand": {"colors": ["#AA2200"], "devices": ["desktop", "mobile"]}, "logo": logo}}, status=201)
+    drain()
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    intent = [d for d in detail["documents"] if d["kind"] == "intent"][0]
+    assert "- Logo: acme.png" in intent["content"] and "- Colors: #AA2200" in intent["content"]
+    options = [d for d in detail["documents"] if d["kind"] == "options"][-1]
+    post(f"/api/runs/{run['id']}/options/choose", {"document_id": options["id"], "option": "PA1", "reason": "office",
+                                                    "checked": [h["id"] for h in detail["checklist"]["human"]]})
+    drain()
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    assert detail["status"] == "WAITING_UI_APPROVAL" and detail["checklist"]["gate"] == "ui"
+    doc = [d for d in detail["documents"] if d["kind"] == "ui_concepts"][-1]
+    concepts = doc["ui"]["concepts"]
+    assert len(concepts) == 3 and all(c["colors"]["primary"] == "#AA2200" for c in concepts)  # the brand in every concept
+    page = client.get(f"/api/runs/{run['id']}/ui/{doc['version']}/{concepts[0]['id']}/{concepts[0]['screens'][0]['slug']}",
+                      params={"device": "mobile"})
+    assert page.status_code == 200 and "--primary: #AA2200" in page.text
+    assert "default-src 'none'" in page.headers["content-security-policy"]
+    post(f"/api/runs/{run['id']}/ui/redo", {"reason": "denser tables"})
+    drain()
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    doc = [d for d in detail["documents"] if d["kind"] == "ui_concepts"][-1]
+    assert doc["version"] == 2
+    post(f"/api/runs/{run['id']}/ui/choose", {"document_id": doc["id"], "concept": doc["ui"]["concepts"][1]["id"],
+                                               "reason": "employees use phones", "adjustments": "bigger buttons",
+                                               "checked": [h["id"] for h in detail["checklist"]["human"]]})
+    drain()
+    detail = client.get(f"/api/runs/{run['id']}").json()
+    sds = [d for d in detail["documents"] if d["kind"] == "sds"][-1]
+    post(f"/api/runs/{run['id']}/approve-spec", {"document_id": sds["id"], "sha256": sds["sha256"], "checked": TICKS})
+    drain()
+    with session_scope() as session:
+        worktree = session.get(Run, uuid.UUID(run["id"])).worktree_path
+    files = subprocess.run(["git", "-C", worktree, "show", "--name-only", "--format=", "HEAD~1"], capture_output=True,
+                           text=True, check=True).stdout.split()
+    chosen = doc["ui"]["concepts"][1]["id"]
+    assert {"SDS.md", "docs/ui/UI.md", "docs/ui/design-tokens.json", "docs/ui/brand/acme.png"} <= set(files)
+    assert any(f.startswith(f"docs/ui/concepts/{chosen}/") for f in files)
+    guide = subprocess.run(["git", "-C", worktree, "show", "HEAD~1:docs/ui/UI.md"], capture_output=True, text=True).stdout
+    assert "Why it was chosen: employees use phones" in guide and "bigger buttons" in guide

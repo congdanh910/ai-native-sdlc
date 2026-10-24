@@ -1,221 +1,228 @@
-from datetime import timedelta
-from uuid import UUID, uuid4
+"""Worker process: claims queued executions and lets the coordinator handle them.
+
+Run with `python -m controller.app.worker`; `sdlc up` starts it in the background.
+"""
+
+import json
+import logging
+import os
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import threading
+import time
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
-from controller.app.models import Execution, Run, Task, TaskDependency
-from controller.app.services import get_run
-from controller.app.state_machine import CancellationRequested, ConflictError, event, transition, utc_now
+from controller.app import coordinator, joblog, jobs
+from controller.app.config import get_settings
+from controller.app.doing import process
+from controller.app.db import session_scope
+from controller.app.models import Execution, Project, Run, Task
+from controller.app.states import RUN_TRANSITIONS, RunStatus, TeamRole
+from controller.app.team import get_team
+from controller.app.integrations.langflow import InvalidModelOutput
+from controller.app.team.base import CapacityBusy, Team
+
+log = logging.getLogger("sdlc.worker")
+WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
 
 
-def claim_next_execution(
-    session: Session, worker_id: str, lease_seconds: int = 60,
-    executor_name: str | None = None, run_id: UUID | None = None,
-) -> Execution | None:
-    query = select(Execution).join(Task, Execution.task_id == Task.id).where(Execution.status == "QUEUED")
-    if run_id is not None:
-        query = query.where(Task.run_id == run_id)
-    if executor_name is not None:
-        if executor_name not in {"codex", "claude"}:
-            raise ValueError("unsupported executor")
-        query = query.where(Task.executor == executor_name)
-    execution = None
-    task = None
-    run = None
-    for candidate in session.scalars(
-        query.order_by(Execution.created_at, Execution.id)
-        .with_for_update(of=Execution, skip_locked=True)
-    ):
-        candidate_task = session.get(Task, candidate.task_id)
-        if candidate_task is None:
-            raise ConflictError("queued execution has no task")
-        # One integration worktree is shared by a run. Lock its row before
-        # checking active work so two workers cannot code the same run at once.
-        candidate_run = session.scalar(
-            select(Run).where(Run.id == candidate_task.run_id).with_for_update()
-        )
-        active = session.scalar(
-            select(Execution.id).join(Task, Execution.task_id == Task.id)
-            .where(Task.run_id == candidate_run.id, Execution.status == "RUNNING").limit(1)
-        )
-        if active is None:
-            execution, task, run = candidate, candidate_task, candidate_run
+
+
+def _heartbeat(execution_id, stop: threading.Event) -> None:
+    """Renew the lease, and stop the job's sessions and containers as soon as its run is cancelled."""
+    settings = get_settings()
+    renew_every = max(1, int(settings.job_lease_seconds / 3 / settings.cancel_check_seconds))
+    ticks = 0
+    while not stop.wait(settings.cancel_check_seconds):
+        ticks += 1
+        with session_scope() as session:
+            execution = session.get(Execution, execution_id)
+            run = session.get(Run, execution.run_id) if execution else None
+            if run is not None and run.status == RunStatus.CANCELLED:
+                stopped = process.cancel_active()
+                if stopped:
+                    log.info("run %s cancelled: stopped %d running process(es)", run.id, stopped)
+            if ticks % renew_every == 0:
+                jobs.heartbeat(session, execution_id)
+
+
+def run_once(team: Team, worker_id: str = WORKER_ID) -> bool:
+    """Handle at most one job. Returns False when the queue is empty."""
+    with session_scope() as session:
+        jobs.reconcile_expired(session)
+    with session_scope() as session:
+        execution = jobs.claim(session, worker_id)
+        if execution is None:
+            return False
+        if not coordinator.on_claim(session, execution):
+            return True
+        execution_id, kind, run_id = execution.id, execution.kind, execution.run_id
+        joblog.start(run_id, execution_id, f"{kind} ({execution.role}) claimed by {worker_id}, attempt {execution.attempts}")  # claim counted it
+    log.info("claimed %s %s", kind, execution_id)
+    process.begin_job()
+    stop = threading.Event()
+    beat = threading.Thread(target=_heartbeat, args=(execution_id, stop), daemon=True)
+    beat.start()
+    try:
+        with session_scope() as session:
+            loaded = coordinator.load(session, session.get(Execution, execution_id))
+        result = coordinator.compute(team, loaded)
+        with session_scope() as session:
+            coordinator.apply(session, loaded, result, team)
+        joblog.note("job finished")
+    except Exception as exc:  # the run must never be left silently stuck
+        log.exception("job %s failed", execution_id)
+        joblog.note(f"job failed: {type(exc).__name__}: {str(exc)[:500]}")
+        _fail(execution_id, exc)
+    finally:
+        stop.set()
+        joblog.stop()
+    return True
+
+
+def _fail(execution_id, exc: Exception) -> None:
+    with session_scope() as session:
+        execution = session.get(Execution, execution_id, with_for_update=True)
+        run = session.get(Run, execution.run_id, with_for_update=True)
+        message = f"{type(exc).__name__}: {exc}"[:500]
+        if isinstance(exc, CapacityBusy):
+            jobs.postpone(session, execution, exc.wait_seconds or get_settings().capacity_wait_seconds, message)
+            return
+        retryable = not execution.side_effects and not isinstance(exc, InvalidModelOutput)
+        if retryable and execution.attempts < get_settings().job_max_attempts:
+            jobs.postpone(session, execution, get_settings().job_retry_base_seconds * 2 ** execution.attempts, message)
+            execution.attempts += 1  # postpone does not count capacity waits; failures do count
+            return
+        jobs.finish(session, execution, "failed", error=message)
+        if execution.kind == "code_task" and execution.task_id:  # the task does not stay in the step that broke
+            coordinator.fail_task(session, session.get(Task, execution.task_id), f"job failed: {message}")
+        if execution.kind in ("preview", "preview_stop"):  # a preview failing never stops the run
+            coordinator.store_artifact(session, run, "preview", TeamRole.COORDINATOR,
+                                       json.dumps({"status": "failed", "detail": message}))
+            return
+        if RunStatus.NEEDS_HUMAN in RUN_TRANSITIONS[RunStatus(run.status)]:
+            coordinator.to_needs_human(session, run, f"{execution.kind} failed: {message}")
+
+
+def advance_evals() -> None:
+    from controller.app import evals
+    with session_scope() as session:
+        for eval_id in evals.advance(session):
+            log.info("eval %s completed", eval_id)
+
+
+class StayAwake:
+    """Keep macOS from idle-sleeping while the team has work; sleep would cut the GX10 tunnel."""
+
+    def __init__(self, idle_release_seconds: float, enabled: bool = True):
+        self.idle_release_seconds, self.enabled = idle_release_seconds, enabled
+        self.process: subprocess.Popen | None = None
+        self.last_work = 0.0
+
+    def busy(self) -> None:
+        self.last_work = time.monotonic()
+        if self.enabled and self.process is None and sys.platform == "darwin" and shutil.which("caffeinate"):
+            self.process = subprocess.Popen(["caffeinate", "-i", "-w", str(os.getpid())])
+            log.info("holding an idle-sleep assertion while jobs run")
+
+    def idle(self, queue_has_work: bool) -> None:
+        if queue_has_work:
+            self.busy()
+        elif self.process and time.monotonic() - self.last_work > self.idle_release_seconds:
+            self.release()
+
+    def release(self) -> None:
+        if self.process:
+            self.process.terminate()
+            self.process = None
+            log.info("released the idle-sleep assertion")
+
+
+def _queue_has_work() -> bool:
+    with session_scope() as session:
+        return session.scalar(select(Execution.id).where(Execution.status.in_(("queued", "running"))).limit(1)) is not None
+
+
+def _start_slots(count: int) -> list[subprocess.Popen]:
+    """Extra worker processes for SDLC_WORKER_CONCURRENCY; they only run jobs (slot 0 polls and cleans up)."""
+    return [subprocess.Popen([sys.executable, "-m", "controller.app.worker", "--slot", str(slot)])
+            for slot in range(1, count)]
+
+
+def _poll(team: Team) -> None:
+    """Slot 0's periodic work: pull requests, previews past their time, the backlog's next stories."""
+    from controller.app import backlog
+    with session_scope() as session:
+        merged = coordinator.poll_pull_requests(session)
+        coordinator.expire_previews(session)
+    for project_id in merged:  # after the runs show COMPLETED
+        with session_scope() as session:
+            coordinator.recheck_after_merge(session, session.get(Project, project_id))
+    with session_scope() as session:
+        for line in backlog.tick(session):
+            log.info("backlog: %s", line)
+
+
+def run_forever(poll_seconds: float = 1.0, slot: int = 0) -> None:
+    team = get_team()
+    stopping = threading.Event()
+    signal.signal(signal.SIGTERM, lambda *_: stopping.set())
+    settings = get_settings()
+    awake = StayAwake(settings.keep_awake_release_seconds, enabled=settings.sdlc_keep_awake)
+    log.info("worker %s (slot %d) started with team %s", WORKER_ID, slot, team.engine)
+    slots: list[subprocess.Popen] = []
+    if slot == 0:  # before any other slot starts: what is left behind belongs to a worker that died
+        for leftover in process.kill_orphans():
+            log.warning("stopped %s left behind by an earlier worker", leftover)
+        slots = _start_slots(settings.sdlc_worker_concurrency)
+    next_pr_poll = 0.0
+    parent = os.getppid()
+    while not stopping.is_set():
+        if slot and os.getppid() != parent:  # slot 0 died without stopping this one
             break
-    if execution is None or task is None or run is None:
-        return None
-    if run.status not in {"READY", "CODING"}:
-        raise ConflictError("queued execution belongs to a run that cannot code")
-    if run.status == "READY":
-        transition(session, run, "CODING")
-    execution.status = "RUNNING"
-    execution.worker_id = worker_id
-    execution.lease_until = utc_now() + timedelta(seconds=lease_seconds)
-    task.status = "RUNNING"
-    task.attempt_count += 1
-    event(session, run.id, "execution.claimed", {"execution_id": str(execution.id), "worker_id": worker_id})
-    return execution
+        try:
+            # Hold the assertion before the job starts: taken only after a job, the first job after an idle spell
+            # ran unprotected and the Mac slept through it (discovery trial, 2026-10-16).
+            awake.idle(_queue_has_work())
+            busy = run_once(team)
+            if busy:
+                awake.busy()
+            else:
+                awake.idle(_queue_has_work())
+        except Exception:
+            log.exception("worker loop error")
+            busy = False
+        if slot == 0 and time.monotonic() >= next_pr_poll:  # also while busy: other slots may be the ones working
+            next_pr_poll = time.monotonic() + get_settings().pr_poll_seconds
+            try:
+                _poll(team)
+            except Exception:
+                log.exception("polling failed")
+        if not busy:
+            if slot == 0:
+                try:
+                    advance_evals()
+                except Exception:
+                    log.exception("eval scoring failed")
+            stopping.wait(poll_seconds)
+    for child in slots:
+        child.terminate()
+    for child in slots:
+        try:
+            child.wait(timeout=get_settings().job_lease_seconds)
+        except subprocess.TimeoutExpired:
+            child.kill()
+    awake.release()
+    log.info("worker stopped")
 
 
-def heartbeat_execution(session: Session, execution_id: UUID, worker_id: str, lease_seconds: int = 60) -> None:
-    execution = session.get(Execution, execution_id)
-    if execution is None or execution.status != "RUNNING" or execution.worker_id != worker_id:
-        raise ConflictError("execution is not owned by this worker")
-    if execution.lease_until is None or execution.lease_until.replace(tzinfo=None) < utc_now().replace(tzinfo=None):
-        raise ConflictError("execution lease expired")
-    task = session.get(Task, execution.task_id)
-    if get_run(session, task.run_id).status == "CANCELLING":
-        raise CancellationRequested("run cancellation requested")
-    execution.lease_until = utc_now() + timedelta(seconds=lease_seconds)
-
-
-def _owned_execution(session: Session, execution_id: UUID, worker_id: str) -> Execution:
-    execution = session.get(Execution, execution_id)
-    if execution is None or execution.status != "RUNNING" or execution.worker_id != worker_id:
-        raise ConflictError("execution is not owned by this worker")
-    if execution.lease_until is None or execution.lease_until.replace(tzinfo=None) < utc_now().replace(tzinfo=None):
-        raise ConflictError("execution lease expired")
-    return execution
-
-
-def record_workspace(session: Session, execution_id: UUID, worker_id: str, path: str, branch: str) -> None:
-    execution = _owned_execution(session, execution_id, worker_id)
-    if execution.worktree_path is not None:
-        raise ConflictError("execution already has a worktree")
-    execution.worktree_path = path
-    execution.branch = branch
-    task = session.get(Task, execution.task_id)
-    event(session, task.run_id, "execution.workspace_created", {
-        "execution_id": str(execution.id), "worktree_path": path, "branch": branch,
-    })
-
-
-def record_process(session: Session, execution_id: UUID, worker_id: str, pid: int, pgid: int) -> None:
-    execution = _owned_execution(session, execution_id, worker_id)
-    if pid <= 0 or pgid <= 0:
-        raise ConflictError("execution process identity is invalid")
-    # Keep the latest child here; each start is also retained in the audit log.
-    execution.process_id = pid
-    execution.process_group_id = pgid
-    task = session.get(Task, execution.task_id)
-    event(session, task.run_id, "execution.process_started", {
-        "execution_id": str(execution.id), "process_id": pid, "process_group_id": pgid,
-    })
-
-
-def record_remediation_attempt(
-    session: Session, execution_id: UUID, worker_id: str, attempt: int,
-) -> None:
-    execution = _owned_execution(session, execution_id, worker_id)
-    if attempt not in {1, 2}:
-        raise ValueError("remediation attempt must be 1 or 2")
-    task = session.get(Task, execution.task_id)
-    event(session, task.run_id, "execution.remediation_started", {
-        "execution_id": str(execution.id), "attempt": attempt,
-    })
-
-
-def complete_execution(session: Session, execution_id: UUID, worker_id: str, result: dict) -> None:
-    execution = _owned_execution(session, execution_id, worker_id)
-    task = session.get(Task, execution.task_id)
-    run = get_run(session, task.run_id)
-    if run.status == "CANCELLING":
-        raise CancellationRequested("run cancellation requested")
-    execution.status = "COMPLETED"
-    execution.result_jsonb = result
-    execution.lease_until = None
-    task.status = "DONE"
-    event(session, run.id, "execution.completed", {"execution_id": str(execution.id)})
-    session.flush()
-    blocked_tasks = session.scalars(select(Task).where(Task.run_id == run.id, Task.status == "BLOCKED")).all()
-    for candidate in blocked_tasks:
-        parent_ids = session.scalars(
-            select(TaskDependency.depends_on_task_id).where(TaskDependency.task_id == candidate.id)
-        ).all()
-        if all(session.get(Task, parent_id).status == "DONE" for parent_id in parent_ids):
-            candidate.status = "QUEUED"
-            session.add(
-                Execution(
-                    id=uuid4(), task_id=candidate.id,
-                    idempotency_key=f"{candidate.id}:0", status="QUEUED",
-                )
-            )
-    session.flush()
-    if run.status == "CODING" and all(
-        item.status == "DONE" for item in session.scalars(select(Task).where(Task.run_id == run.id))
-    ):
-        transition(session, run, "VALIDATING")
-
-
-def complete_mock_execution(session: Session, execution_id: UUID, worker_id: str) -> None:
-    """B2-only completion hook for deterministic tests; it does not launch a CLI."""
-    complete_execution(session, execution_id, worker_id, {"mock": True})
-
-
-def fail_execution(
-    session: Session, execution_id: UUID, worker_id: str, *,
-    category: str, stage: str, note: str,
-) -> None:
-    execution = _owned_execution(session, execution_id, worker_id)
-    task = session.get(Task, execution.task_id)
-    run = get_run(session, task.run_id)
-    execution.status = "FAILED"
-    execution.lease_until = None
-    execution.result_jsonb = {"failure_category": category, "failure_stage": stage, "failure_note": note[:500]}
-    task.status = "NEEDS_HUMAN"
-    run.failure_category = category
-    run.failure_stage = stage
-    run.failure_note = note[:500]
-    if run.status == "CODING":
-        transition(session, run, "NEEDS_HUMAN")
-    event(session, run.id, "execution.failed", {
-        "execution_id": str(execution.id), "category": category, "stage": stage,
-    })
-
-
-def cancel_execution(session: Session, execution_id: UUID, worker_id: str) -> None:
-    """Call only after the owned child process has stopped."""
-    execution = _owned_execution(session, execution_id, worker_id)
-    task = session.get(Task, execution.task_id)
-    run = get_run(session, task.run_id)
-    if run.status != "CANCELLING":
-        raise ConflictError("run is not cancelling")
-    execution.status = "CANCELLED"
-    execution.lease_until = None
-    execution.result_jsonb = {"cancelled": True}
-    task.status = "CANCELLED"
-    event(session, run.id, "execution.cancelled", {"execution_id": str(execution.id)})
-    session.flush()
-    active = session.scalar(
-        select(Execution.id)
-        .join(Task, Execution.task_id == Task.id)
-        .where(Task.run_id == run.id, Execution.status == "RUNNING")
-        .limit(1)
-    )
-    if active is None:
-        transition(session, run, "CANCELLED")
-
-
-def reconcile_expired_executions(session: Session) -> list[UUID]:
-    expired = session.scalars(
-        select(Execution)
-        .where(Execution.status == "RUNNING", Execution.lease_until < utc_now())
-        .with_for_update(skip_locked=True)
-    ).all()
-    ids: list[UUID] = []
-    for execution in expired:
-        task = session.get(Task, execution.task_id)
-        run = get_run(session, task.run_id)
-        execution.status = "UNKNOWN"
-        task.status = "NEEDS_HUMAN"
-        if run.status in {"CODING", "CANCELLING"}:
-            run.failure_category = "INFRASTRUCTURE"
-            run.failure_stage = "coding"
-            run.failure_note = "Coding worker lease expired; execution outcome requires human review"
-            transition(session, run, "NEEDS_HUMAN")
-            event(session, run.id, "failure.classified", {
-                "category": "INFRASTRUCTURE", "stage": "coding",
-            })
-        event(session, run.id, "execution.lease_expired", {"execution_id": str(execution.id)})
-        ids.append(execution.id)
-    return ids
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--slot", type=int, default=0)
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    run_forever(slot=parser.parse_args().slot)

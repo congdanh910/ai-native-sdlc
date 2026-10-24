@@ -1,0 +1,31 @@
+{
+  "tasks": [
+    {
+      "id": "csv-model",
+      "description": "Add rows_for_export (sorted rows with the header fields) in items.py",
+      "dependencies": [],
+      "allowed_paths": [
+        "inventory/items.py"
+      ],
+      "acceptance_criteria": []
+    },
+    {
+      "id": "csv-writer",
+      "description": "Write CSV with the csv module, refusing to overwrite without force",
+      "dependencies": [],
+      "allowed_paths": [
+        "inventory/store.py"
+      ],
+      "acceptance_criteria": []
+    },
+    {
+      "id": "csv-cli",
+      "description": "Add the export command with --force",
+      "dependencies": [],
+      "allowed_paths": [
+        "inventory/cli.py"
+      ],
+      "acceptance_criteria": []
+    }
+  ]
+}

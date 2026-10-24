@@ -1,0 +1,2668 @@
+"""Delivery Coordinator: runs queued work through team roles and moves runs forward.
+
+Each job is handled in three steps so that no database transaction stays open
+while a role works:
+
+1. load: read everything the role may see from stored artifacts (short transaction)
+2. compute: call the team role (no database access)
+3. apply: re-check the run, store the artifact, transition and queue the next job
+"""
+
+from datetime import datetime, timezone
+from dataclasses import dataclass, field
+import dataclasses
+import json
+import logging
+import re
+from pathlib import Path
+import shutil
+import uuid
+
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from controller.app.config import DATA_DIR, get_settings
+from controller.app.context.builder import build_context as build_code_context
+from controller.app.context.grounding import check_with_bundle
+from controller.app.doing import changes, github
+from controller.app.doing.github import repo_slug
+from controller.app.documents import (THREAD_DIR, add_document, add_plan, latest_document, latest_plan,
+                                      section_changes, sha256_text, thread_path)
+from controller.app.events import record_event
+from controller.app.jobs import COORDINATOR, enqueue, finish
+from controller.app.models import (Approval, Artifact, Document, Clarification, Event, Execution, Plan, Project, PullRequest,
+                                   Run, Task)
+from controller.app.feature_docs import (PHASE_HEADING, FeatureRef, link_once, phase_number, plan_header,
+                                         plan_section, requirements_header, requirements_section, resolve_feature,
+                                         sdlc_yaml, sds_feature_heading, spec_header, spec_section, srs_feature_heading,
+                                         tasks_header, tasks_section, tc_numbers, test_cases_header, test_cases_section,
+                                         upsert_section)
+from controller.app import analysis, checklists, joblog
+from controller.app.project_docs import (SDS_PATH, SRS_PATH, ArchitectureBrief, Options, Sds, Srs, check_chosen_option,
+                                         check_options, check_sds_depth, check_sds_markdown, check_srs_markdown,
+                                         check_srs_trace, number_options, render_options, render_sds, render_srs,
+                                         sds_sync_findings, srs_features, stored_options)
+from controller.app.projects.config import EffectivePolicy, effective_policy, matches_any
+from controller.app.projects.registry import mirror_for, read_snapshot
+from controller.app.projects.repo import GitError, Worktree
+from controller.app.schemas import (PlanPayload, PlanTask, Review, Spec, TestPlan, parse_criteria, render_plan,
+                                    render_review, render_spec)
+from controller.app.state_machine import transition_run, transition_task
+from controller.app.states import RUN_TRANSITIONS, TERMINAL, RunKind, RunStatus, TaskStatus, TeamRole
+from controller.app.team.base import ReleaseResult, RunContext, StepResult, Team
+from controller.app.team.tidy import tidy_plan, tidy_spec, tidy_tests
+
+log = logging.getLogger("sdlc.coordinator")
+
+# kind -> (role, has side effects, run status the job belongs to)
+KINDS: dict[str, tuple[TeamRole, bool, RunStatus]] = {
+    "preflight": (TeamRole.COORDINATOR, False, RunStatus.PREFLIGHT),
+    "specify": (TeamRole.BUSINESS_ANALYST, False, RunStatus.SPECIFYING),
+    "plan": (TeamRole.TECH_LEAD, False, RunStatus.PLANNING),
+    "ground": (TeamRole.COORDINATOR, False, RunStatus.GROUNDING),
+    "design_tests": (TeamRole.QA_ANALYST, False, RunStatus.DESIGNING_TESTS),
+    "code_task": (TeamRole.DEVELOPER, True, RunStatus.CODING),
+    "review": (TeamRole.CODE_REVIEWER, False, RunStatus.REVIEWING),
+    "release": (TeamRole.RELEASE_ENGINEER, True, RunStatus.PR_OPEN),
+    "extract": (TeamRole.BUSINESS_ANALYST, False, RunStatus.EXTRACTING),
+    "options": (TeamRole.ARCHITECT, False, RunStatus.DESIGNING_OPTIONS),
+    "ui_concepts": (TeamRole.UX_DESIGNER, False, RunStatus.DESIGNING_UI),
+    "onboarding": (TeamRole.ARCHITECT, False, RunStatus.DESIGNING_ONBOARDING),
+    "environment": (TeamRole.VALIDATION_GATE, False, RunStatus.PREPARING_ENVIRONMENT),
+    "acceptance": (TeamRole.QA_ENGINEER, True, RunStatus.ACCEPTANCE_TESTING),
+    # Previews belong to no stage: they start and stop whatever the run is doing.
+    "preview": (TeamRole.COORDINATOR, False, None),
+    "preview_stop": (TeamRole.COORDINATOR, False, None),
+    # The brief for the Tech Lead when a task stops; it belongs to no stage and changes nothing.
+    "advise": (TeamRole.CODE_REVIEWER, False, None),
+    # A person's defect notes checked against the SDS before the fix task gets them.
+    "check_defects": (TeamRole.CODE_REVIEWER, False, None),
+    # earlier stories' acceptance tests that failed on the preview, judged before the QC's gate
+    "triage_regressions": (TeamRole.CODE_REVIEWER, False, RunStatus.ACCEPTANCE_TESTING),
+    # main merged into the run's branch at a gate (B3); it belongs to the stage the run waits in
+    "update_branch": (TeamRole.COORDINATOR, True, None),
+}
+
+DEFECTS_CONFLICT = "the defect notes conflict with the SDS or ask for what no code change can do"
+
+
+class JobAborted(Exception):
+    """The job cannot do its work; the run needs a human."""
+
+
+def queue(session: Session, run: Run, kind: str, *, key: str | None = None, task: Task | None = None) -> Execution:
+    role, side_effects, _ = KINDS[kind]
+    return enqueue(session, run, kind, role.value, side_effects=side_effects, key=key or f"v{run.version}",
+                   task=task)
+
+
+# ---------------------------------------------------------------- stages
+
+def stage_mode(run: Run, stage: str) -> str:
+    return run.stage_modes.get(stage, "gated" if stage in ("spec", "plan", "acceptance") else "auto")
+
+
+def enter_stage(session: Session, run: Run, stage: str, *, actor: str = COORDINATOR,
+                acting_role: str | None = None) -> None:
+    """Enter a stage. In manual mode the run waits there until the operator starts it."""
+    target = {"spec": RunStatus.SPECIFYING, "plan": RunStatus.PLANNING,
+              "coding": RunStatus.CODING, "review": RunStatus.REVIEWING}[stage]
+    manual = stage_mode(run, stage) == "manual"
+    transition_run(session, run, target, actor=actor, acting_role=acting_role,
+                   awaiting_start=stage if manual else None,
+                   reason=f"waiting for the operator to start {stage}" if manual else None)
+    if not manual:
+        schedule_stage(session, run, stage)
+
+
+def schedule_stage(session: Session, run: Run, stage: str) -> None:
+    if stage == "spec":
+        queue(session, run, "specify")
+    elif stage == "plan":
+        queue(session, run, "plan")
+    elif stage == "coding":
+        schedule_tasks(session, run)
+    elif stage == "review":
+        queue(session, run, "review")
+
+
+def current_tasks(session: Session, run: Run) -> list[Task]:
+    plan = latest_plan(session, run.id)
+    return list(session.scalars(select(Task).where(Task.run_id == run.id, Task.plan_id == plan.id)
+                                .order_by(Task.external_task_id))) if plan else []
+
+
+def schedule_tasks(session: Session, run: Run) -> None:
+    """Queue every task whose dependencies passed; enter review when all passed."""
+    tasks = current_tasks(session, run)
+    passed = {task.external_task_id for task in tasks if task.status == TaskStatus.PASSED}
+    done = passed | {task.external_task_id for task in tasks if task.status == TaskStatus.CANCELLED}
+    if tasks and len(done) == len(tasks):
+        enter_stage(session, run, "review")
+        return
+    for task in tasks:
+        if task.status == TaskStatus.PENDING and set(task.payload.get("depends_on", [])) <= passed:
+            transition_task(session, task, TaskStatus.READY, actor=COORDINATOR, reason="dependencies passed")
+        if task.status == TaskStatus.READY and set(task.payload.get("depends_on", [])) <= passed:
+            # the plan in the key: a replanned run has a T1 again, and the earlier plan's T1 job must not stand for it
+            queue(session, run, "code_task", key=f"{task.plan_id}:{task.external_task_id}:a{task.attempt_count}", task=task)
+
+
+INFRASTRUCTURE_NEXT = ("Check Docker (Docker Desktop running, memory and disk: docker system df), then Resume: the task "
+                       "runs again and keeps the code and tests already committed. No code change is needed for this.")
+
+IN_PROGRESS = (TaskStatus.WRITING_TESTS, TaskStatus.RED_CHECK, TaskStatus.CODING, TaskStatus.VALIDATING,
+               TaskStatus.REMEDIATING)
+
+
+def fail_task(session: Session, task: Task | None, reason: str) -> None:
+    """A task whose job broke mid-step is FAILED, so that resuming the run starts it again."""
+    if task is not None and task.status in IN_PROGRESS:
+        transition_task(session, task, TaskStatus.FAILED, actor=COORDINATOR, reason=reason[:500])
+
+
+def queue_advice(session: Session, run: Run, task: Task) -> Execution | None:
+    """Ask the Code Reviewer for the Tech Lead's brief on a stopped task (SDLC_ADVICE_ENABLED)."""
+    if not get_settings().sdlc_advice_enabled:
+        return None
+    return queue(session, run, "advise", key=f"advise:{datetime.now(timezone.utc).isoformat()}", task=task)
+
+
+VALIDATION_FAILED = "validation failed after"
+
+
+def failed_validation(run: Run, tasks: list[Task]) -> bool:
+    """A task failed because its validation kept failing after the Developer's remediations."""
+    return VALIDATION_FAILED in (run.status_reason or "") and any(t.status == TaskStatus.FAILED for t in tasks)
+
+
+def decisions_for(run: Run, tasks: list[Task]) -> dict[str, str]:
+    """The decisions the Tech Lead can take on a stopped run now, and what each one does."""
+    from controller.app.services import ALREADY_PASS
+    reason = run.status_reason or ""
+    options = {}
+    if any(t.status == TaskStatus.DISPUTED for t in tasks):
+        options["amend_tests"] = "the QA Engineer updates the tests as the reason says; existing test lines may change"
+        options["keep_tests"] = "the tests stand; the Developer makes the code pass them, told the reason"
+    elif failed_validation(run, tasks):
+        options["amend_tests"] = ("a test is wrong: the QA Engineer corrects the tests the reason names (existing test "
+                                  "lines may change), then the Developer makes the code pass them all")
+        options["keep_tests"] = ("the tests are right: the Developer tries again, told the reason (what in the code "
+                                 "makes each named test fail)")
+    if ALREADY_PASS in reason:
+        options["already_built"] = ("the code already does what the new tests check: they stay as regression guards, "
+                                    "the Developer is skipped, the validation decides")
+    if any(t.status == TaskStatus.DISPUTED for t in tasks):
+        options["allow_files"] = ("the task may change these files too (name them in files; inside the project's "
+                                  "allowed paths, never a test file); the tests stand and the Developer tries again")
+    options["resume"] = "run the stopped step again as it is (for a failure outside the code, now fixed)"
+    options["replan"] = "the Tech Lead's plan is written again with the reason; the approved spec stays"
+    if run.kind == RunKind.FOUNDATION:
+        options["back_to_onboarding"] = ("the Architect revises the onboarding files (commands, paths, the preview's "
+                                         "compose file) with the reason; then the plan is written again")
+    return options
+
+
+def to_needs_human(session: Session, run: Run, reason: str, *, actor: str = COORDINATOR) -> None:
+    transition_run(session, run, RunStatus.NEEDS_HUMAN, actor=actor, resume_status=run.status, reason=reason)
+
+
+# ---------------------------------------------------------------- artifact thread
+
+def worktree_for(project: Project, run: Run) -> Worktree:
+    return Worktree(mirror_for(project), Path(run.worktree_path), run.branch)
+
+
+def commit_thread(session: Session, run: Run, kind: str, content: str, message: str) -> str | None:
+    if not run.commit_artifacts:
+        return None
+    project = session.get(Project, run.project_id)
+    return worktree_for(project, run).commit_file(thread_path(run.id, kind), content, message)
+
+
+def store_artifact(session: Session, run: Run, kind: str, role: TeamRole, content: str) -> None:
+    if kind == "preview" and run.worktree_path and Path(run.worktree_path).is_dir():
+        # the commit the preview state is about: a failure on earlier code no longer shows once the branch moves on
+        state = json.loads(content)
+        if "commit" not in state:
+            try:
+                content = json.dumps({**state, "commit": changes.head(Path(run.worktree_path))})
+            except GitError:
+                pass
+    session.add(Artifact(run_id=run.id, kind=kind, role=role.value, content=content, checksum=sha256_text(content)))
+
+
+def artifact(session: Session, run_id: uuid.UUID, kind: str) -> str | None:
+    return session.scalar(select(Artifact.content).where(Artifact.run_id == run_id, Artifact.kind == kind)
+                          .order_by(Artifact.created_at.desc()).limit(1))
+
+
+def diff_base(session: Session, run: Run) -> str | None:
+    """What this run's own changes are measured from: the default branch's commit last merged into the branch (B3),
+    else the commit the run started on. A plain diff from the start commit would count main's merged changes too."""
+    synced = json.loads(artifact(session, run.id, "main_sync") or "{}")
+    return synced.get("main") or run.base_commit
+
+
+def feature_ref(session: Session, run: Run) -> FeatureRef | None:
+    """The SRS story a feature run delivers and its specs/ folder, fixed at preflight; None without an SRS."""
+    raw = artifact(session, run.id, "feature")
+    return FeatureRef.model_validate_json(raw) if raw else None
+
+
+def _spec_model(session: Session, run: Run) -> Spec:
+    """The Business Analyst's last structured spec: a human edit keeps only Markdown, its notes stay the AI's."""
+    documents = session.scalars(select(Document).where(Document.run_id == run.id, Document.kind == "spec")
+                                .order_by(Document.version.desc())).all()
+    data = next((d.data for d in documents if d.data.get("goal")), None)
+    if data:
+        return Spec.model_validate({k: v for k, v in data.items() if k != "revision"})
+    return Spec(goal=run.title, user_stories=[], acceptance_criteria=parse_criteria(documents[0].content))
+
+
+def write_spec_files(session: Session, run: Run, document) -> str | None:
+    """Accepted spec: the story's sections in spec.md and the requirements checklist, sdlc.yaml, the SRS link."""
+    ref = feature_ref(session, run)
+    if ref is None or not run.commit_artifacts:
+        return None
+    worktree = worktree_for(session.get(Project, run.project_id), run)
+    folder = ref.folder
+    model = _spec_model(session, run)
+    checks = checklists.requirement_statuses([c.model_dump() for c in model.self_check])
+    files = {
+        f"{folder}/spec.md": upsert_section(worktree.read(f"{folder}/spec.md"), spec_header(ref), ref.story_id,
+                                            spec_section(document.content)),
+        f"{folder}/checklists/requirements.md": upsert_section(
+            worktree.read(f"{folder}/checklists/requirements.md"), requirements_header(ref), ref.story_id,
+            requirements_section(ref, model, checks)),
+        f"{folder}/sdlc.yaml": sdlc_yaml(worktree.read(f"{folder}/sdlc.yaml"), ref),
+    }
+    srs = link_once(worktree.read(SRS_PATH), srs_feature_heading(ref), "Spec", f"{folder}/spec.md")
+    if srs:
+        files[SRS_PATH] = srs
+    return worktree.commit_files(files, f"sdlc: {ref.story_id} spec v{document.version} accepted")
+
+
+def write_plan_files(session: Session, run: Run, plan) -> str | None:
+    """Approved plan: the story's sections in plan.md, tasks.md and test_cases.md, and the SDS plan link."""
+    ref = feature_ref(session, run)
+    if ref is None or not run.commit_artifacts:
+        return None
+    worktree = worktree_for(session.get(Project, run.project_id), run)
+    folder = ref.folder
+    payload, tests = PlanPayload.model_validate(plan.payload), TestPlan.model_validate(plan.test_plan)
+    criteria = parse_criteria(latest_document(session, run.id, "spec").content)
+    existing_cases = worktree.read(f"{folder}/test_cases.md")
+    numbers = tc_numbers(tests, existing_cases, ref.story_id)
+    store_artifact(session, run, "tc_numbers", TeamRole.COORDINATOR, json.dumps(numbers))
+    files = {
+        f"{folder}/plan.md": upsert_section(worktree.read(f"{folder}/plan.md"), plan_header(ref), ref.story_id,
+                                            plan_section(ref, payload, criteria)),
+        f"{folder}/tasks.md": _tasks_file(worktree, ref, payload, tests, numbers),
+        f"{folder}/test_cases.md": upsert_section(existing_cases, test_cases_header(ref), ref.story_id,
+                                                  test_cases_section(ref, tests, criteria, numbers)),
+    }
+    sds = worktree.read(SDS_PATH)
+    heading = sds_feature_heading(ref, sds or "")
+    linked = link_once(sds, heading, "Plan", f"{folder}/plan.md") if heading else None
+    if linked:
+        files[SDS_PATH] = linked
+    return worktree.commit_files(files, f"sdlc: {ref.story_id} plan v{plan.version} approved")
+
+
+def _tasks_file(worktree, ref: FeatureRef, payload: PlanPayload, tests: TestPlan, numbers: dict[str, str],
+                passed: frozenset[str] = frozenset()) -> str:
+    existing = worktree.read(f"{ref.folder}/tasks.md")
+    section = tasks_section(ref, payload, tests, existing, phase_number(existing, ref.story_id), passed, numbers)
+    return upsert_section(existing, tasks_header(ref), ref.story_id, section, heading=PHASE_HEADING)
+
+
+def tick_tasks(session: Session, run: Run) -> None:
+    """Before the PR: tick the tasks in tasks.md that passed validation."""
+    ref, plan = feature_ref(session, run), latest_plan(session, run.id)
+    if ref is None or plan is None or not run.commit_artifacts:
+        return
+    worktree = worktree_for(session.get(Project, run.project_id), run)
+    passed = frozenset(t.external_task_id for t in current_tasks(session, run) if t.status == TaskStatus.PASSED)
+    numbers = json.loads(artifact(session, run.id, "tc_numbers") or "{}")
+    content = _tasks_file(worktree, ref, PlanPayload.model_validate(plan.payload), TestPlan.model_validate(plan.test_plan),
+                          numbers, passed)
+    worktree.commit_files({f"{ref.folder}/tasks.md": content}, f"sdlc: {ref.story_id} tasks done")
+
+
+# ---------------------------------------------------------------- gate checklists
+
+GATE_OF_STATUS = {RunStatus.WAITING_BASELINE_APPROVAL: "baseline", RunStatus.WAITING_OPTIONS_APPROVAL: "options",
+                  RunStatus.WAITING_UI_APPROVAL: "ui",
+                  RunStatus.WAITING_ONBOARDING_APPROVAL: "onboarding",
+                  RunStatus.WAITING_ACCEPTANCE_APPROVAL: "acceptance", RunStatus.WAITING_PLAN_APPROVAL: "plan", RunStatus.WAITING_TEST_APPROVAL: "tests",
+                  RunStatus.WAITING_PR_APPROVAL: "pr"}
+
+
+def gate_of(run: Run) -> str | None:
+    if run.status == RunStatus.WAITING_SPEC_APPROVAL:
+        return spec_kind(run)  # spec, srs or sds
+    return GATE_OF_STATUS.get(RunStatus(run.status))
+
+
+def evaluate_gate(session: Session, run: Run, gate: str | None = None) -> dict | None:
+    """The checklist of the gate the run waits at: controller results, the role's self-check, the human items."""
+    gate = gate or gate_of(run)
+    if gate is None:
+        return None
+    raw_policy = artifact(session, run.id, "effective_policy")
+    policy = EffectivePolicy.model_validate_json(raw_policy) if raw_policy else None
+    test_paths = policy.test_paths if policy else []
+    controller: list[dict] = []
+    ai: list[dict] = []
+    spec = latest_document(session, run.id, "spec")
+    if gate == "baseline":
+        controller, ai = baseline_checks(session, run)
+    elif gate == "acceptance":
+        data = latest_document(session, run.id, "acceptance").data or {}
+        controller = [checklists._result("criteria", "Every acceptance criterion and edge case has an end-to-end test "
+                                         "and all of them passed on the preview", data.get("problems", []))]
+    elif gate == "onboarding":
+        from controller.app.foundation import CONFIG_PATH, Onboarding, check_test_doubles
+        data = latest_document(session, run.id, "onboarding").data or {}
+        files = data.get("files", {})
+        from controller.app.foundation import ci_env_gaps
+        from controller.app.guidance import fix
+        gaps = ci_env_gaps(files)
+        controller = [checklists._result("files", "AGENTS.md and a .sdlc/project.yaml that loads are present",
+                                         [f"{p} is missing" for p in ("AGENTS.md", CONFIG_PATH) if p not in files]),
+                      checklists._result("ci-env", "The CI workflow sets every variable of environment.env", gaps,
+                                         [fix("revise_onboarding", "Tests that pass in the platform's validation fail "
+                                              "in CI when CI runs without the same variables.",
+                                              "Add to the CI workflow's env the variables of environment.env it misses: "
+                                              + "; ".join(gaps[:6]))] if gaps else None)]
+        # a warning, not a block: the Tech Lead may accept an integration without a double for now
+        sds = mirror_for(session.get(Project, run.project_id)).read_file(run.base_commit, SDS_PATH) or ""
+        onboarding = Onboarding.model_validate({k: v for k, v in data.items() if k not in ("files", "revision", "edited_from")})
+        missing = check_test_doubles(onboarding, sds)
+        ai = [{"id": "test-doubles", "text": "Every external system of SDS section 13 has a test double, or a reason "
+               "for none", "status": "warning" if missing else "pass", "note": "; ".join(missing[:8])}]
+    elif gate == "options":
+        document = latest_document(session, run.id, "options")
+        platforms = options_platforms(EffectivePolicy.model_validate_json(raw_policy), _deployment_context(session, run)) \
+            if raw_policy else None
+        problems = check_options(stored_options(document.data), json.loads(artifact(session, run.id, "baseline") or "null"),
+                                 platforms, open_hosting=document.data.get("hosting_basis") == "assumed")
+        controller = [checklists._result("compared", "Every option in the baseline is compared, the recommendation is one "
+                                         "of the options, and each option has hosting variants on the project's "
+                                         "platforms (on-premise among them when the brief leaves hosting open) with "
+                                         "one recommended", problems)]
+    elif gate == "srs":
+        content = latest_document(session, run.id, "srs").content
+        problems = check_srs_markdown(content)
+        controller = [checklists._result("outline", "SRS sections 1-8 are present and story ids are unique", problems)]
+        baseline = json.loads(artifact(session, run.id, "baseline") or "null")
+        if baseline:
+            controller.append(checklists._result(
+                "trace", "Every baseline item in scope is used by an FR, a story or a section, and no unknown REQ is cited",
+                check_srs_trace(content, baseline)))
+    elif gate == "sds":
+        srs_text = mirror_for(session.get(Project, run.project_id)).read_file(run.base_commit, SRS_PATH)
+        content = latest_document(session, run.id, "sds").content
+        problems = check_sds_markdown(content, srs_text)
+        controller = [checklists._result("outline", "SDS sections are present and every SRS story has a section 5 entry",
+                                         problems),
+                      checklists._result("depth", "The design has its diagrams (context, deployment, data, every SRS "
+                                         "flow and lifecycle, sign-in), DTOs and API specifications", check_sds_depth(content, srs_text))]
+        chosen = json.loads(artifact(session, run.id, "chosen_option") or "null")
+        if chosen:
+            hosting = f", hosted as {chosen['hosting']['id']} {chosen['hosting']['name']}" if chosen.get("hosting") else ""
+            controller.append(checklists._result("option", f"Section 9 records the chosen option ({chosen['id']} "
+                                                 f"{chosen['name']}{hosting}) and why", check_chosen_option(content, chosen)))
+    elif gate == "spec":
+        controller = checklists.check_spec(spec.content)
+        model = _spec_model(session, run)
+        ai = checklists.ai_results(checklists.AI_ITEMS["spec"], [c.model_dump() for c in model.self_check])
+    elif gate in ("plan", "tests"):
+        plan = latest_plan(session, run.id)
+        payload, tests = PlanPayload.model_validate(plan.payload), TestPlan.model_validate(plan.test_plan)
+        criteria = parse_criteria(spec.content)
+        if gate == "plan":
+            controller = checklists.check_plan(payload, criteria, plan.grounding_report, test_paths)
+            ai = checklists.ai_results(checklists.AI_ITEMS["plan"], [c.model_dump() for c in payload.self_check])
+        else:
+            controller = checklists.check_tests(tests, payload, criteria, test_paths,
+                                                  policy.validation if policy else ())
+            ai = checklists.ai_results(checklists.AI_ITEMS["tests"], [c.model_dump() for c in tests.self_check])
+    elif gate == "pr":
+        statuses = {t.external_task_id: t.status for t in current_tasks(session, run)}
+        added, changed = _release_evidence(session, run)
+        after = latest_document(session, run.id, "analysis")
+        findings = after.data.get("findings", []) if after and after.data.get("stage") == "after" else []
+        controller = checklists.check_release(statuses, added, changed, findings)
+    human = checklists.human_items(gate)
+    if gate == "acceptance" and _ui_review(session, run):
+        human.append({"id": checklists.UI_REVIEW.id, "text": checklists.UI_REVIEW.text})
+    return {"gate": gate, "controller": controller, "ai": ai, "human": human}
+
+
+def _ui_review(session: Session, run: Run) -> bool:
+    """The acceptance gate asks whether the screens follow the UI concept: the project has its guide, ui.review gated."""
+    raw = artifact(session, run.id, "effective_policy")
+    if not raw or not run.worktree_path:
+        return False
+    policy = EffectivePolicy.model_validate_json(raw)
+    return policy.ui.review == "gated" and (Path(run.worktree_path) / policy.ui.guide).is_file()
+
+
+def baseline_checks(session: Session, run: Run) -> tuple[list[dict], list[dict]]:
+    from controller.app.discovery import baseline, questions as q
+    from controller.app.discovery.inventory import Inventory
+    latest = latest_document(session, run.id, "inventory")
+    data = latest.data if latest else {}
+    inventory = Inventory.model_validate({k: data.get(k, [] if k != "coverage" else {}) for k in ("items", "gaps", "coverage")})
+    run_questions, run_decisions = q.as_dicts(session, run.id)
+    return (baseline.check(inventory, data.get("problems", []), run_questions, run_decisions,
+                           data.get("decisions_applied", [])), baseline.advisories(inventory, run_questions))
+
+
+def _release_evidence(session: Session, run: Run) -> tuple[list[str], list[str]]:
+    """Lines the run adds (for the secret scan) and other stories' sections that differ from the base."""
+    if not run.worktree_path or not Path(run.worktree_path).is_dir() or not run.base_commit:
+        return [], []
+    import subprocess
+    base = diff_base(session, run)
+    diff = subprocess.run(["git", "-C", run.worktree_path, "diff", "--unified=0", base, "HEAD"],
+                          capture_output=True, text=True).stdout
+    # Secrets are looked for in what ships: source and configuration. Test fixtures ("Secret123") and the story's
+    # documents (examples in criteria) are data, so test paths, specs/ and the run thread are skipped.
+    raw_policy = artifact(session, run.id, "effective_policy")
+    test_paths = EffectivePolicy.model_validate_json(raw_policy).test_paths if raw_policy else []
+    added, current = [], None
+    for line in diff.splitlines():
+        if line.startswith("+++ "):
+            current = line[6:] if line.startswith("+++ b/") else None
+        elif line.startswith("+") and current and not matches_any(current, test_paths) \
+                and not current.startswith(("specs/", THREAD_DIR + "/")) and current not in (SRS_PATH, SDS_PATH):
+            added.append(f"{current}: {line[1:]}")
+    ref = feature_ref(session, run)
+    changed: list[str] = []
+    if ref:
+        mirror = mirror_for(session.get(Project, run.project_id))
+        worktree = worktree_for(session.get(Project, run.project_id), run)
+        for name in ("spec.md", "plan.md", "test_cases.md", "checklists/requirements.md"):
+            before = mirror.read_file(base, f"{ref.folder}/{name}") or ""
+            after = worktree.read(f"{ref.folder}/{name}") or ""
+            for story, text in _sections(before).items():
+                if story != ref.story_id and _sections(after).get(story) != text:
+                    changed.append(f"{ref.folder}/{name}: {story}")
+    return added, changed
+
+
+def _sections(text: str) -> dict[str, str]:
+    starts = list(re.finditer(r"^## ([A-Z]{2,4}-US-\d{2}(?:\.\d+)?):", text, re.MULTILINE))
+    return {m[1]: text[m.start(): starts[i + 1].start() if i + 1 < len(starts) else len(text)].strip()
+            for i, m in enumerate(starts)}
+
+
+def require_checklist(session: Session, run: Run, checked: list[str] | None) -> dict:
+    """Refuse an approval while a controller check fails or a human item is unticked; return what to record."""
+    evaluation = evaluate_gate(session, run)
+    if evaluation is None:
+        return {}
+    failing = [f"{c['text']}: {c['detail']}" for c in evaluation["controller"] if not c["ok"]]
+    if failing:
+        raise ValueError("the controller checks fail; revise or reject instead: " + " | ".join(failing))
+    missing = checklists.missing_ticks(evaluation["gate"], checked, evaluation["human"])
+    if missing:
+        raise ValueError("tick every review item before approving; missing: " + "; ".join(missing))
+    return {**evaluation, "human": [{**h, "checked": True} for h in evaluation["human"]]}
+
+
+def on_claim(session: Session, execution: Execution) -> bool:
+    """Mark side-effecting work as started before it begins, so a crash leaves a visible trace. False: the job is
+    not to run (a code task queued before the run stopped coding), and is discarded without starting."""
+    if execution.kind == "advise" and session.get(Run, execution.run_id).status != RunStatus.NEEDS_HUMAN:
+        # the Tech Lead decided before the brief came: nobody reads it any more
+        finish(session, execution, "discarded", error="the run no longer waits for the Tech Lead")
+        return False
+    if execution.kind == "code_task":
+        task = session.get(Task, execution.task_id, with_for_update=True)
+        run = session.get(Run, execution.run_id)
+        if run.status != RunStatus.CODING:
+            finish(session, execution, "discarded", error=f"run is {run.status}, task {task.status}")
+            # free its idempotency key: when the run codes again, the task's job is queued anew under the same key
+            execution.idempotency_key = f"{execution.idempotency_key}:discarded:{execution.id}"
+            return False
+        if task.status == TaskStatus.READY:
+            task.attempt_count += 1  # the next attempt gets a new idempotency key
+            transition_task(session, task, TaskStatus.WRITING_TESTS, actor=TeamRole.QA_ENGINEER.value,
+                            reason=f"execution {execution.id} started")
+    return True
+
+
+# ---------------------------------------------------------------- context
+
+@dataclass
+class Loaded:
+    execution_id: uuid.UUID
+    kind: str
+    run_id: uuid.UUID
+    run_version: int
+    context: RunContext | None = None
+    plan: PlanPayload | None = None
+    tests: TestPlan | None = None
+    task_payload: dict | None = None
+    task_attempt: int = 0
+    extra: dict = field(default_factory=dict)
+
+
+def context_files(session: Session, run: Run) -> list[str]:
+    project = session.get(Project, run.project_id)
+    files = mirror_for(project).list_files(run.base_commit)
+    rules = json.loads(artifact(session, run.id, "context_rules") or '{"include": ["**"], "exclude": []}')
+    return [f for f in files if matches_any(f, rules["include"]) and not matches_any(f, rules["exclude"])]
+
+
+def code_bundle(session: Session, run: Run, query_texts: list[str], budget: int):
+    project = session.get(Project, run.project_id)
+    return build_code_context(mirror_for(project), run.base_commit, context_files(session, run), query_texts, budget)
+
+
+def build_context(session: Session, run: Run, *, kind: str = "", feedback: list[str] | None = None) -> RunContext:
+    policy = EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy"))
+    spec = latest_document(session, run.id, "spec")
+    intent = latest_document(session, run.id, "intent").content
+    agents = artifact(session, run.id, "agents_md") or ""
+    answers = [(c.question, c.answer) for c in session.scalars(
+        select(Clarification).where(Clarification.run_id == run.id, Clarification.answer.is_not(None)))]
+    bundle = code_bundle(session, run, [intent, spec.content if spec else "", agents],
+                         get_settings().context_char_budget)
+    srs = sds = None
+    ui_guide = ""
+    if run.kind == RunKind.FOUNDATION and run.base_commit:
+        sds = mirror_for(session.get(Project, run.project_id)).read_file(run.base_commit, SDS_PATH)
+        from controller.app.ui import UI_DIR
+        ui_guide = mirror_for(session.get(Project, run.project_id)).read_file(run.base_commit, f"{UI_DIR}/UI.md") or ""
+    if run.kind in PROJECT_DOCS and run.base_commit:
+        mirror = mirror_for(session.get(Project, run.project_id))
+        srs, sds = mirror.read_file(run.base_commit, SRS_PATH), mirror.read_file(run.base_commit, SDS_PATH)
+        # Rewriting after a rejection or after changes asked on the PR: the role works on its last draft, so it
+        # changes what the feedback asks and keeps the rest (and its ids).
+        draft = latest_document(session, run.id, PROJECT_DOCS[run.kind][0])
+        if draft is not None:
+            srs, sds = (draft.content, sds) if run.kind == RunKind.SRS else (srs, draft.content)
+    return RunContext(title=run.title, policy=policy, agents_md=agents, review_md=artifact(session, run.id, "review_md"),
+                      constitution_md=artifact(session, run.id, "constitution") or "",
+                      intent_md=intent, files=bundle.files, spec_md=spec.content if spec else None, srs_md=srs, sds_md=sds,
+                      answers=answers, story=_story_context(session, run),
+                      repository=bundle.as_input(), feedback=feedback or [], session_id=f"{run.id}:{kind}",
+                      run_id=str(run.id), worktree=run.worktree_path or "", base_commit=run.base_commit or "",
+                      engines=json.loads(artifact(session, run.id, "engines") or "{}"), experiment=run.experiment,
+                      baseline=json.loads(artifact(session, run.id, "baseline") or "null"),
+                      chosen_option=json.loads(artifact(session, run.id, "chosen_option") or "null"),
+                      chosen_ui=json.loads(artifact(session, run.id, "chosen_ui") or "null"), ui_guide=ui_guide,
+                      hosting_platforms=options_platforms(policy, _deployment_context(session, run))
+                      if run.kind == RunKind.SDS else [],
+                      project_config=artifact(session, run.id, "project_config") or "",
+                      task_base=artifact(session, run.id, "task_base") or run.base_commit or "")
+
+
+def _story_context(session: Session, run: Run) -> dict | None:
+    ref = feature_ref(session, run)
+    return ref.model_dump() if ref else None
+
+
+def review_decisions(session: Session, run: Run) -> list[str]:
+    """What people decided during the run: rulings on test disputes and the QC's or Code Owner's defect notes. They
+    stand over the plan and the approved test cases."""
+    out = []
+    for content in session.scalars(select(Artifact.content).where(Artifact.run_id == run.id, Artifact.kind.like("ruling:%"))
+                                   .order_by(Artifact.created_at)):
+        ruling = json.loads(content)
+        who = "Code Reviewer (decided on its own)" if AUTO_ACTOR in ruling.get("actor", "") else "Tech Lead"
+        out.append(f"{who}, {ruling['task']} {ruling['decision']}: {ruling['reason'][:600]}")
+    for stage, reason in session.execute(select(Approval.stage, Approval.reason).where(
+            Approval.run_id == run.id, Approval.reason.is_not(None),
+            ((Approval.stage == "acceptance") & (Approval.decision == "reject"))
+            | ((Approval.stage == "pr") & (Approval.decision == "request_changes"))).order_by(Approval.created_at)):
+        out.append(f"{'QC' if stage == 'acceptance' else 'Code Owner'} defects: {reason[:1200]}")
+    return out
+
+
+def review_notes(session: Session, run: Run) -> list[str]:
+    """How the platform runs what the diff cannot show, so the review does not report it as a defect."""
+    notes = []
+    if run.kind == RunKind.FOUNDATION:
+        notes.append("The onboarding files (AGENTS.md, REVIEW.md, .gitignore, the CI workflow, .sdlc/*) were written by "
+                     "the Architect and approved by the Tech Lead at the onboarding gate; the controller committed them. "
+                     "They are not changes of the coding run.")
+    policy = EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy") or "{}") \
+        if artifact(session, run.id, "effective_policy") else None
+    if policy and policy.preview:
+        notes.append(f"The preview runs `docker compose -f {policy.preview.compose}` with the repository root as the "
+                     "project directory (build contexts such as ./backend resolve from the root), and the platform "
+                     f"publishes {policy.preview.service}:{policy.preview.port} on 127.0.0.1 itself; the compose file "
+                     "publishes no port on purpose.")
+        report = latest_document(session, run.id, "acceptance")
+        if report is not None:
+            cases = (report.data or {}).get("cases", [])
+            notes.append(f"The acceptance tests ran on that preview: {sum(c['status'] == 'passed' for c in cases)} of "
+                         f"{len(cases)} passed (acceptance report v{report.version}).")
+    return notes
+
+
+def validation_summary(session: Session, run: Run) -> str:
+    """The last validation result of each current task, for the Code Reviewer."""
+    lines = []
+    for task in current_tasks(session, run):
+        execution = session.scalar(select(Execution).where(Execution.task_id == task.id, Execution.kind == "code_task")
+                                   .order_by(Execution.created_at.desc()).limit(1))
+        steps = [s for s in ((execution.result or {}).get("steps", []) if execution else [])
+                 if s["state"] == TaskStatus.VALIDATING]
+        lines.append(f"{task.external_task_id}: {steps[-1]['detail'] if steps else 'not validated'}")
+    return "\n".join(lines)
+
+
+def load(session: Session, execution: Execution) -> Loaded:
+    run = session.get(Run, execution.run_id)
+    loaded = Loaded(execution.id, execution.kind, run.id, run.version)
+    if execution.kind in ("preflight", "ground", "release"):
+        return loaded
+    if execution.kind in ("preview", "preview_stop"):
+        return _load_preview(session, run, loaded, start=execution.kind == "preview")
+    if execution.kind == "environment":
+        document = latest_document(session, run.id, "onboarding")
+        loaded.extra.update(files=(document.data or {}).get("files", {}), worktree=run.worktree_path or "",
+                            run_id=str(run.id))
+        return loaded
+    if execution.kind == "extract":
+        return _load_extract(session, run, loaded)
+    if execution.kind == "update_branch":
+        return _load_update(session, run, loaded)
+    plan = latest_plan(session, run.id)
+    feedback: list[str] = []
+    if (execution.kind == "plan" and plan and plan.author_kind == "ai" and plan.regenerated_from is None
+            and (plan.grounding_report or {}).get("status") == "fail"):
+        feedback = list(plan.grounding_report["findings"])
+        loaded.extra["regenerated_from"] = str(plan.id)
+    if execution.kind == "specify":
+        # Reasons of a rejected draft at the gate, and (SRS, SDS) of changes asked on the pull request.
+        asked = (Approval.stage == "spec") & (Approval.decision == "reject")
+        if run.kind in PROJECT_DOCS:
+            asked = asked | ((Approval.stage == "pr") & (Approval.decision == "request_changes"))
+        feedback = [f"Reviewer asked for changes: {reason}" for reason in session.scalars(
+            select(Approval.reason).where(Approval.run_id == run.id, asked).order_by(Approval.created_at)) if reason]
+    if execution.kind == "plan":
+        # A replan the Tech Lead or the QC asked for carries their reasons, besides any grounding findings.
+        feedback += [f"{'Tech Lead rejected the plan' if stage == 'plan' else 'QC asked for changes'}: {reason}"
+                     for stage, reason in session.execute(
+                         select(Approval.stage, Approval.reason).where(
+                             Approval.run_id == run.id, Approval.stage.in_(("plan", "tests")),
+                             Approval.decision == "reject").order_by(Approval.created_at)) if reason]
+    if execution.kind == "options":
+        feedback = [f"Solution Architect asked for other options: {reason}" for reason in session.scalars(
+            select(Approval.reason).where(Approval.run_id == run.id, Approval.stage == "options",
+                                          Approval.decision == "reject").order_by(Approval.created_at)) if reason]
+    if execution.kind == "ui_concepts":  # the Product Owner's reasons for other concepts
+        feedback = [f"Product Owner asked for other concepts: {reason}" for reason in session.scalars(
+            select(Approval.reason).where(Approval.run_id == run.id, Approval.stage == "ui",
+                                          Approval.decision == "reject").order_by(Approval.created_at)) if reason]
+    if execution.kind == "onboarding":  # the Tech Lead's reasons, and what the environment check found
+        feedback = [f"{'Environment check' if actor == COORDINATOR else 'Tech Lead'} asked for changes: {reason}"
+                    for actor, reason in session.execute(
+                        select(Approval.actor, Approval.reason).where(
+                            Approval.run_id == run.id, Approval.stage == "onboarding",
+                            Approval.decision == "reject").order_by(Approval.created_at)) if reason]
+    if execution.kind == "design_tests":
+        feedback = [f"QC asked for changes: {reason}" for reason in session.scalars(
+            select(Approval.reason).where(Approval.run_id == run.id, Approval.stage == "tests",
+                                          Approval.decision == "reject").order_by(Approval.created_at)) if reason]
+    loaded.extra["run_kind"] = run.kind
+    loaded.context = build_context(session, run, kind=execution.kind, feedback=feedback)
+    if execution.kind == "onboarding":  # a revision starts from the version being revised, not from scratch
+        previous = latest_document(session, run.id, "onboarding")
+        if previous is not None and feedback:
+            loaded.context = dataclasses.replace(loaded.context, previous_files=(previous.data or {}).get("files", {}))
+    if plan:
+        loaded.plan = PlanPayload.model_validate(plan.payload)
+        loaded.tests = TestPlan.model_validate(plan.test_plan)
+    if execution.kind == "review" and not get_settings().coding_is_mocked and run.worktree_path:
+        loaded.extra["diff"] = changes.run_diff(Path(run.worktree_path), diff_base(session, run), loaded.context.policy.test_paths,
+                                                get_settings().context_char_budget // 2)  # spec, plan and test plan need room too
+        loaded.extra["validation"] = validation_summary(session, run)
+    if execution.kind == "review":
+        loaded.context = dataclasses.replace(loaded.context, decisions=review_decisions(session, run),
+                                             platform_notes=review_notes(session, run))
+    if execution.kind == "acceptance":
+        _load_preview(session, run, loaded, start=True)
+        retest = session.scalar(select(Approval).where(Approval.run_id == run.id, Approval.stage == "acceptance")
+                                .order_by(Approval.created_at.desc()).limit(1))
+        if retest is not None and retest.decision == "retest" and retest.reason:  # the QC says the tests are wrong
+            loaded.extra["feedback"] = f"The QC asked for the acceptance tests again: {retest.reason}"
+        elif retest is not None and retest.decision == "reject" and retest.reason:  # after the defects were fixed
+            loaded.extra["feedback"] = (f"The QC sent defects back after the last run, now fixed in the code: "
+                                        f"{retest.reason}\nChange the tests only where these notes say a test was "
+                                        f"wrong; keep every other test as it is.")
+        loaded.extra.update(attempt=session.scalar(select(func.count()).select_from(Document).where(
+            Document.run_id == run.id, Document.kind == "acceptance")) + 1)
+    if execution.kind == "advise":
+        _load_advice(session, run, loaded, session.get(Task, execution.task_id))
+    if execution.kind == "ui_concepts":
+        from controller.app.ui import presets
+        brief = ArchitectureBrief.model_validate(latest_document(session, run.id, "intent").data)
+        policy = loaded.context.policy
+        loaded.extra["ui"] = {"brand": brief.brand.model_dump(), "count": policy.ui.concepts, "presets": presets(),
+                              "devices": brief.brand.devices or policy.ui.devices,
+                              "accessibility": brief.brand.accessibility or policy.ui.accessibility}
+    if execution.kind == "check_defects":
+        loaded.extra["defects"] = json.loads(artifact(session, run.id, "pending_defects"))
+    if execution.kind == "triage_regressions":
+        _load_regressions(session, run, loaded)
+    if execution.kind == "code_task":
+        # what the QC (acceptance) or the Code Owner (pull request) asked since the last review: the Developer's notes
+        last_review = latest_document(session, run.id, "review")
+        asked = select(Approval.stage, Approval.reason).where(
+            Approval.run_id == run.id, Approval.reason.is_not(None),
+            ((Approval.stage == "acceptance") & (Approval.decision == "reject"))
+            | ((Approval.stage == "pr") & (Approval.decision == "request_changes")))
+        if last_review is not None:
+            asked = asked.where(Approval.created_at >= last_review.created_at)
+        loaded.extra["changes"] = [f"{'QC (acceptance)' if stage == 'acceptance' else 'Code Owner (pull request)'}: "
+                                   f"{reason}" for stage, reason in session.execute(asked.order_by(Approval.created_at))]
+    if execution.task_id:
+        task = session.get(Task, execution.task_id)
+        loaded.task_payload, loaded.task_attempt = task.payload, task.attempt_count
+        ruling = artifact(session, run.id, f"ruling:{task.external_task_id}")
+        # a ruling of an earlier plan's task of the same id does not apply (rulings before 2026-10-21 name no plan)
+        if ruling and _ruling_of_plan(session, run, task):
+            decided = json.loads(ruling)
+            # amend_tests rewrites the tests once; keeping the tests (and what the reason adds) or ruling the task
+            # built holds for every later attempt, such as one after a failure outside the dispute
+            if decided["attempt"] == task.attempt_count or (decided["decision"] != "amend_tests"
+                                                            and decided["attempt"] <= task.attempt_count):
+                loaded.extra["ruling"] = decided
+    return loaded
+
+
+def _load_advice(session: Session, run: Run, loaded: Loaded, task: Task) -> None:
+    """What the brief rests on: the stop, the task and its approved test cases, its last attempt, the rulings, and the
+    run's earlier commits of its files."""
+    last = session.scalar(select(Execution).where(Execution.task_id == task.id, Execution.kind == "code_task",
+                                                  Execution.result.is_not(None))
+                          .order_by(Execution.created_at.desc()).limit(1))
+    steps = [{"state": s["state"], "role": s["role"], "ok": s["ok"], "detail": s["detail"][:1500],
+              "message": (s.get("evidence") or {}).get("message", "")[-1500:]}
+             for s in ((last.result or {}).get("steps", []) if last else [])]
+    from controller.app.doing.validation import plain
+    failed = [s for s in ((last.result or {}).get("steps", []) if last else [])
+              if s["state"] == TaskStatus.VALIDATING and not s["ok"]]
+    failures = plain((failed[-1].get("evidence") or {}).get("failures", "")) if failed else ""
+    plan = session.get(Plan, task.plan_id)
+    cases = [c for c in (plan.test_plan or {}).get("cases", []) if c.get("task_id") == task.external_task_id]
+    files = task.payload.get("modify", []) + task.payload.get("create", [])
+    earlier = []
+    base = artifact(session, run.id, "task_base") or run.base_commit
+    if run.worktree_path and run.base_commit and base:
+        try:
+            earlier = [{"sha": c["sha"][:10], "subject": c["subject"], "files": c["files"]}
+                       for c in changes.commits_touching(Path(run.worktree_path), run.base_commit, base, files)][:8]
+        except GitError:
+            pass
+    rulings = [json.loads(content) for content in session.scalars(
+        select(Artifact.content).where(Artifact.run_id == run.id, Artifact.kind.like("ruling:%"))
+        .order_by(Artifact.created_at))]
+    loaded.extra["stop"] = {
+        "stop": run.status_reason or "", "decisions": decisions_for(run, current_tasks(session, run)),
+        "task": {"id": task.external_task_id, "title": task.payload["title"], "files": files,
+                 "acceptance_criteria": task.payload.get("acceptance_criteria", [])},
+        "test_cases": cases, "steps": steps, "failures": failures, "earlier_commits": earlier,
+        "rulings": [{k: r.get(k) for k in ("task", "decision", "reason", "dispute")} for r in rulings]}
+
+
+def _load_regressions(session: Session, run: Run, loaded: Loaded) -> None:
+    """The earlier stories' acceptance tests that failed, with what this story set out to change."""
+    document = latest_document(session, run.id, "acceptance")
+    cases = [c for c in document.data.get("cases", []) if c.get("regression") and c["status"] not in ("passed", "skipped")]
+    plan = latest_plan(session, run.id)
+    changed: list[str] = []
+    base = diff_base(session, run)
+    if run.worktree_path and base:
+        try:
+            changed = changes.changed_since(Path(run.worktree_path), base)
+        except GitError:
+            pass
+    story = (loaded.context.story or {}) if loaded.context else {}
+    loaded.extra["regressions"] = {
+        "document": str(document.id),
+        "story": {"id": story.get("story_id", ""), "title": run.title},
+        "tests": [{"title": c["title"], "file": c.get("file", ""), "error": (c.get("error") or "")[:1500]}
+                  for c in cases],
+        "changed_files": changed[:200],
+        "server_errors": document.data.get("server_errors", []),
+        "plan": [{"title": t.get("title"), "files": t.get("modify", []) + t.get("create", []),
+                  "acceptance_criteria": t.get("acceptance_criteria", [])} for t in (plan.payload or {}).get("tasks", [])]
+        if plan else []}
+
+
+def _ruling_of_plan(session: Session, run: Run, task: Task) -> bool:
+    """The task's latest ruling was made for its plan; a ruling stored before 2026-10-21 names no plan, and counts
+    only when it is newer than the plan."""
+    row = session.execute(select(Artifact.content, Artifact.created_at).where(
+        Artifact.run_id == run.id, Artifact.kind == f"ruling:{task.external_task_id}")
+        .order_by(Artifact.created_at.desc()).limit(1)).first()
+    if row is None:
+        return False
+    plan = json.loads(row.content).get("plan")
+    if plan is not None:
+        return plan == str(task.plan_id)
+    return row.created_at > session.get(Plan, task.plan_id).created_at
+
+
+# ---------------------------------------------------------------- compute (no database)
+
+def compute(team: Team, loaded: Loaded) -> dict:
+    context = loaded.context
+    calls: list[dict] = []
+
+    def record() -> None:
+        call = getattr(team, "last_call", None)
+        if call:
+            joblog.note(f"answer accepted from {call.engine} after {call.attempts} attempt(s), "
+                        f"{(call.usage or {}).get('seconds', '?')}s")
+            calls.append({"engine": call.engine, "prompt_version": call.prompt_version, "attempts": call.attempts,
+                          "usage": call.usage})
+
+    result: dict = {}
+    run_kind = loaded.extra.get("run_kind")
+    doing = {"specify": {RunKind.SRS: "Business Analyst writes the SRS", RunKind.SDS: "Architect writes the SDS"}
+             .get(run_kind, "Business Analyst writes the spec"),
+             "plan": "Tech Lead writes the plan, then the QA Analyst designs the test cases",
+             "design_tests": "QA Analyst redesigns the test cases", "review": "Code Reviewer reviews the change",
+             "code_task": "QA Engineer, Validation Gate and Developer work on the task"}
+    if loaded.kind in doing:
+        joblog.note(doing[loaded.kind])
+    if loaded.kind == "extract":
+        return _extract(team, loaded)
+    if loaded.kind == "environment":
+        return _try_environment(loaded)
+    if loaded.kind in ("preview", "preview_stop"):
+        return _run_preview(loaded)
+    if loaded.kind == "update_branch":
+        return _update_branch(team, loaded)
+    if loaded.kind == "acceptance":
+        return _accept(team, loaded)
+    if loaded.kind == "onboarding":
+        joblog.note("Architect writes the onboarding files from the SDS")
+        result = {"onboarding": team.write_onboarding(context).model_dump()}
+        record()
+    elif loaded.kind == "ui_concepts":
+        joblog.note("UX Designer proposes the UI concepts")
+        result = {"ui": team.design_ui(context, loaded.extra["ui"]).model_dump(), "brief": loaded.extra["ui"]}
+        record()
+    elif loaded.kind == "options":
+        joblog.note("Architect compares the architecture options")
+        result = {"options": team.design_options(context).model_dump()}
+        record()
+    elif loaded.kind == "specify" and loaded.extra.get("run_kind") == RunKind.SRS:
+        result = {"srs": team.write_srs(context).model_dump()}
+        record()
+    elif loaded.kind == "specify" and loaded.extra.get("run_kind") == RunKind.SDS:
+        result = {"sds": team.write_sds(context).model_dump()}
+        record()
+    elif loaded.kind == "specify":
+        spec, tidied = tidy_spec(team.specify(context), context.policy)
+        result = {"spec": spec.model_dump(), "tidied": tidied}
+        record()
+    elif loaded.kind == "plan":
+        plan, tidied = tidy_plan(team.plan(context), context.policy)
+        record()
+        joblog.note(f"plan has {len(plan.tasks)} task(s); the QA Analyst designs the test cases")
+        # The grounding feedback is the Tech Lead's, except the lines on test cases (a file no validation runs); the
+        # QA Analyst gets the QC's feedback only on a redesign.
+        on_cases = [line for line in context.feedback if re.match(r"TC-\d+ ", line)]
+        tests, tidied_tests = tidy_tests(team.design_tests(dataclasses.replace(context, feedback=on_cases), plan), plan)
+        record()
+        result = {"plan": plan.model_dump(), "tests": tests.model_dump(), "tidied": tidied + tidied_tests,
+                  "regenerated_from": loaded.extra.get("regenerated_from"), "feedback": context.feedback}
+    elif loaded.kind == "design_tests":
+        tests, tidied = tidy_tests(team.design_tests(context, loaded.plan), loaded.plan)
+        record()
+        result = {"tests": tests.model_dump(), "tidied": tidied, "feedback": context.feedback}
+    elif loaded.kind == "code_task":
+        steps = _work_task(team, loaded)
+        executors = sorted({s["evidence"]["executor"] for s in steps if s["evidence"].get("executor")})
+        result = {"steps": steps, "_engine": ",".join(executors) or None}
+    elif loaded.kind == "check_defects":
+        joblog.note("Code Reviewer checks the defect notes against the SDS")
+        check = team.check_defects(context, loaded.extra["defects"]["reason"])
+        result = {"check": check.model_dump(), "defects": loaded.extra["defects"]}
+        record()
+    elif loaded.kind == "triage_regressions":
+        joblog.note("Code Reviewer judges the earlier stories' acceptance tests that failed")
+        failing = {k: v for k, v in loaded.extra["regressions"].items() if k != "document"}
+        result = {"triage": team.triage_regressions(context, failing).model_dump(),
+                  "document": loaded.extra["regressions"]["document"]}
+        record()
+    elif loaded.kind == "advise":
+        joblog.note("Code Reviewer prepares the Tech Lead's brief on the stopped task")
+        result = {"advice": team.advise(context, loaded.extra["stop"]).model_dump(), "for": loaded.extra["stop"]["stop"]}
+        record()
+    elif loaded.kind == "review":
+        result = {"review": team.review(context, loaded.plan, loaded.tests, diff=loaded.extra.get("diff", ""),
+                                        validation=loaded.extra.get("validation", "")).model_dump()}
+        record()
+    if context is not None:
+        result["_context"] = {"selected": [f["path"] for f in context.repository.get("selected_files", [])],
+                              "files": len(context.files)}
+    result["_calls"] = calls
+    if calls and not result.get("_engine"):
+        result["_engine"] = ",".join(sorted({c["engine"] for c in calls}))
+    return result
+
+
+def _validated(team: Team, context: RunContext, task: PlanTask, attempt: int, step) -> dict:
+    """Validation, run again when its environment broke (validation_infra_retries); a step that still could not judge
+    the code carries "infrastructure", so the task stops for a person instead of sending the Developer to fix it."""
+    from controller.app.doing.validation import infrastructure_problem
+    result = step(TaskStatus.VALIDATING, TeamRole.VALIDATION_GATE, team.validate(context, task, attempt=attempt))
+    for _ in range(get_settings().validation_infra_retries):
+        problem = "" if result["ok"] else infrastructure_problem((result["evidence"] or {}).get("reports", []))
+        if not problem:
+            return result
+        joblog.note(f"{task.id}: validation could not run ({problem}); running it again")
+        result = step(TaskStatus.VALIDATING, TeamRole.VALIDATION_GATE, team.validate(context, task, attempt=attempt))
+    problem = "" if result["ok"] else infrastructure_problem((result["evidence"] or {}).get("reports", []))
+    if problem:
+        result["infrastructure"] = problem
+    return result
+
+
+def _work_task(team: Team, loaded: Loaded) -> list[dict]:
+    """QA Engineer writes tests, Validation Gate red-checks, Developer implements, Validation Gate validates.
+
+    A failed red check goes back to the QA Engineer once with the result. Validation failures go back to the
+    Developer with the failing output, at most limits.max_remediations times (.sdlc/project.yaml).
+    """
+    task = PlanTask.model_validate({k: v for k, v in loaded.task_payload.items()
+                                    if k not in ("defects", "conflicts")})  # a fix task's notes
+    if loaded.task_payload.get("conflicts") and not loaded.extra.get("ruling"):
+        return _resolve_conflicts(team, loaded, task)
+    context, tests = loaded.context, loaded.tests
+
+    def step(state: TaskStatus, role: TeamRole, result: StepResult) -> dict:
+        joblog.note(f"{task.id} {state.value} by {role.value}: {'ok' if result.ok else 'not ok'}; {result.detail[:300]}")
+        return {"state": state.value, "role": role.value, "ok": result.ok, "detail": result.detail,
+                "dispute": result.dispute, "changed_files": result.changed_files, "evidence": result.evidence}
+
+    ruling = loaded.extra.get("ruling")
+    if not any(c.task_id == task.id for c in tests.cases) and not loaded.task_payload.get("defects") and not ruling:
+        # no test case of the plan is this task's (a task an earlier plan already built, its tests kept as regression
+        # guards; a scaffold): nothing for the QA Engineer to write or the red check to see fail (Manage Employees
+        # Across Locations T1, 24/10: "wrote no test" twice, then a stop)
+        steps = [step(TaskStatus.WRITING_TESTS, TeamRole.QA_ENGINEER,
+                      StepResult(True, "skipped: the plan gives this task no test case; validation decides")),
+                 step(TaskStatus.RED_CHECK, TeamRole.VALIDATION_GATE, StepResult(True, "skipped: no new test"))]
+        return _code_and_validate(team, context, task, tests, steps, step)
+    if loaded.task_payload.get("defects") and not ruling:  # a fix task: the tests of the defects come first
+        first = team.write_tests(context, task, tests, amend=True,
+                                 feedback=f"Defects a human found after every task passed; write or update the tests "
+                                          f"that show each one (they must fail now), and change only what they need:\n"
+                                          f"{loaded.task_payload['defects']}")
+    elif ruling and ruling["decision"] == "amend_tests":
+        stop = ("Your tests kept failing on the Developer's code" if VALIDATION_FAILED in (ruling["dispute"] or "")
+                else "The Developer disputed your tests")
+        feedback = f"{stop}: {ruling['dispute']}\nThe Tech Lead decided that you update the tests: {ruling['reason']}"
+        first = team.write_tests(context, task, tests, feedback=feedback, amend=True)
+    else:
+        first = team.write_tests(context, task, tests)  # reuses tests already committed for the task
+    steps = [step(TaskStatus.WRITING_TESTS, TeamRole.QA_ENGINEER, first)]
+    if not steps[-1]["ok"] and steps[-1]["detail"].startswith("test changes rejected"):
+        # once more with the controller's reason, as after a failed red check (the task stays in WRITING_TESTS)
+        retry = step(TaskStatus.WRITING_TESTS, TeamRole.QA_ENGINEER,
+                     team.write_tests(context, task, tests, feedback=steps[-1]["detail"]))
+        steps[-1] = {**retry, "evidence": {**retry["evidence"], "earlier": steps[-1]["detail"]}}
+    if not steps[-1]["ok"]:
+        return steps
+    if ruling and ruling["decision"] == "already_built":  # the Tech Lead found the behaviour already in the code
+        note = f"the Tech Lead ruled the behaviour already built: {ruling['reason']}"
+        steps.append(step(TaskStatus.RED_CHECK, TeamRole.VALIDATION_GATE,
+                          StepResult(True, f"skipped; the new tests are regression guards ({note})")))
+        steps.append(step(TaskStatus.CODING, TeamRole.DEVELOPER, StepResult(True, f"no code: {note}")))
+        steps.append(_validated(team, context, task, 1, step))
+        return steps
+    steps.append(step(TaskStatus.RED_CHECK, TeamRole.VALIDATION_GATE, team.red_check(context, task, tests)))
+    if not steps[-1]["ok"]:
+        steps.append(step(TaskStatus.WRITING_TESTS, TeamRole.QA_ENGINEER,
+                          team.write_tests(context, task, tests, feedback=steps[-1]["detail"])))
+        if not steps[-1]["ok"]:
+            return steps
+        steps.append(step(TaskStatus.RED_CHECK, TeamRole.VALIDATION_GATE, team.red_check(context, task, tests)))
+        if not steps[-1]["ok"]:
+            return steps
+    earlier = ("Your code kept failing the tests" if ruling and VALIDATION_FAILED in (ruling["dispute"] or "")
+               else "You disputed a test earlier")
+    upheld = (f"{earlier}: {ruling['dispute']}\nThe Tech Lead kept the tests: {ruling['reason']}\n"
+              f"Make the code pass them.") if ruling and ruling["decision"] == "keep_tests" else ""
+    if loaded.task_payload.get("defects"):
+        upheld = "\n".join(["Fix these defects, found by a human after every task passed:",
+                             loaded.task_payload["defects"], upheld]).strip()
+    elif loaded.extra.get("changes"):  # sent back from the acceptance gate or the pull request
+        upheld = "\n".join(["Changes asked after the review; make them where they concern this task:",
+                             *loaded.extra["changes"], upheld]).strip()
+    return _code_and_validate(team, context, task, tests, steps, step, upheld)
+
+
+def drop_unfinished_tests(session: Session, run: Run) -> list[str]:
+    """Before a new plan's tasks start: the tests an earlier plan's unfinished tasks added go, the new plan's QA Engineer
+    writes its own; otherwise they fail every validation of the new plan's earlier tasks."""
+    if not run.worktree_path or not run.base_commit or not Path(run.worktree_path).is_dir():
+        return []
+    worktree = Path(run.worktree_path)
+    passed = set(session.scalars(select(Task.external_task_id).where(Task.run_id == run.id,
+                                                                     Task.status == TaskStatus.PASSED.value)))
+    files = changes.unfinished_test_files(worktree, run.base_commit, passed)
+    if not files:
+        return []
+    changes._git("rm", "--quiet", "--", *files, cwd=worktree)
+    changes.commit(worktree, "sdlc: drop the tests of an earlier plan's unfinished tasks", "coordinator")
+    record_event(session, "tests.dropped", actor=COORDINATOR, run_id=run.id, payload={"files": files})
+    return files
+
+
+def _code_and_validate(team: Team, context: RunContext, task: PlanTask, tests, steps: list[dict], step,
+                       feedback: str = "") -> list[dict]:
+    """The Developer codes, validation decides; a failure goes back to the Developer at most max_remediations times."""
+    steps.append(step(TaskStatus.CODING, TeamRole.DEVELOPER, team.implement(context, task, 1, tests, feedback=feedback)))
+    max_remediations = context.policy.max_remediations
+    for remediation in range(max_remediations + 1):
+        if not steps[-1]["ok"] or steps[-1]["dispute"]:
+            return steps
+        steps.append(_validated(team, context, task, remediation + 1, step))
+        if steps[-1]["ok"] or steps[-1].get("infrastructure") or remediation == max_remediations:
+            return steps
+        failure = steps[-1]["evidence"].get("failures") or steps[-1]["detail"]
+        steps.append(step(TaskStatus.REMEDIATING, TeamRole.DEVELOPER,
+                          team.implement(context, task, remediation + 2, tests, feedback=failure)))
+    return steps
+
+
+# ---------------------------------------------------------------- apply
+
+def apply(session: Session, loaded: Loaded, result: dict, team: Team) -> None:
+    execution = session.get(Execution, loaded.execution_id, with_for_update=True)
+    run = session.get(Run, loaded.run_id, with_for_update=True)
+    expected = KINDS[loaded.kind][2]
+    if expected is not None and (run.status != expected or (loaded.kind != "code_task" and run.version != loaded.run_version)):
+        finish(session, execution, "discarded", error=f"run moved to {run.status} v{run.version} meanwhile")
+        record_event(session, "job.discarded", actor=COORDINATOR, run_id=run.id,
+                     payload={"kind": loaded.kind, "execution": str(execution.id)})
+        return
+    execution.engine = result.get("_engine")  # only jobs that called a model or a CLI name an engine
+    calls = result.get("_calls") or []
+    if calls:
+        execution.prompt_version = ",".join(sorted({c["prompt_version"] for c in calls if c["prompt_version"]}))
+    handler = {"preflight": _apply_preflight, "specify": _apply_specify, "plan": _apply_plan,
+               "ground": _apply_ground, "design_tests": _apply_design_tests, "code_task": _apply_code_task, "review": _apply_review,
+               "release": _apply_release, "extract": _apply_extract, "options": _apply_options,
+               "onboarding": _apply_onboarding, "environment": _apply_environment, "ui_concepts": _apply_ui_concepts,
+               "preview": _apply_preview, "preview_stop": _apply_preview,
+               "acceptance": _apply_acceptance, "advise": _apply_advice,
+               "check_defects": _apply_check_defects, "update_branch": _apply_update_branch,
+               "triage_regressions": _apply_triage}[loaded.kind]
+    handler(session, run, execution, result, team)
+    if execution.status == "running":
+        finish(session, execution, "succeeded", result=result)
+
+
+def _apply_check_defects(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    """Notes that agree with the design (or that it does not settle) go to the fix task; a conflict goes back to the
+    person, who sends the notes as written or revised."""
+    from controller.app.services import _add_fix_task
+    defects, check = result["defects"], result["check"]
+    store_artifact(session, run, "defect_check", TeamRole.CODE_REVIEWER,
+                   json.dumps({"defects": defects, "check": check, "engine": result.get("_engine")}))
+    if run.status != RunStatus.CODING:
+        return
+    conflicts = [p for p in check["points"] if p["verdict"] in ("conflict", "not_actionable")]
+    if conflicts and defects["who"] in (REVIEW_WHO, REGRESSION_WHO):  # the team's own findings: the SDS wins
+        kept = [p for p in check["points"] if p not in conflicts]
+        if not kept:
+            transition_run(session, run, RunStatus.REVIEWING, actor=TeamRole.CODE_REVIEWER.value,
+                           reason=f"the SDS contradicts every finding of the {defects['who']}; none is fixed")
+            after_review(session, run, "concerns")
+            return
+        defects = {**defects, "reason": defects["reason"] + "\n\nThe SDS check found these do not hold; leave them: "
+                   + "; ".join(f"{p['point']} ({p['note']})" for p in conflicts)}
+    elif conflicts:
+        to_needs_human(session, run, f"{DEFECTS_CONFLICT}: " + "; ".join(
+            f"{p['point']} ({p['note']})" for p in conflicts)[:900])
+        return
+    _add_fix_task(session, run, actor=defects["actor"], who=defects["who"], reason=defects["reason"])
+
+
+def _apply_advice(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    """Keep the brief with the stop it answers; the run page shows it while the run waits on that stop. A technical
+    dispute the brief settles with confidence is decided on its own (disputes.auto)."""
+    store_artifact(session, run, "advice", TeamRole.CODE_REVIEWER,
+                   json.dumps({"for": result["for"], "advice": result["advice"], "engine": result.get("_engine")}))
+    auto_rule(session, run, result)
+
+
+AUTO_ACTOR = "code_reviewer (auto)"
+# decisions the team may take on its own: none changes what a criterion means or what the plan builds
+AUTO_DECISIONS = ("amend_tests", "keep_tests", "allow_files", "already_built", "replan")
+CONFIDENCE = {"low": 0, "medium": 1, "high": 2}
+
+
+def auto_rule(session: Session, run: Run, result: dict) -> str | None:
+    """Apply the brief's decision without a person when the stop is a technical dispute it settles: the decision is
+    one of AUTO_DECISIONS, the brief raises no reason for a person (meaning of a criterion, the SDS, security, the
+    design), its confidence reaches disputes.min_confidence, and the task has not been decided on its own
+    disputes.max_auto_per_task times. Returns the decision taken, or None (why is kept for the run page)."""
+    from controller.app import services
+    advice = result.get("advice") or {}
+    if run.status != RunStatus.NEEDS_HUMAN or result.get("for") != (run.status_reason or ""):
+        return None  # a person decided meanwhile, or the run stopped again for something else
+    policy = EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy"))
+    if not policy.disputes.auto:
+        return None
+    stopped = [t for t in current_tasks(session, run) if t.status in (TaskStatus.DISPUTED, TaskStatus.FAILED)]
+    task = stopped[0].external_task_id if stopped else ""
+    decision = advice.get("recommendation", "")
+    taken = sum(1 for payload in session.scalars(select(Event.payload).where(
+        Event.run_id == run.id, Event.event_type == "dispute.auto_ruled")) if (payload or {}).get("task") == task)
+    # a replan the Code Reviewer is sure of starts on its own only when a person approves the new plan at its gate
+    # (Manage Employees Across Locations T3, 24/10: the plan forgot a file; high confidence, nothing for a person)
+    gated_plan = decision != "replan" or stage_mode(run, "plan") == "gated"
+    why_not = (f"{decision} is the Tech Lead's call" if decision not in AUTO_DECISIONS or not gated_plan
+               else advice["needs_human"] if advice.get("needs_human")
+               else f"the brief's confidence is {advice.get('confidence')}" if CONFIDENCE.get(advice.get("confidence"), 0)
+               < CONFIDENCE[policy.disputes.min_confidence]
+               else f"{task} was already decided on its own {taken} time(s)" if taken >= policy.disputes.max_auto_per_task
+               else "")
+    if not why_not:
+        corrected = run.human_corrected
+        try:
+            with session.begin_nested():
+                services.resume(session, run, actor=AUTO_ACTOR, decision=decision, files=advice.get("files") or [],
+                                reason=f"Decided by the Code Reviewer on its own: {advice.get('reason', '')}")
+        except services.DecisionError as exc:
+            why_not = str(exc)
+        else:
+            run.human_corrected = corrected  # the team settled it; no person corrected the run
+            record_event(session, "dispute.auto_ruled", actor=AUTO_ACTOR, run_id=run.id,
+                         payload={"task": task, "decision": decision, "reason": advice.get("reason", ""),
+                                  "files": advice.get("files") or [], "confidence": advice.get("confidence"),
+                                  "situation": advice.get("situation", ""), "stop": result.get("for", "")})
+            return decision
+    store_artifact(session, run, "auto_skipped", TeamRole.CODE_REVIEWER,
+                   json.dumps({"for": result.get("for", ""), "why": why_not}))
+    return None
+
+
+def _apply_preflight(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    project = session.get(Project, run.project_id)
+    mirror = mirror_for(project)
+    mirror.fetch()
+    base = run.base_commit or mirror.resolve(project.default_branch)
+    snapshot, items = read_snapshot(mirror, base)
+    if snapshot is None:
+        failed = "; ".join(f"{i.name}: {i.detail}" for i in items if i.status == "fail")
+        finish(session, execution, "failed", error=failed)
+        to_needs_human(session, run, f"onboarding files are not usable at {base[:12]}: {failed}")
+        return
+    if run.kind == RunKind.SDS and mirror.read_file(base, SRS_PATH) is None:
+        finish(session, execution, "failed", error="SRS.md is missing")
+        to_needs_human(session, run, f"SRS.md is not on {project.default_branch} at {base[:12]}; "
+                                     "merge the SRS pull request first, then resume")
+        return
+    intent_data = latest_document(session, run.id, "intent").data or {}
+    if run.kind in (RunKind.SRS, RunKind.SDS) and (intent_data.get("from_baseline") or run.kind == RunKind.SDS):
+        from controller.app.discovery.baseline import BASELINE_JSON
+        raw_baseline = mirror.read_file(base, BASELINE_JSON)
+        if raw_baseline is None and intent_data.get("from_baseline"):
+            finish(session, execution, "failed", error=f"{BASELINE_JSON} is missing")
+            to_needs_human(session, run, f"{BASELINE_JSON} is not on {project.default_branch} at {base[:12]}; "
+                                         "merge the discovery pull request first, then resume")
+            return
+        if raw_baseline is not None:
+            store_artifact(session, run, "baseline", TeamRole.COORDINATOR, raw_baseline)
+    story = intent_data.get("story") if run.kind == RunKind.FEATURE else None
+    if story:
+        try:
+            ref = resolve_feature(mirror.read_file(base, SRS_PATH) or "", mirror.list_files(base),
+                                  lambda path: mirror.read_file(base, path), story)
+        except ValueError as exc:
+            finish(session, execution, "failed", error=str(exc))
+            to_needs_human(session, run, f"{exc} at {base[:12]}")
+            return
+        store_artifact(session, run, "feature", TeamRole.COORDINATOR, ref.model_dump_json())
+    policy = effective_policy(snapshot.config)
+    store_artifact(session, run, "project_config", TeamRole.COORDINATOR,
+                   mirror.read_file(base, ".sdlc/project.yaml"))
+    store_artifact(session, run, "effective_policy", TeamRole.COORDINATOR, policy.model_dump_json())
+    store_artifact(session, run, "context_rules", TeamRole.COORDINATOR,
+                   json.dumps(snapshot.config.context.model_dump()))
+    store_artifact(session, run, "agents_md", TeamRole.COORDINATOR, snapshot.agents_md)
+    if snapshot.review_md:
+        store_artifact(session, run, "review_md", TeamRole.COORDINATOR, snapshot.review_md)
+    if snapshot.constitution_md:
+        store_artifact(session, run, "constitution", TeamRole.COORDINATOR, snapshot.constitution_md)
+    run.base_commit = base
+    modes = {**policy.stages.model_dump(), **run.stage_overrides}
+    if modes.get("plan") not in ("manual", "gated"):
+        modes["plan"] = "gated"  # the plan gate cannot be removed
+    run.stage_modes = modes
+    run.commit_artifacts = policy.commit_artifacts
+    run.branch = f"sdlc/run-{str(run.id)[:8]}"
+    run.worktree_path = str(DATA_DIR / "worktrees" / str(run.id))
+    if run.commit_artifacts:
+        worktree_for(project, run).create(base)
+        intent = latest_document(session, run.id, "intent")
+        intent.commit_sha = commit_thread(session, run, "intent", intent.content,
+                                          f"sdlc: intent for {run.title}")
+    if run.kind == RunKind.DISCOVERY:
+        transition_run(session, run, RunStatus.INGESTING, actor=COORDINATOR,
+                       reason="add the raw requirement sources, then start the extraction")
+        return
+    if run.kind == RunKind.FOUNDATION:
+        if mirror.read_file(base, SDS_PATH) is None:
+            to_needs_human(session, run, f"SDS.md is not on {project.default_branch} at {base[:12]}; "
+                                         "merge the SDS pull request first, then resume")
+            return
+        transition_run(session, run, RunStatus.DESIGNING_ONBOARDING, actor=COORDINATOR,
+                       reason="the Architect writes the onboarding files from the SDS")
+        queue(session, run, "onboarding")
+        return
+    if run.kind == RunKind.SDS and modes.get("options", "gated") != "skip":
+        transition_run(session, run, RunStatus.DESIGNING_OPTIONS, actor=COORDINATOR,
+                       reason="the Architect compares the architecture options before the SDS")
+        queue(session, run, "options")
+        return
+    if start_ui_concepts(session, run, actor=COORDINATOR):
+        return
+    enter_stage(session, run, "spec")
+
+
+def start_ui_concepts(session: Session, run: Run, *, actor: str, acting_role: str | None = None) -> bool:
+    """An SDS run proposes UI concepts before the SDS is written, unless stages.ui_concepts is skip."""
+    if run.kind != RunKind.SDS or (run.stage_modes or {}).get("ui_concepts", "gated") == "skip":
+        return False
+    transition_run(session, run, RunStatus.DESIGNING_UI, actor=actor, acting_role=acting_role,
+                   reason="the UX Designer proposes UI concepts before the SDS")
+    queue(session, run, "ui_concepts", key=f"ui:v{run.version}")
+    return True
+
+
+def _deployment_context(session: Session, run: Run) -> dict:
+    intent = latest_document(session, run.id, "intent")
+    return (intent.data or {}).get("deployment_context") or {} if intent else {}
+
+
+def options_platforms(policy: EffectivePolicy, deployment: dict) -> list[str]:
+    """The platforms the hosting variants may use: the one the brief states, or the project's list."""
+    return [deployment["platform"]] if deployment.get("platform") else list(policy.hosting_platforms)
+
+
+def _apply_options(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    options = number_options(Options.model_validate(result["options"]))
+    content = render_options(options, title=run.title.removeprefix("SDS: "))
+    brief = ArchitectureBrief.model_validate(latest_document(session, run.id, "intent").data)
+    # hosting the brief does not state is the Architect's assumption: the gate then asks the SA to choose knowingly
+    basis = "stated" if brief.hosting_stated() else "assumed"
+    document = add_document(session, run.id, "options", content, author_kind="ai", author=TeamRole.ARCHITECT.value,
+                            data={**options.model_dump(), "hosting_basis": basis})
+    document.commit_sha = commit_thread(session, run, "options", content, f"sdlc: architecture options v{document.version}")
+    transition_run(session, run, RunStatus.WAITING_OPTIONS_APPROVAL, actor=TeamRole.ARCHITECT.value,
+                   reason=f"{len(options.options)} options compared; the Architect recommends {options.recommendation}")
+
+
+def _apply_ui_concepts(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    """The UX Designer's concepts, with the controller's contrast checks, wait at the UI Concept gate."""
+    from controller.app.ui import UiConcepts, check
+    concepts = UiConcepts.model_validate(result["ui"])
+    accessibility = result["brief"]["accessibility"]
+    checks = {c.id: check(c, accessibility) for c in concepts.concepts}
+    lines = [f"# UI concepts: {run.title.removeprefix('SDS: ')}", "", concepts.notes or ""]
+    for concept in concepts.concepts:
+        failed = [c["pair"] for c in checks[concept.id] if not c["ok"]]
+        lines += ["", f"## {concept.id}: {concept.name}", "", concept.rationale, "",
+                  f"Layout {concept.layout}, {concept.density}; screens: {', '.join(s.name for s in concept.screens)}.",
+                  f"Contrast ({accessibility}): " + ("every pair passes" if not failed else f"fails for {', '.join(failed)}")]
+    content = "\n".join(lines) + "\n"
+    document = add_document(session, run.id, "ui_concepts", content, author_kind="ai", author=TeamRole.UX_DESIGNER.value,
+                            data={**concepts.model_dump(), "checks": checks, "brief": result["brief"]})
+    document.commit_sha = commit_thread(session, run, "ui_concepts", content, f"sdlc: UI concepts v{document.version}")
+    transition_run(session, run, RunStatus.WAITING_UI_APPROVAL, actor=TeamRole.UX_DESIGNER.value,
+                   reason=f"{len(concepts.concepts)} UI concept(s) for the Product Owner")
+
+
+def _apply_onboarding(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    """The Architect's onboarding files, checked as a configuration, then the Tech Lead's gate. A configuration that
+    does not load goes back to the Architect with the reason, at most limits.max_format_retries times."""
+    from controller.app.foundation import Onboarding, onboarding_files, render_onboarding
+    onboarding = Onboarding.model_validate(result["onboarding"])
+    try:
+        files = onboarding_files(onboarding, artifact(session, run.id, "project_config") or "")
+    except ValueError as exc:
+        policy = EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy"))
+        refused = session.scalar(select(func.count()).select_from(Approval).where(
+            Approval.run_id == run.id, Approval.stage == "onboarding", Approval.actor == COORDINATOR))
+        reason = f".sdlc/project.yaml would not load: {str(exc).splitlines()[0][:400]}"
+        if refused >= policy.max_format_retries:
+            to_needs_human(session, run, f"the Architect's onboarding still breaks the configuration: {reason}")
+            return
+        session.add(Approval(run_id=run.id, stage="onboarding", decision="reject", actor=COORDINATOR,
+                             acting_role=TeamRole.VALIDATION_GATE.value, reason=reason, checklist={}))
+        transition_run(session, run, RunStatus.DESIGNING_ONBOARDING, actor=COORDINATOR, reason=reason)
+        queue(session, run, "onboarding", key=f"redo:v{run.version}")
+        return
+    mirror = mirror_for(session.get(Project, run.project_id))
+    current = {path: mirror.read_file(run.base_commit, path) for path in files}
+    content = render_onboarding(run.title.removeprefix("Foundation: "), onboarding, files, current)
+    document = add_document(session, run.id, "onboarding", content, author_kind="ai", author=TeamRole.ARCHITECT.value,
+                            data={**onboarding.model_dump(), "files": files,
+                                  "revision": _revision(session, run, "onboarding", content, onboarding.feedback_replies)})
+    transition_run(session, run, RunStatus.WAITING_ONBOARDING_APPROVAL, actor=TeamRole.ARCHITECT.value,
+                   reason=f"onboarding v{document.version}: {', '.join(files)}")
+
+
+def _try_environment(loaded: Loaded) -> dict:
+    """Build the new validation image and start its services on the run's worktree, which holds the approved files."""
+    from controller.app.doing.validation import ValidationGate
+    from controller.app.projects.config import parse_project_config
+    if get_settings().coding_is_mocked:
+        return {"ok": True, "detail": "not checked: SDLC_DOING_MODE is mock"}
+    policy = effective_policy(parse_project_config(loaded.extra["files"][".sdlc/project.yaml"]))
+    gate = ValidationGate(policy, Path(loaded.extra["worktree"]), DATA_DIR / "logs" / loaded.extra["run_id"] / "environment")
+    joblog.note(f"building the validation image ({policy.env_dockerfile or policy.validation_image})")
+    image, failed = gate.image()
+    if failed is None and not image:
+        return {"ok": False, "detail": f"{policy.validation_image!r} is not a toolchain this platform provides"}
+    if failed is None:
+        joblog.note(f"image {image}; starting {len(policy.services)} service(s)")
+        with gate.services() as (_, failed):
+            pass
+    if failed:
+        log = Path(failed.log_path).read_text(errors="replace") if Path(failed.log_path).is_file() else failed.tail
+        # the machine, not the Architect's files: Docker's disk is full (attendance, 2026-10-21)
+        platform = "no space left on device" in log.lower()
+        return {"ok": False, "platform": platform,
+                "detail": f"{failed.name} failed (exit {failed.exit_code}): {failed.tail[-1500:]}"}
+    started = _try_preview(policy, loaded)
+    if started and started.get("timed_out"):  # a slow build (downloads), not the Architect's files: the tests will tell
+        return {"ok": True, "detail": f"image {image} built; the preview was not checked: {started['detail'][:300]}"}
+    if started and started["status"] != "running":
+        return {"ok": False, "detail": f"the preview does not start with these files: {started['detail'][:1500]}"}
+    return {"ok": True, "detail": f"image {image} built; {len(policy.services)} service(s) ready"
+                                  + ("; the preview starts and answers its health path" if started else "")}
+
+
+def _try_preview(policy: EffectivePolicy, loaded: Loaded) -> dict | None:
+    """When the code the preview builds exists (onboarding reopened after coding), start the preview once and stop
+    it: a compose file that drops a variable the code needs fails here, not at the acceptance tests."""
+    from controller.app import preview
+    worktree = Path(loaded.extra["worktree"])
+    if policy.preview is None or preview.missing_parts(worktree, policy.preview):
+        return None
+    with preview.starting(DATA_DIR / "run"):
+        port = preview.free_port(set())
+        if port is None:
+            return None
+        joblog.note("starting the preview once to check the onboarding files against the code")
+        state = preview.start(loaded.extra["run_id"], worktree, policy.preview, port,
+                              DATA_DIR / "logs" / loaded.extra["run_id"] / "environment-preview")
+    preview.stop(loaded.extra["run_id"])
+    return state
+
+
+def _apply_environment(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    """A working environment: the run now follows the new onboarding files (policy, AGENTS.md, REVIEW.md) and builds
+    the skeleton. A broken one goes back to the Architect with the log, at most limits.max_remediations times."""
+    if not result["ok"] and result.get("platform"):
+        to_needs_human(session, run, "Docker has no disk space left, so the environment could not be built; free "
+                       "space (docker builder prune, unused images) or raise Docker Desktop's disk limit, then resume")
+        return
+    if not result["ok"]:
+        policy = EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy"))
+        tried = session.scalar(select(func.count()).select_from(Approval).where(
+            Approval.run_id == run.id, Approval.stage == "onboarding", Approval.actor == COORDINATOR))
+        if tried >= policy.max_remediations:
+            to_needs_human(session, run, f"the validation environment does not work: {result['detail'][:500]}")
+            return
+        session.add(Approval(run_id=run.id, stage="onboarding", decision="reject", actor=COORDINATOR,
+                             acting_role=TeamRole.VALIDATION_GATE.value, reason=result["detail"], checklist={}))
+        transition_run(session, run, RunStatus.DESIGNING_ONBOARDING, actor=COORDINATOR,
+                       reason=f"environment check failed: {result['detail'][:200]}")
+        queue(session, run, "onboarding", key=f"env:v{run.version}")
+        return
+    project = session.get(Project, run.project_id)
+    mirror = mirror_for(project)
+    head = artifact(session, run.id, "onboarding_commit")
+    snapshot, items = read_snapshot(mirror, head)
+    if snapshot is None:
+        to_needs_human(session, run, "the approved onboarding files do not load: "
+                       + "; ".join(f"{i.name}: {i.detail}" for i in items if i.status == "fail"))
+        return
+    store_artifact(session, run, "project_config", TeamRole.COORDINATOR, mirror.read_file(head, ".sdlc/project.yaml"))
+    store_artifact(session, run, "effective_policy", TeamRole.COORDINATOR,
+                   effective_policy(snapshot.config).model_dump_json())
+    store_artifact(session, run, "context_rules", TeamRole.COORDINATOR, json.dumps(snapshot.config.context.model_dump()))
+    store_artifact(session, run, "agents_md", TeamRole.COORDINATOR, snapshot.agents_md)
+    if snapshot.review_md:
+        store_artifact(session, run, "review_md", TeamRole.COORDINATOR, snapshot.review_md)
+    record_event(session, "environment.ready", actor=COORDINATOR, run_id=run.id,
+                 payload={"detail": result["detail"], "commit": head})
+    raw = artifact(session, run.id, "onboarding_return") or ""
+    back = json.loads(raw) if raw.startswith("{") else {"to": raw, "stop": ""}  # a bare value: before 2026-10-22
+    back_to = back["to"]
+    if back_to == "acceptance":  # reopened when the acceptance tests could not run
+        store_artifact(session, run, "onboarding_return", TeamRole.COORDINATOR, "")
+        transition_run(session, run, RunStatus.ACCEPTANCE_TESTING, actor=COORDINATOR,
+                       reason="the onboarding files are fixed; the acceptance tests run again on the same code")
+        queue(session, run, "acceptance", key=f"onboarding:v{run.version}")
+        return
+    if back_to == "coding":  # reopened while coding the approved plan: the plan stands, the stopped tasks go on
+        store_artifact(session, run, "onboarding_return", TeamRole.COORDINATOR, "")
+        transition_run(session, run, RunStatus.CODING, actor=COORDINATOR,
+                       reason="the onboarding files are fixed; coding goes on with the approved plan")
+        tasks = current_tasks(session, run)
+        for task in tasks:
+            fail_task(session, task, "its job ended mid-step")
+            if task.status in (TaskStatus.FAILED, TaskStatus.UNKNOWN):
+                transition_task(session, task, TaskStatus.READY, actor=COORDINATOR, reason="the onboarding files are fixed")
+        disputed = [t for t in tasks if t.status == TaskStatus.DISPUTED]
+        if disputed:  # the person still rules on the dispute, now that the files say what they say
+            to_needs_human(session, run, f"the onboarding files are fixed; decide the dispute again. {back['stop']}"[:1500])
+            return
+        schedule_tasks(session, run)
+        return
+    spec_approved = session.scalar(select(func.count()).select_from(Approval).where(
+        Approval.run_id == run.id, Approval.stage == "spec", Approval.decision == "approve"))
+    # reopened after the spec gate: the approved spec stands, the Tech Lead plans again with the revised files
+    enter_stage(session, run, "plan" if spec_approved else "spec")
+
+
+# ---------------------------------------------------------------- previews
+
+def preview_state(session: Session, run_id: uuid.UUID) -> dict:
+    raw = artifact(session, run_id, "preview")
+    return json.loads(raw) if raw else {}
+
+
+def _running_previews(session: Session) -> list[tuple[uuid.UUID, dict]]:
+    run_ids = session.scalars(select(Artifact.run_id).where(Artifact.kind == "preview").distinct()).all()
+    states = [(run_id, preview_state(session, run_id)) for run_id in run_ids]
+    return sorted([(r, s) for r, s in states if s.get("status") in ("running", "starting")],
+                  key=lambda item: item[1].get("started_at") or "")
+
+
+def queue_preview(session: Session, run: Run, *, start: bool, reason: str = "") -> Execution:
+    kind = "preview" if start else "preview_stop"
+    if start:
+        store_artifact(session, run, "preview", TeamRole.COORDINATOR, json.dumps({"status": "starting", "detail": reason}))
+    return queue(session, run, kind, key=f"{kind}:{datetime.now(timezone.utc).isoformat()}")
+
+
+def _load_preview(session: Session, run: Run, loaded: Loaded, *, start: bool) -> Loaded:
+    """What the preview needs: the project's preview, the worktree, a free port, and the previews to stop first."""
+    policy = EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy"))
+    running = [(r, s) for r, s in _running_previews(session) if r != run.id]
+    evict = [str(r) for r, _ in running[:max(0, len(running) - get_settings().sdlc_preview_max_running + 1)]] if start else []
+    taken = {s.get("port") for r, s in running if str(r) not in evict}
+    loaded.extra.update(start=start, run_id=str(run.id), worktree=run.worktree_path or "", evict=evict,
+                        preview=policy.preview.model_dump() if policy.preview else None, taken=sorted(p for p in taken if p))
+    return loaded
+
+
+def _run_preview(loaded: Loaded) -> dict:
+    from controller.app import preview
+    from controller.app.projects.config import Preview
+    extra = loaded.extra
+    for other in extra["evict"]:
+        joblog.note(f"stopping the preview of run {other[:8]} to make room")
+        preview.stop(other)
+    if not extra["start"]:
+        return {"preview": preview.stop(extra["run_id"]), "stopped": extra["evict"]}
+    if extra["preview"] is None:
+        return {"preview": {"status": "failed", "detail": "the project has no preview in .sdlc/project.yaml"}}
+    if get_settings().coding_is_mocked:
+        return {"preview": {"status": "failed", "detail": "not started: SDLC_DOING_MODE is mock"}}
+    with preview.starting(DATA_DIR / "run"):
+        port = preview.free_port(set(extra["taken"]))
+        if port is None:
+            return {"preview": {"status": "failed", "detail": f"no free port in {get_settings().sdlc_preview_ports}"}}
+        joblog.note(f"starting the preview on 127.0.0.1:{port}")
+        state = preview.start(extra["run_id"], Path(extra["worktree"]), Preview.model_validate(extra["preview"]),
+                              port, DATA_DIR / "logs" / extra["run_id"] / "preview")
+    joblog.note(state.get("detail", "")[:500])
+    return {"preview": state, "stopped": extra["evict"]}
+
+
+def _apply_preview(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    store_artifact(session, run, "preview", TeamRole.COORDINATOR, json.dumps(result["preview"]))
+    for other in result.get("stopped", []):
+        other_run = session.get(Run, uuid.UUID(other))
+        if other_run is not None:
+            store_artifact(session, other_run, "preview", TeamRole.COORDINATOR,
+                           json.dumps({"status": "stopped", "detail": f"stopped for the preview of {str(run.id)[:8]}"}))
+    record_event(session, f"preview.{result['preview']['status']}", actor=COORDINATOR, run_id=run.id,
+                 payload={k: result["preview"].get(k) for k in ("url", "port", "detail")})
+
+
+def _accept(team: Team, loaded: Loaded) -> dict:
+    """The QA Engineer writes the E2E tests, the preview starts, the tests run next to it; evidence per criterion."""
+    from controller.app import acceptance, preview
+    from controller.app.projects.config import Preview
+    context, extra = loaded.context, loaded.extra
+    criteria = {c.id: c.full for c in parse_criteria(context.spec_md or "")}
+    story = context.intent_md if not context.story else f"{context.story.get('story_id')}: {context.story.get('statement')}"
+    written = team.write_acceptance_tests(context, "\n".join(f"- {cid}: {text}" for cid, text in criteria.items()),
+                                          story or context.title, feedback=extra.get("feedback", ""))
+    joblog.note(f"acceptance tests: {written.detail[:300]}")
+    result = {"tests": {"ok": written.ok, "detail": written.detail, "evidence": written.evidence},
+              "criteria": criteria, "attempt": extra["attempt"], "cases": [], "preview": None, "stopped": []}
+    if not written.ok:
+        return {**result, "ok": False, "detail": written.detail}
+    if get_settings().coding_is_mocked:
+        cases = [{"title": f"{cid} (mock)", "criteria": [cid], "status": "passed", "error": "", "attachments": []}
+                 for cid in criteria]
+        return {**result, "ok": True, "cases": cases, "detail": "mock: acceptance tests not run"}
+    run_id = extra["run_id"]
+    for other in extra["evict"]:
+        preview.stop(other)
+    config = Preview.model_validate(extra["preview"])
+    with preview.starting(DATA_DIR / "run"):
+        port = preview.free_port(set(extra["taken"]))
+        if port is None:
+            return {**result, "ok": False, "detail": f"no free port in {get_settings().sdlc_preview_ports}"}
+        state = preview.start(run_id, Path(extra["worktree"]), config, port, DATA_DIR / "logs" / run_id / "preview")
+    result.update(preview=state, stopped=extra["evict"])
+    if state["status"] != "running":
+        return {**result, "ok": False, "detail": f"the preview did not start: {state['detail'][:1500]}"}
+    evidence = DATA_DIR / "evidence" / run_id / str(extra["attempt"])
+
+    # the story's own tests name it, so an earlier story's AC-01 never stands for this one's
+    story_tag = (context.story or {}).get("story_id") or ("FOUNDATION" if loaded.extra.get("run_kind") == RunKind.FOUNDATION else "")
+
+    def run_tests() -> tuple[dict, list[dict]]:
+        shutil.rmtree(evidence, ignore_errors=True)
+        joblog.note(f"running the acceptance tests against {state['url']}")
+        ran = acceptance.run_e2e(run_id, Path(extra["worktree"]), config, evidence, context.policy.container_memory_mb)
+        cases = acceptance.parse_report(ran["report"], evidence, story_tag) if ran["ok"] else []
+        joblog.note(f"{sum(c['status'] == 'passed' for c in cases)}/{len(cases)} acceptance test(s) passed")
+        return ran, cases
+
+    ran, cases = run_tests()
+    # errors in the test code (an ambiguous locator, a spec that does not load) go back to the QA Engineer once,
+    # with the errors, before the QC sees them; the application's failures stay for the QC
+    faults = acceptance.authoring_errors(cases) if ran["ok"] else [f"the suite did not run: {ran['detail'][:1500]}"]
+    if faults:
+        joblog.note(f"{len(faults)} test(s) fail in their own code; the QA Engineer fixes them once")
+        fixed = team.write_acceptance_tests(
+            context, "\n".join(f"- {cid}: {text}" for cid, text in criteria.items()), story or context.title,
+            feedback="These tests failed in their own code, not in the application; fix the test code and keep "
+                     "what each test checks:\n" + "\n".join(f"- {f}" for f in faults))
+        result["tests"]["retry"] = {"faults": faults, "ok": fixed.ok, "detail": fixed.detail}
+        if fixed.ok:
+            ran, cases = run_tests()
+    if not ran["ok"]:
+        return {**result, "ok": False, "detail": ran["detail"]}
+    if any(c["status"] != "passed" for c in cases):  # the tests see a 500; the traceback behind it is in the logs
+        result["server_errors"] = preview.server_errors(run_id, get_settings().server_error_chars)
+        joblog.note(f"{len(result['server_errors'])} distinct error(s) in the preview's logs")
+    return {**result, "ok": True, "cases": cases, "detail": ran["detail"]}
+
+
+def proven_by_tests(session: Session, run: Run) -> dict[str, list[str]]:
+    """Criterion -> the approved test cases of tasks that passed (the coding's tests, run by the validation)."""
+    plan = latest_plan(session, run.id)
+    passed = {t.external_task_id for t in current_tasks(session, run) if t.status == TaskStatus.PASSED}
+    proven: dict[str, list[str]] = {}
+    for case in (plan.test_plan or {}).get("cases", []) if plan else []:
+        if case.get("task_id") in passed and case.get("criterion"):
+            proven.setdefault(case["criterion"], []).append(case["id"])
+    return proven
+
+
+def _apply_acceptance(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    """The acceptance report, then the QC's gate (or straight to the PR in auto mode when every criterion passed)."""
+    from controller.app.acceptance import coverage, render_acceptance
+    if result.get("preview"):
+        store_artifact(session, run, "preview", TeamRole.COORDINATOR, json.dumps(result["preview"]))
+    if not result["ok"]:
+        to_needs_human(session, run, f"acceptance tests could not run: {result['detail'][:600]}")
+        return
+    url = (result.get("preview") or {}).get("url", "")
+    proven = proven_by_tests(session, run)
+    content = render_acceptance(run.title, result["criteria"], result["cases"], url,
+                                f"/api/runs/{run.id}/evidence/{result['attempt']}", proven)
+    if result.get("server_errors"):
+        content += "\n## Errors the application logged during the tests\n\n" + "\n\n".join(
+            f"```\n{error}\n```" for error in result["server_errors"]) + "\n"
+    problems = coverage(list(result["criteria"]), result["cases"], proven)
+    document = add_document(session, run.id, "acceptance", content, author_kind="ai", author=TeamRole.QA_ENGINEER.value,
+                            data={"cases": result["cases"], "criteria": result["criteria"], "attempt": result["attempt"],
+                                  "url": url, "problems": problems, "tests": result["tests"], "proven": proven,
+                                  "server_errors": result.get("server_errors", [])})
+    document.commit_sha = commit_thread(session, run, "acceptance", content, "sdlc: acceptance report")
+    if stage_mode(run, "acceptance") == "auto" and not problems:
+        transition_run(session, run, RunStatus.PR_OPEN, actor=TeamRole.QA_ENGINEER.value,
+                       reason=f"every criterion passed on the preview ({len(result['cases'])} test(s))")
+        queue(session, run, "release")
+        return
+    if any(p.startswith(REGRESSION) for p in problems) and get_settings().sdlc_regression_triage_enabled:
+        queue(session, run, "triage_regressions", key=f"triage:{document.id}")  # the run waits in acceptance
+        return
+    transition_run(session, run, RunStatus.WAITING_ACCEPTANCE_APPROVAL, actor=TeamRole.QA_ENGINEER.value,
+                   reason=f"{len(result['cases'])} acceptance test(s); " + ("all criteria passed" if not problems
+                                                                          else f"{len(problems)} problem(s)"))
+
+
+REGRESSION = "regression: "
+
+
+def _apply_triage(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    """Every failure an earlier story's test, each outdated by this story's intended change, judged with high
+    confidence: the QA Engineer updates those tests and they run again, without the QC (disputes.auto, at most
+    disputes.max_auto_per_task times a run). Otherwise the QC's gate, with the judgement and its note."""
+    from controller.app.services import QC, _approval
+    triage = result["triage"]
+    store_artifact(session, run, "regression_triage", TeamRole.CODE_REVIEWER,
+                   json.dumps({"document": result["document"], "triage": triage, "engine": result.get("_engine")}))
+    document = latest_document(session, run.id, "acceptance")
+    problems = document.data.get("problems", [])
+    policy = EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy"))
+    taken = session.scalar(select(func.count()).select_from(Event).where(
+        Event.run_id == run.id, Event.event_type == "acceptance.auto_retest"))
+    outdated = [t for t in triage["tests"] if t["verdict"] == "outdated"]
+    if (policy.disputes.auto and str(document.id) == result["document"] and problems
+            and all(p.startswith(REGRESSION) for p in problems) and len(outdated) == len(triage["tests"])
+            and CONFIDENCE.get(triage.get("confidence"), 0) >= CONFIDENCE[policy.disputes.min_confidence]
+            and triage.get("note") and taken < policy.disputes.max_auto_per_task):
+        note = f"Decided by the Code Reviewer on its own: {triage['note']}"
+        _approval(session, run, "acceptance", "retest", AUTO_ACTOR, QC, reason=note)
+        record_event(session, "acceptance.auto_retest", actor=AUTO_ACTOR, run_id=run.id,
+                     payload={"tests": [t["test"] for t in outdated], "note": triage["note"],
+                              "confidence": triage.get("confidence"), "summary": triage.get("summary", "")})
+        # the run stays in acceptance: the QA Engineer updates those tests and they all run again
+        queue(session, run, "acceptance", key=f"auto-retest:{result['document']}")
+        return
+    if _send_broken_regressions(session, run, document, triage, policy):
+        return
+    transition_run(session, run, RunStatus.WAITING_ACCEPTANCE_APPROVAL, actor=TeamRole.QA_ENGINEER.value,
+                   reason=f"{len(document.data.get('cases', []))} acceptance test(s); {len(problems)} problem(s)")
+
+
+REGRESSION_WHO = "Code Reviewer (earlier stories' acceptance tests)"
+
+
+def _send_broken_regressions(session: Session, run: Run, document: Document, triage: dict, policy) -> bool:
+    """Earlier stories' tests this story broke go to a fix task with the failures, before the QC sees them
+    (disputes.auto, at most disputes.max_auto_per_task times a run); the outdated ones are judged again after it."""
+    from controller.app.services import _send_defects
+    broken = [t for t in triage["tests"] if t["verdict"] == "broken"]
+    sent = session.scalar(select(func.count()).select_from(Event).where(
+        Event.run_id == run.id, Event.event_type == "acceptance.regressions_sent"))
+    if not broken or not policy.disputes.auto or sent >= policy.disputes.max_auto_per_task \
+            or run.kind not in (RunKind.FEATURE, RunKind.FOUNDATION):
+        return False
+    errors = {c["title"]: (c.get("error") or "").strip() for c in document.data.get("cases", [])}
+    notes = "\n".join(f"{n}. {t['test']} (an earlier story's acceptance test) fails on this story's code: {t['change']}"
+                      + (f"\n   Error: {errors[t['test']][:400]}" if errors.get(t["test"]) else "")
+                      for n, t in enumerate(broken, 1))
+    record_event(session, "acceptance.regressions_sent", actor=AUTO_ACTOR, run_id=run.id,
+                 payload={"round": sent + 1, "tests": [t["test"] for t in broken], "summary": triage.get("summary", "")})
+    transition_run(session, run, RunStatus.CODING, actor=TeamRole.CODE_REVIEWER.value,
+                   reason=f"this story broke {len(broken)} earlier stories' acceptance test(s); the Developer fixes "
+                          "the code before the QC's gate")
+    _send_defects(session, run, actor=AUTO_ACTOR, who=REGRESSION_WHO,
+                  reason=(triage.get("summary", "") + "\n" + notes).strip())
+    return True
+
+
+def expire_previews(session: Session) -> int:
+    """Stop the previews past their time and those of runs that ended; called by the worker's poll."""
+    from controller.app.preview import expired
+    count = 0
+    for run_id, state in _running_previews(session):
+        run = session.get(Run, run_id)
+        if run is not None and (expired(state) or RunStatus(run.status) in TERMINAL):
+            store_artifact(session, run, "preview", TeamRole.COORDINATOR,
+                           json.dumps({**state, "status": "stopping", "detail": "time is up" if expired(state) else "the run ended"}))
+            queue(session, run, "preview_stop", key=f"expire:{state.get('started_at')}")
+            count += 1
+    return count
+
+
+# Project documents written before feature runs: document kind, file at the repository root, the AI role.
+PROJECT_DOCS: dict[str, tuple[str, str, TeamRole]] = {
+    RunKind.SRS: ("srs", SRS_PATH, TeamRole.BUSINESS_ANALYST),
+    RunKind.SDS: ("sds", SDS_PATH, TeamRole.ARCHITECT),
+}
+
+
+def spec_kind(run: Run) -> str:
+    """The document the first gate reviews: spec.md, or SRS.md / SDS.md for a project document run."""
+    return PROJECT_DOCS[run.kind][0] if run.kind in PROJECT_DOCS else "spec"
+
+
+def _apply_project_doc(session: Session, run: Run, result: dict) -> None:
+    kind, path, role = PROJECT_DOCS[run.kind]
+    srs_text = None
+    if run.kind == RunKind.SRS:
+        model = Srs.model_validate(result["srs"])
+        baseline = json.loads(artifact(session, run.id, "baseline") or "null")
+        content, findings = render_srs(model, author="Business Analyst (AI)", baseline=baseline), []
+    else:
+        model = Sds.model_validate(result["sds"])
+        srs_text = mirror_for(session.get(Project, run.project_id)).read_file(run.base_commit, SRS_PATH) or ""
+        product = re.sub(r"\s*-\s*Software Requirements Specification.*$", "",
+                         (srs_text.splitlines() or ["# Product"])[0].lstrip("# ").strip()) or run.title
+        content = render_sds(model, srs_features(srs_text), product=product, author="Architect (AI)")
+        findings = sds_sync_findings(model, srs_text)
+    blocking = [q for q in model.questions if q.blocking]
+    if blocking:
+        for question in blocking:
+            session.add(Clarification(run_id=run.id, question=question.question, blocking=True))
+        transition_run(session, run, RunStatus.NEEDS_CLARIFICATION, actor=role.value,
+                       reason=f"{len(blocking)} blocking question(s) for the Product Owner")
+        return
+    document = add_document(session, run.id, kind, content, author_kind="ai", author=role.value,
+                            data={**result[kind], "sync_findings": findings,
+                                  "revision": _revision(session, run, kind, content, model.feedback_replies)})
+    # A project document gate cannot be skipped: the customer signs the SRS, the architect owns the SDS.
+    transition_run(session, run, RunStatus.WAITING_SPEC_APPROVAL, actor=role.value,
+                   reason=f"{path} v{document.version} ready" + (f"; {len(findings)} sync finding(s)" if findings else ""))
+
+
+def _revision(session: Session, run: Run, kind: str, content: str, replies: list) -> dict | None:
+    """A rewrite after the reviewer rejected the last version (or asked for changes on the PR): what they asked,
+    how the role says it handled each point, and which sections changed, so the next gate can check it."""
+    previous = latest_document(session, run.id, kind)
+    if previous is None:
+        return None
+    gate = "onboarding" if kind == "onboarding" else "spec"
+    asked = session.scalars(select(Approval.reason).where(
+        Approval.run_id == run.id, Approval.created_at >= previous.created_at, Approval.reason.is_not(None),
+        ((Approval.stage == gate) & (Approval.decision == "reject"))
+        | ((Approval.stage == "pr") & (Approval.decision == "request_changes"))).order_by(Approval.created_at)).all()
+    return {"from_version": previous.version, "feedback": [a for a in asked if a.strip()],
+            "replies": [r.model_dump() for r in replies], "sections": section_changes(previous.content, content)}
+
+
+def _apply_specify(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    if run.kind in PROJECT_DOCS:
+        _apply_project_doc(session, run, result)
+        return
+    spec = Spec.model_validate(result["spec"])
+    blocking = [q for q in spec.questions if q.blocking]
+    if blocking:
+        for question in blocking:
+            session.add(Clarification(run_id=run.id, question=question.question, blocking=True))
+        transition_run(session, run, RunStatus.NEEDS_CLARIFICATION, actor=TeamRole.BUSINESS_ANALYST.value,
+                       reason=f"{len(blocking)} blocking question(s) for the Product Owner")
+        return
+    ref = feature_ref(session, run)
+    content = render_spec(run.title, spec, story=ref.story() if ref else None)
+    document = add_document(session, run.id, "spec", content, author_kind="ai", author=TeamRole.BUSINESS_ANALYST.value,
+                            data={**result["spec"], "revision": _revision(session, run, "spec", content, spec.feedback_replies)})
+    if stage_mode(run, "spec") == "auto":
+        accept_spec(session, run, document, actor=COORDINATOR)
+    else:
+        transition_run(session, run, RunStatus.WAITING_SPEC_APPROVAL, actor=TeamRole.BUSINESS_ANALYST.value,
+                       reason=f"spec v{document.version} ready")
+
+
+def _chosen_ui_files(session: Session, run: Run) -> dict[str, str | bytes]:
+    """docs/ui/ of the UI concept chosen in this SDS run: guide, tokens, prototypes, the customer's logo."""
+    from controller.app.ui import Brand, Concept, logo_bytes, ui_files
+    chosen = json.loads(artifact(session, run.id, "chosen_ui") or "null")
+    if run.kind != RunKind.SDS or not chosen:
+        return {}
+    return ui_files(Concept.model_validate(chosen["concept"]), Brand.model_validate(chosen["brand"]), chosen["reason"],
+                    chosen.get("adjustments", ""), run.title.removeprefix("SDS: "),
+                    logo_bytes(artifact(session, run.id, "brand_logo")))
+
+
+def accept_spec(session: Session, run: Run, document, *, actor: str, acting_role: str | None = None) -> None:
+    if run.kind in PROJECT_DOCS:
+        # SRS.md or SDS.md goes to the repository root through a draft PR; no plan or code follows.
+        path = PROJECT_DOCS[run.kind][1]
+        if run.commit_artifacts:
+            project = session.get(Project, run.project_id)
+            files: dict[str, str | bytes] = {path: document.content, **_chosen_ui_files(session, run)}
+            document.commit_sha = worktree_for(project, run).commit_files(
+                files, f"sdlc: {path} v{document.version} accepted" + (" with docs/ui" if len(files) > 1 else ""))
+        transition_run(session, run, RunStatus.PR_OPEN, actor=actor, acting_role=acting_role,
+                       reason=f"{path} v{document.version} accepted")
+        queue(session, run, "release")
+        return
+    document.commit_sha = commit_thread(session, run, "spec", document.content,
+                                        f"sdlc: spec v{document.version} accepted")
+    document.commit_sha = write_spec_files(session, run, document) or document.commit_sha
+    enter_stage(session, run, "plan", actor=actor, acting_role=acting_role)
+
+
+def _apply_plan(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    plan = add_plan(session, run.id, result["plan"], result["tests"], author_kind="ai",
+                    author=TeamRole.TECH_LEAD.value)
+    if result.get("regenerated_from"):
+        plan.regenerated_from = uuid.UUID(result["regenerated_from"])
+    record_event(session, "plan.proposed", actor=TeamRole.TECH_LEAD.value, run_id=run.id,
+                 payload={"plan": str(plan.id), "version": plan.version,
+                          "test_cases": len(result["tests"]["cases"]), "qa_analyst": team.engine,
+                          "tidied": result.get("tidied", [])})
+    transition_run(session, run, RunStatus.GROUNDING, actor=TeamRole.TECH_LEAD.value)
+    queue(session, run, "ground")
+
+
+def ground(session: Session, run: Run, plan) -> dict:
+    """Run the deterministic grounding check on a plan version and store the report on it."""
+    policy = EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy"))
+    spec = latest_document(session, run.id, "spec")
+    bundle = code_bundle(session, run, [], budget=0)
+    report = check_with_bundle(PlanPayload.model_validate(plan.payload), TestPlan.model_validate(plan.test_plan),
+                               parse_criteria(spec.content), policy, bundle)
+    plan.grounding_report = report
+    record_event(session, "plan.grounded", actor=COORDINATOR, run_id=run.id,
+                 payload={"plan": str(plan.id), "version": plan.version, "status": report["status"],
+                          "findings": len(report["findings"])})
+    return report
+
+
+def _apply_ground(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    plan = latest_plan(session, run.id)
+    report = ground(session, run, plan)
+    if report["status"] == "fail" and plan.author_kind == "ai" and plan.regenerated_from is None:
+        transition_run(session, run, RunStatus.PLANNING, actor=COORDINATOR,
+                       reason=f"grounding found {len(report['findings'])} problem(s); the Tech Lead replans once")
+        queue(session, run, "plan", key=f"regen:{plan.id}")
+        return
+    note = "passed" if report["status"] == "pass" else f"failed with {len(report['findings'])} finding(s)"
+    transition_run(session, run, RunStatus.WAITING_PLAN_APPROVAL, actor=COORDINATOR,
+                   reason=f"plan v{plan.version} ready; grounding {note}")
+
+
+def tests_markdown(session: Session, run: Run, plan) -> str:
+    """The plan version's test cases as the story's section of test_cases.md, for the Quality gate."""
+    ref = feature_ref(session, run) or FeatureRef(
+        story_id="", story_title=run.title, actors="", statement="", srs_section="", feature_section="",
+        feature_name=run.title, prefix="", feature_id="", slug="")
+    existing = None
+    if ref.story_id and run.commit_artifacts and run.worktree_path:
+        existing = worktree_for(session.get(Project, run.project_id), run).read(f"{ref.folder}/test_cases.md")
+    tests = TestPlan.model_validate(plan.test_plan)
+    criteria = parse_criteria(latest_document(session, run.id, "spec").content)
+    return test_cases_section(ref, tests, criteria, tc_numbers(tests, existing, ref.story_id))
+
+
+def enter_quality_gate(session: Session, run: Run, plan, *, actor: str, acting_role: str | None = None) -> None:
+    """The QC reviews the test cases of this plan version before any code is written."""
+    document = add_tests_document(session, run, plan)
+    transition_run(session, run, RunStatus.WAITING_TEST_APPROVAL, actor=actor, acting_role=acting_role,
+                   reason=f"test cases v{document.version} ready for QC")
+    _amend_forgotten_criteria(session, run, plan)
+
+
+def _amend_forgotten_criteria(session: Session, run: Run, plan) -> None:
+    """Every blocking finding of the analysis is a criterion the plan forgot on the task that builds what its test
+    proves: the controller adds them in one plan version, as the gate's Amend buttons would, so nobody clicks four
+    times (Manage Employees Across Locations, 24/10). Anything else stays for the QC."""
+    from controller.app import analysis, services
+    spec = latest_document(session, run.id, "spec")
+    if spec is None or not plan.test_plan:
+        return
+    found = analysis.blocking(analysis.before_coding(parse_criteria(spec.content), PlanPayload.model_validate(plan.payload),
+                                                     TestPlan.model_validate(plan.test_plan)))
+    amendments = [f["fix"]["amend"] for f in found if (f.get("fix") or {}).get("amend")]
+    if not found or len(amendments) != len(found):
+        return
+    unique = list({(a["task"], a["criterion"]): a for a in amendments}.values())
+    services.amend_criteria(session, run, unique, actor=AUTO_ACTOR,
+                            reason="the analysis found test cases proving criteria the plan forgot on the tasks that "
+                                   "build them: " + "; ".join(f["text"] for f in found)[:900])
+    record_event(session, "plan.auto_amended", actor=AUTO_ACTOR, run_id=run.id,
+                 payload={"amendments": unique})
+
+
+def add_tests_document(session: Session, run: Run, plan):
+    report = plan.grounding_report or {}
+    return add_document(session, run.id, "tests", tests_markdown(session, run, plan), author_kind=plan.author_kind,
+                            author=plan.author if plan.author_kind == "human" else TeamRole.QA_ANALYST.value,
+                            data={"plan_id": str(plan.id), "plan_version": plan.version,
+                                  "sync_findings": [*report.get("findings", []), *report.get("warnings", [])]})
+
+
+def _apply_design_tests(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    """The QA Analyst redesigned the tests after QC asked for changes: same plan, new test plan version."""
+    approved = latest_plan(session, run.id)
+    plan = add_plan(session, run.id, approved.payload, result["tests"], author_kind="ai",
+                    author=TeamRole.QA_ANALYST.value)
+    ground(session, run, plan)
+    enter_quality_gate(session, run, plan, actor=TeamRole.QA_ANALYST.value)
+
+
+def plan_markdown(run: Run, plan) -> str:
+    return render_plan(run.title, plan.version, PlanPayload.model_validate(plan.payload),
+                       TestPlan.model_validate(plan.test_plan), plan.grounding_report)
+
+
+def _apply_code_task(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    task = session.get(Task, execution.task_id, with_for_update=True)
+    if task.status != TaskStatus.WRITING_TESTS:
+        finish(session, execution, "discarded", error=f"task is {task.status}")
+        return
+    for index, step in enumerate(result["steps"]):
+        final = index == len(result["steps"]) - 1
+        state = TaskStatus(step["state"])
+        if state != task.status:
+            transition_task(session, task, state, actor=step["role"], reason=step["detail"])
+        else:
+            record_event(session, "task.step", actor=step["role"], run_id=run.id,
+                         payload={"task": task.external_task_id, "state": state.value, "detail": step["detail"]})
+        if step["dispute"]:
+            transition_task(session, task, TaskStatus.DISPUTED, actor=step["role"], reason=step["detail"])
+            who = ("the QA Engineer finds the decision on the dispute unclear" if step["role"] == TeamRole.QA_ENGINEER.value
+                   else "the Developer disputes a test")
+            to_needs_human(session, run, f"{task.external_task_id}: {who}: {step['detail']}")
+            queue_advice(session, run, task)
+            return
+        if not step["ok"] and final and state in (TaskStatus.WRITING_TESTS, TaskStatus.RED_CHECK, TaskStatus.CODING,
+                                                  TaskStatus.REMEDIATING):
+            transition_task(session, task, TaskStatus.FAILED, actor=step["role"], reason=step["detail"])
+            to_needs_human(session, run, f"{task.external_task_id} failed at {state.value}: {step['detail']}")
+            queue_advice(session, run, task)
+            return
+    last = result["steps"][-1]
+    if last["state"] == TaskStatus.VALIDATING and last["ok"]:
+        transition_task(session, task, TaskStatus.PASSED, actor=TeamRole.VALIDATION_GATE.value, reason="validation passed")
+        schedule_tasks(session, run)
+    elif last.get("infrastructure"):  # the environment broke: nothing says the code is wrong
+        transition_task(session, task, TaskStatus.FAILED, actor=TeamRole.VALIDATION_GATE.value,
+                        reason=f"validation could not run: {last['infrastructure']}")
+        to_needs_human(session, run, f"{task.external_task_id}: validation could not run, so the code was not judged: "
+                                     f"{last['infrastructure']}. {INFRASTRUCTURE_NEXT}")
+    else:
+        from controller.app.doing.validation import first_error
+        transition_task(session, task, TaskStatus.FAILED, actor=TeamRole.VALIDATION_GATE.value,
+                        reason="validation still failing after remediation")
+        policy = EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy"))
+        reports = (last.get("evidence") or {}).get("reports", [])
+        failing = [r["name"] for r in reports if not r.get("ok")]
+        error = first_error(reports)
+        to_needs_human(session, run, f"{task.external_task_id}: {VALIDATION_FAILED} {policy.max_remediations} "
+                                     f"remediations: {', '.join(failing) or last['detail'][:200]} still fail"
+                                     + (f"; first error: {error}" if error else "")
+                                     + ". The Code Reviewer's brief below weighs the code against the tests.")
+        queue_advice(session, run, task)
+
+
+def _apply_review(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    review = result["review"]
+    engine = result.get("_engine") or team.engine  # the engine that answered, e.g. claude-readonly
+    markdown = review.get("markdown") or render_review(run.title, Review.model_validate(review), engine)
+    document = add_document(session, run.id, "review", markdown, author_kind="ai",
+                            author=TeamRole.CODE_REVIEWER.value, data=review)
+    document.commit_sha = commit_thread(session, run, "review", document.content, "sdlc: review")
+    if _send_review_findings(session, run, review):
+        return
+    after_review(session, run, review["verdict"])
+
+
+REVIEW_WHO = "Code Reviewer (review)"
+
+
+def _send_review_findings(session: Session, run: Run, review: dict) -> bool:
+    """The review's important findings go to a fix task before the acceptance tests (disputes.review_fix_rounds a run),
+    checked against the SDS first like a person's defect notes; a finding the SDS contradicts is dropped."""
+    from controller.app.services import _send_defects
+    important = [f for f in review.get("findings", []) if f.get("severity") == "important"]
+    policy = EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy"))
+    # the rounds count since the code last changed for another reason (the QC's or a regression's fix, a merge of
+    # main): new code gets its own review rounds, the review's own fixes do not reset them, so it cannot loop
+    # (Manage an Account 24/10: one round a run left the important findings of 4 later reviews to nobody)
+    changes = [e for e in session.scalars(select(Event).where(Event.run_id == run.id,
+                                                              Event.event_type == "task.fix_added"))
+               if REVIEW_WHO not in (e.payload or {}).get("title", "")]
+    since = max((e.created_at for e in changes), default=None)
+    rounds = session.scalar(select(func.count()).select_from(Event).where(
+        Event.run_id == run.id, Event.event_type == "review.findings_sent",
+        *([Event.created_at > since] if since else [])))
+    if not important or not policy.disputes.auto or rounds >= policy.disputes.review_fix_rounds \
+            or run.kind not in (RunKind.FEATURE, RunKind.FOUNDATION):
+        return False
+    notes = findings_notes(important)
+    record_event(session, "review.findings_sent", actor=AUTO_ACTOR, run_id=run.id,
+                 payload={"round": rounds + 1, "findings": [f["text"] for f in important]})
+    transition_run(session, run, RunStatus.CODING, actor=TeamRole.CODE_REVIEWER.value,
+                   reason=f"the review found {len(important)} important issue(s); the Developer fixes them before "
+                          "the story is tried on its preview")
+    _send_defects(session, run, actor=AUTO_ACTOR, who=REVIEW_WHO, reason=notes)
+    return True
+
+
+def open_review_findings(session: Session, run: Run) -> list[dict]:
+    """The latest review's important findings that no fix task took since it was written: shown at the QC's and the
+    Code Owner's gates and sent with one click, when the review's own rounds were used."""
+    document = latest_document(session, run.id, "review")
+    if document is None:
+        return []
+    later = session.scalar(select(func.count()).select_from(Event).where(
+        Event.run_id == run.id, Event.event_type.in_(("task.fix_added", "review.findings_sent")),
+        Event.created_at >= document.created_at))
+    if later:
+        return []
+    return [f for f in (document.data or {}).get("findings", []) if f.get("severity") == "important"]
+
+
+def findings_notes(findings: list[dict]) -> str:
+    return "\n".join(f"{n}. {f['text']}" + (f" ({f['file']})" if f.get("file") else "")
+                     for n, f in enumerate(findings, 1))
+
+
+def after_review(session: Session, run: Run, verdict: str) -> None:
+    if acceptance_enabled(session, run):
+        transition_run(session, run, RunStatus.ACCEPTANCE_TESTING, actor=TeamRole.CODE_REVIEWER.value,
+                       reason=f"review verdict: {verdict}; the story is tried on its preview")
+        queue(session, run, "acceptance")
+        return
+    transition_run(session, run, RunStatus.PR_OPEN, actor=TeamRole.CODE_REVIEWER.value,
+                   reason=f"review verdict: {verdict}")
+    queue(session, run, "release")
+
+
+def acceptance_enabled(session: Session, run: Run) -> bool:
+    """Story and foundation runs of a project with a preview and its E2E command, unless stages.acceptance is skip."""
+    if run.kind not in (RunKind.FEATURE, RunKind.FOUNDATION) or stage_mode(run, "acceptance") == "skip":
+        return False
+    policy = EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy"))
+    return bool(policy.preview and policy.preview.e2e)
+
+
+def execution_report(session: Session, run: Run) -> str:
+    project = session.get(Project, run.project_id)
+    lines = [f"# Execution report: {run.title}", "", f"- Project: {project.key}",
+             f"- Base commit: `{run.base_commit}`", f"- Branch: `{run.branch}`", "", "## Artifact thread", "",
+             "| Artifact | Version | SHA-256 | Author |", "|---|---|---|---|"]
+    for kind in ("intent", "spec", "srs", "sds", "tests", "analysis", "review"):
+        document = latest_document(session, run.id, kind)
+        if document:
+            name = {"srs": SRS_PATH, "sds": SDS_PATH}.get(kind, f"{kind}.md")
+            lines.append(f"| {name} | v{document.version} | `{document.sha256[:16]}` | {document.author} |")
+    plan = latest_plan(session, run.id)
+    if plan:
+        lines.append(f"| plan.md | v{plan.version} | `{plan.sha256[:16]}` | {plan.author} |")
+    lines += ["", "## Tasks", "", "| Task | Status | Attempts |", "|---|---|---|"]
+    for task in current_tasks(session, run):
+        lines.append(f"| {task.external_task_id} {task.payload['title']} | {task.status} | {task.attempt_count} |")
+    rulings = [json.loads(a) for a in session.scalars(select(Artifact.content).where(
+        Artifact.run_id == run.id, Artifact.kind.startswith("ruling:")).order_by(Artifact.created_at))]
+    if rulings:
+        lines += ["", "## Test disputes decided by a human", ""]
+        for r in rulings:
+            verdict = "QA Engineer updated the tests" if r["decision"] == "amend_tests" else "tests kept"
+            lines.append(f"- {r['task']}: {verdict} ({r['actor']}): {r['reason']}. Dispute: {r['dispute']}")
+    amended = [f"{session.get(Task, e.task_id).external_task_id}: {', '.join(step['evidence']['amended'])}"
+               for e in session.scalars(select(Execution).where(Execution.run_id == run.id,
+                                                                Execution.kind == "code_task"))
+               for step in (e.result or {}).get("steps", []) if (step.get("evidence") or {}).get("amended")]
+    if amended:
+        lines += ["", "Existing test lines changed (review these):", "", *[f"- {a}" for a in amended]]
+    engines = sorted({e for e in session.scalars(select(Execution.engine).where(Execution.run_id == run.id)) if e})
+    lines += ["", f"Team engine(s): {', '.join(engines) or 'none'}", ""]
+    return "\n".join(lines)
+
+
+def record_analysis(session: Session, run: Run, stage: str) -> None:
+    """Store the cross-artifact analysis as a versioned document in the run's thread."""
+    plan = latest_plan(session, run.id)
+    if plan is None:  # SRS and SDS runs have no plan, tasks or tests
+        return
+    payload, tests = PlanPayload.model_validate(plan.payload), TestPlan.model_validate(plan.test_plan)
+    if stage == "before":
+        findings = analysis.before_coding(parse_criteria(latest_document(session, run.id, "spec").content), payload, tests)
+    else:
+        statuses = {t.external_task_id: t.status for t in current_tasks(session, run)}
+        if get_settings().coding_is_mocked or not run.worktree_path:
+            findings = analysis.after_coding(payload, tests, statuses, [p for t in payload.tasks for p in [*t.modify, *t.create]]
+                                             + [c.target_file for c in tests.cases], [])  # simulated coding changes nothing
+        else:
+            import subprocess
+            changed = subprocess.run(["git", "-C", run.worktree_path, "diff", "--name-only", diff_base(session, run), "HEAD"],
+                                     capture_output=True, text=True).stdout.split()
+            raw_policy = artifact(session, run.id, "effective_policy")
+            test_paths = EffectivePolicy.model_validate_json(raw_policy).test_paths if raw_policy else []
+            # tasks added after the plan (defects, conflicts with main) may change what their payload names
+            added = [p for t in current_tasks(session, run) if t.payload.get("defects") or t.payload.get("conflicts")
+                     for p in [*t.payload.get("modify", []), *t.payload.get("create", [])]]
+            written = {}
+            for task in payload.tasks:  # where each task's tests went: the red check may have moved them
+                commit = changes.find_commit(Path(run.worktree_path), run.base_commit, f"test({task.id}):")
+                written[task.id] = changes.files_of(Path(run.worktree_path), commit) if commit else []
+            findings = analysis.after_coding(payload, tests, statuses, changed, test_paths, also_allowed=added,
+                                             written=written)
+    document = add_document(session, run.id, "analysis", analysis.render(run.title, stage, findings), author_kind="ai",
+                            author=TeamRole.COORDINATOR.value, data={"stage": stage, "findings": findings})
+    document.commit_sha = commit_thread(session, run, f"analysis-{stage}", document.content,
+                                        f"sdlc: analysis {stage} coding")
+
+
+def _apply_release(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    tick_tasks(session, run)
+    record_analysis(session, run, "after")
+    report = add_document(session, run.id, "report", execution_report(session, run), author_kind="ai",
+                          author=TeamRole.RELEASE_ENGINEER.value)
+    head = commit_thread(session, run, "report", report.content, "sdlc: execution report")
+    report.commit_sha = head
+    project = session.get(Project, run.project_id)
+    slug = None if get_settings().coding_is_mocked else repo_slug(project.repo_url)
+    if slug:
+        worktree = worktree_for(project, run)
+        head = changes.head(worktree.path)
+        github.push(worktree.path, run.branch)
+        number, url = github.open_draft(slug, project.default_branch, run.branch, f"[SDLC] {run.title}", report.content)
+        release = ReleaseResult(url=url, number=number, simulated=False)
+    else:
+        release = team.open_pull_request(build_context(session, run), run.branch)
+    pull = session.scalar(select(PullRequest).where(PullRequest.run_id == run.id))
+    if pull is None:  # after requested changes the same pull request gets a new head
+        pull = PullRequest(run_id=run.id)
+        session.add(pull)
+    pull.number, pull.url, pull.head_sha, pull.simulated = release.number, release.url, head, release.simulated
+    pull.ci_status, pull.review_status = ("simulated" if release.simulated else "pending"), "pending"
+    transition_run(session, run, RunStatus.WAITING_PR_APPROVAL, actor=TeamRole.RELEASE_ENGINEER.value,
+                   reason="simulated pull request: the branch exists only in the local mirror"
+                   if release.simulated else f"draft PR {release.url}")
+
+
+def recheck_after_merge(session: Session, project: Project) -> None:
+    """A merge changes what the next runs build on (SRS.md, SDS.md, requirements/, code): check the project again at
+    once, so the Projects page and the story list of a feature request show it without a Check again."""
+    from controller.app.projects.registry import check_project
+    try:
+        check_project(session, project, actor="github")
+    except Exception as exc:  # the next run start checks again anyway
+        log.warning("project %s: check after a merge failed: %s", project.key, exc)
+
+
+def poll_pull_requests(session: Session) -> list[uuid.UUID]:
+    """Read CI, review and merge state of open draft PRs; a merge of the exact pushed head completes the run. Returns
+    the projects whose default branch moved: the caller checks them again after this transaction, so the run shows
+    COMPLETED at once instead of after the project check (four minutes for attendance, 23/10)."""
+    merged: list[uuid.UUID] = []
+    rows = session.execute(select(Run, PullRequest, Project).join(PullRequest, PullRequest.run_id == Run.id)
+                           .join(Project, Project.id == Run.project_id)
+                           .where(Run.status == RunStatus.WAITING_PR_APPROVAL, PullRequest.simulated.is_(False),
+                                  PullRequest.number.is_not(None))).all()
+    for run, pull, project in rows:
+        slug = repo_slug(project.repo_url)
+        if not slug:
+            continue
+        try:
+            state = github.pull_state(slug, pull.number)
+        except github.GitHubError as exc:
+            log.warning("cannot read PR %s#%s: %s", slug, pull.number, exc)
+            continue
+        session.refresh(run, with_for_update=True)
+        if run.status != RunStatus.WAITING_PR_APPROVAL:
+            continue
+        if (state.ci_status, state.review_status) != (pull.ci_status, pull.review_status):
+            record_event(session, "pr.updated", actor=TeamRole.RELEASE_ENGINEER.value, run_id=run.id,
+                         payload={"number": pull.number, "ci": state.ci_status, "review": state.review_status})
+            pull.ci_status, pull.review_status = state.ci_status, state.review_status
+        if state.state == "MERGED" and (state.head_sha == pull.head_sha or _merged_before_a_sync(run, pull, state)):
+            pull.merged_sha = state.merged_sha
+            transition_run(session, run, RunStatus.COMPLETED, actor="github", acting_role="code_owner",
+                           reason=f"PR #{pull.number} merged as {state.merged_sha} (head {state.head_sha[:12]})")
+            merged.append(project.id)
+        elif state.state == "MERGED":
+            to_needs_human(session, run, f"PR #{pull.number} was merged with head {state.head_sha[:12]}, "
+                                         f"not the head the team pushed ({(pull.head_sha or '')[:12]})")
+        elif state.state == "CLOSED":
+            pull.review_status = "closed"
+            transition_run(session, run, RunStatus.CLOSED_UNMERGED, actor="github", acting_role="code_owner",
+                           reason=f"PR #{pull.number} closed without merge")
+    return list(dict.fromkeys(merged))
+
+
+# ---------------------------------------------------------------- discovery: extraction
+
+def _load_extract(session: Session, run: Run, loaded: Loaded) -> Loaded:
+    """What this round reads: sources not read in an earlier round (the others are reused), minutes not read yet,
+    the open questions and the accepted decisions."""
+    from controller.app.discovery import questions as q
+    from controller.app.discovery.extract import plan_parts
+    from controller.app.discovery.service import discovery_config, source_dir, sources
+    limits = discovery_config(session, run).limits
+    previous = latest_document(session, run.id, "inventory")
+    data = dict(previous.data) if previous else {}
+    if previous and "chunks" not in data:
+        data["chunks"] = _chunks_from(data)
+    reused, parts, minutes = {}, [], []
+    engines = json.loads(artifact(session, run.id, "engines") or "{}")
+    reads_files = engines.get("business_analyst", get_settings().sdlc_default_engine) == "claude-readonly"
+    for source in sources(session, run.id):
+        if source.purpose == "requirements" and str(source.id) in data.get("chunks", {}):
+            reused[str(source.id)] = data["chunks"][str(source.id)]
+            continue
+        if source.purpose == "minutes" and str(source.id) in data.get("minutes_read", []):
+            continue
+        text, kind = None, source.kind
+        if source.kind == "pdf" and not reads_files:
+            text, kind = _pdf_text_view(source), "pdf-text"
+        elif source.kind == "image" and not reads_files:
+            raise JobAborted(f"{source.filename} is an image; only claude-readonly reads images. Remove it, or put the "
+                             "discovery's Business Analyst on claude-readonly")
+        elif source.kind not in ("pdf", "image"):
+            text = Path(source.text_path or source.path).read_text(errors="replace")
+        planned = plan_parts(str(source.id), source.filename, kind, source.path, source.pages, text,
+                             pages_per_read=limits.pages_per_read, chars_per_read=limits.chars_per_read)
+        (minutes if source.purpose == "minutes" else parts).extend(planned)
+    run_questions = q.questions(session, run.id)
+    accepted = [q.decision_id(d) for d in q.decisions(session, run.id) if d.status == "accepted"]
+    new_decisions = [d for d in accepted if d not in data.get("decisions_applied", [])]
+    removed = [sid for sid in data.get("chunks", {}) if sid not in {str(s.id) for s in sources(session, run.id)}]
+    new_input = ([f"{len({p.source_id for p in parts})} new source(s)"] if parts else []) \
+        + ([f"{len({p.source_id for p in minutes})} new minutes"] if minutes else []) \
+        + ([f"new decisions {', '.join(new_decisions)}"] if new_decisions else []) \
+        + ([f"{len(removed)} removed source(s)"] if removed else [])
+    loaded.extra.update({
+        "round": (previous.version if previous else 0) + 1, "new_input": new_input if previous else ["first round"],
+        "parts": parts, "minutes": minutes, "reused": reused, "run_kind": run.kind,
+        "previous": {k: data.get(k, []) for k in ("items", "gaps")} if previous else None,
+        "previous_parts": [p for p in data.get("parts", []) if p["source"] in reused],
+        "minutes_read": data.get("minutes_read", []),
+        "questions": [{"id": q.number(run_questions, x), "kind": x.kind, "question": x.question, "items": x.items or []}
+                      for x in run_questions if x.status == q.OPEN],
+        "asked": [{"id": q.number(run_questions, x), "question": x.question, "status": x.status,
+                   "needs_suggestion": x.status == q.OPEN and not q.useful_suggestion(x.suggestion, x.question)}
+                  for x in run_questions],
+        "decisions": [{"id": q.decision_id(d), "text": d.text, "items": d.items}
+                      for d in q.decisions(session, run.id) if d.status == "accepted"],
+        "effects": [{"id": q.decision_id(d), "items": d.items, "effect": d.effect, "new_text": d.new_text or ""}
+                    for d in q.decisions(session, run.id) if d.status == "accepted" and d.effect]})
+    loaded.context = RunContext(
+        title=run.title, policy=EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy")),
+        agents_md=artifact(session, run.id, "agents_md") or "", review_md=None,
+        intent_md=latest_document(session, run.id, "intent").content, files=[], session_id=f"{run.id}:extract",
+        run_id=str(run.id), base_commit=run.base_commit or "", engines=json.loads(artifact(session, run.id, "engines") or "{}"),
+        sources_dir=str(source_dir(session.get(Project, run.project_id), run)))
+    return loaded
+
+
+def _pdf_text_view(source) -> str:
+    """The PDF's text with [page N] markers, made once with pdftotext and kept next to the file."""
+    from controller.app.discovery.sources import pdf_text
+    if source.text_path and Path(source.text_path).is_file():
+        return Path(source.text_path).read_text(errors="replace")
+    settings = get_settings()
+    text = pdf_text(Path(source.path), tool=settings.pdftotext_path, timeout=settings.pdftotext_timeout_seconds)
+    if not text:
+        raise JobAborted(f"{source.filename}: no text could be read with {settings.pdftotext_path} (not installed, "
+                         "or a scanned PDF without a text layer); only claude-readonly reads such a PDF")
+    target = Path(source.path).with_name(Path(source.path).name + ".md")
+    target.write_text(text)
+    source.text_path = str(target)
+    return text
+
+
+def _chunks_from(data: dict) -> dict[str, list[dict]]:
+    """An inventory written before rounds kept what each source gave: rebuild it from the merged items (each under
+    the first source it cites) so the next round reuses them instead of reading every file again."""
+    chunks: dict[str, dict] = {}
+    for item in data.get("items", []):
+        first = next((c["source"] for c in item["sources"] if not c["source"].startswith("decision:")), None)
+        if first:
+            chunks.setdefault(first, {"items": [], "gaps": [], "read": data.get("coverage", {}).get(first, [])})
+            chunks[first]["items"].append({k: v for k, v in item.items() if k != "id"})
+    if chunks:
+        next(iter(chunks.values()))["gaps"] = data.get("gaps", [])
+    return {sid: [chunk] for sid, chunk in chunks.items()}
+
+
+def _read_parts(team: Team, context: RunContext, parts: list, read, record, what: str) -> list[tuple]:
+    """Each part in turn; a part whose answer is unusable is halved and read again instead of retried at the same size."""
+    from controller.app.discovery.extract import split
+    from controller.app.integrations.langflow import InvalidModelOutput
+    done, pending, index = [], list(parts), 0
+    while pending:
+        part, index = pending.pop(0), index + 1
+        halves = split(part)
+        joblog.note(f"Business Analyst reads {what} {part.filename}, {part.label} (part {index}, {len(pending)} more after it)")
+        # A part that can be halved gets no format retries: a too-long answer fails again at the same size.
+        policy = context.policy.model_copy(update={"max_format_retries": 0}) if halves else context.policy
+        part_context = dataclasses.replace(context, policy=policy, session_id=f"{context.session_id}:{what}:{index}")
+        try:
+            result = read(part_context, part)
+        except InvalidModelOutput as exc:
+            if not halves:
+                raise
+            joblog.note(f"  answer unusable ({str(exc)[:160]}); reading {halves[0].label} and {halves[1].label} instead")
+            pending[:0] = halves
+            continue
+        record()
+        done.append((part, result))
+    return done
+
+
+def _extract(team: Team, loaded: Loaded) -> dict:
+    """New sources part by part, new minutes, then one consolidation pass over the merged inventory."""
+    from controller.app.discovery.inventory import (ChunkResult, Inventory, MinutesResult, Update, apply_consolidation,
+                                                    merge_chunks)
+    from controller.app.integrations.langflow import prompt_text
+    context, extra = loaded.context, loaded.extra
+    calls: list[dict] = []
+    reused = [False]  # the step just done came from an earlier attempt: no new call to record
+
+    def record() -> None:
+        call = getattr(team, "last_call", None)
+        if reused[0]:
+            reused[0] = False
+        elif call:
+            calls.append({"engine": call.engine, "prompt_version": call.prompt_version, "attempts": call.attempts,
+                          "usage": call.usage})
+
+    if extra["reused"]:
+        joblog.note(f"reusing what earlier rounds read of {len(extra['reused'])} source(s)")
+    known: dict[str, list[str]] = {}
+    chunks = [(sid, ChunkResult.model_validate(c)) for sid, stored in extra["reused"].items() for c in stored]
+
+    def read_part(part_context, part):
+        snapshot = {kind: list(names) for kind, names in known.items()}
+        chunk, reused[0] = joblog.resumable(
+            f"extract {part.source_id} {part.label}",
+            {"source": part.source_id, "part": part.label, "known": snapshot, "prompt": prompt_text("extract")},
+            lambda: team.extract_part(dataclasses.replace(part_context, repository={"known": snapshot}), part),
+            ChunkResult.model_validate)
+        joblog.note(f"  {len(chunk.items)} item(s), {len(chunk.gaps)} question(s)")
+        for item in chunk.items:  # later parts reuse the names of earlier ones
+            if item.type in ("actor", "feature", "term", "data") and item.name not in known.setdefault(item.type, []):
+                known[item.type].append(item.name)
+        return chunk
+    for _, chunk in chunks:
+        for item in chunk.items:
+            if item.type in ("actor", "feature", "term", "data") and item.name not in known.setdefault(item.type, []):
+                known[item.type].append(item.name)
+    fresh = _read_parts(team, context, extra["parts"], read_part, record, "")
+    chunks += [(part.source_id, chunk) for part, chunk in fresh]
+    stored: dict[str, list] = {sid: list(c) for sid, c in extra["reused"].items()}
+    for part, chunk in fresh:
+        stored.setdefault(part.source_id, []).append(chunk.model_dump())
+    previous = Inventory.model_validate({**extra["previous"], "coverage": {}}) if extra["previous"] else None
+    inventory = merge_chunks(chunks, previous)
+    dumped = inventory.model_dump()
+
+    def read_minutes(part_context, part):
+        result, reused[0] = joblog.resumable(
+            f"minutes {part.source_id} {part.label}",
+            {"source": part.source_id, "part": part.label, "questions": extra["questions"], "items": dumped["items"],
+             "prompt": prompt_text("minutes")},
+            lambda: team.read_minutes(part_context, part, extra["questions"], dumped["items"]),
+            MinutesResult.model_validate)
+        return result
+    minutes = _read_parts(team, context, extra["minutes"], read_minutes, record, "minutes")
+    joblog.note(f"{len(inventory.items)} item(s), {len(extra['decisions'])} accepted decision(s); "
+                "the Business Analyst consolidates")
+    if inventory.items:
+        consolidation = team.consolidate(context, dumped["items"], dumped["gaps"], extra["decisions"], extra["asked"],
+                                         {"round": extra["round"], "new_input": extra["new_input"]})
+        record()
+        if not extra["new_input"]:  # check again: nothing new to read, so only a conflict is worth a question
+            consolidation = consolidation.model_copy(update={"gaps": [g for g in consolidation.gaps if g.kind == "conflict"]})
+        # A decision with a stated effect is applied as stated, after (and over) what the model read into decisions.
+        stated = [{"id": item, "decision": e["id"], "status": e["effect"],
+                   "text": e["new_text"] if e["effect"] == "changed" else ""}
+                  for e in extra.get("effects", []) for item in e["items"]]
+        consolidation = consolidation.model_copy(
+            update={"updates": consolidation.updates + [Update.model_validate(u) for u in stated]})
+        before = len(inventory.items)
+        inventory = apply_consolidation(inventory, consolidation, {d["id"] for d in extra["decisions"]})
+        joblog.note(f"consolidation merged {before - len(inventory.items)} item(s), "
+                    f"applied {len(consolidation.updates)} update(s), {len(inventory.gaps)} question(s) in total")
+    parts = extra["previous_parts"] + [{"source": p.source_id, "covers": p.label} for p, _ in fresh]
+    suggestions = [x.model_dump() for x in consolidation.suggestions] if inventory.items else []
+    return {"inventory": inventory.model_dump(), "parts": parts, "chunks": stored, "suggestions": suggestions,
+            "again": not extra["new_input"],
+            "minutes": [{"source": p.source_id, "covers": p.label, **m.model_dump()} for p, m in minutes],
+            "minutes_read": sorted(set(extra["minutes_read"]) | {p.source_id for p, _ in minutes}),
+            "decisions_applied": [d["id"] for d in extra["decisions"]],
+            "_calls": calls, "_engine": ",".join(sorted({c["engine"] for c in calls})) or None}
+
+
+def _apply_extract(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    from controller.app.discovery import questions as q
+    from controller.app.discovery.inventory import Inventory, check, render
+    from controller.app.discovery.service import discovery_config, sources
+    config = discovery_config(session, run)
+    inventory = Inventory.model_validate(result["inventory"])
+    names = {str(s.id): s.filename for s in sources(session, run.id)}
+    decided = {q.decision_id(d) for d in q.decisions(session, run.id)}
+    problems = check(inventory, set(names), decided)
+    coarse = sum(1 for item in inventory.items
+                 if all(c.location.startswith(("pages ", "lines ", "the whole")) for c in item.sources))
+    title = run.title.removeprefix("Discovery: ")
+    content = render(title, inventory, names)
+    document = add_document(session, run.id, "inventory", content, author_kind="ai",
+                            author=TeamRole.BUSINESS_ANALYST.value,
+                            data={**inventory.model_dump(), "problems": problems, "coarse_citations": coarse,
+                                  "sources": names, "again": result.get("again", False),
+                                  **{k: result[k] for k in ("parts", "chunks", "minutes_read", "decisions_applied")}})
+    document.commit_sha = commit_thread(session, run, "inventory", content,
+                                        f"sdlc: requirement inventory v{document.version}")
+    ids_by_name = {q._norm(n): i.id for i in inventory.items for n in [i.name, *i.aliases]}
+    added, left_out, later = q.sync_questions(session, run, inventory.gaps, document.version, config, ids_by_name)
+    suggested = q.apply_suggestions(session, run, result.get("suggestions", []))
+    run_questions = q.questions(session, run.id)
+    by_number = {q.number(run_questions, x): x for x in run_questions}
+    proposed = 0
+    for entry in result.get("minutes", []):
+        for decision in entry["decisions"]:
+            question = by_number.get(decision["question"])
+            q.propose(session, run, decision["text"], question=question if question and question.status == q.OPEN else None,
+                      items=decision["items"], source_id=uuid.UUID(entry["source"]), location=decision["location"],
+                      config=config)
+            proposed += 1
+    write_discovery_documents(session, run, config, names)
+    detail = f"{len(inventory.items)} item(s), {added} new question(s)"
+    if later:
+        detail += f", {later} detail question(s) deferred to the SRS/SDS"
+    if left_out:
+        detail += f" ({left_out} more left for the next round by discovery.limits.max_questions_per_round)"
+    if proposed:
+        detail += f", {proposed} decision(s) from minutes to accept"
+    if suggested:
+        detail += f", {suggested} suggested answer(s)"
+    if problems:
+        detail += f"; {len(problems)} problem(s) to review"
+    transition_run(session, run, RunStatus.CLARIFYING, actor=TeamRole.BUSINESS_ANALYST.value,
+                   reason=f"requirement inventory v{document.version}: {detail}")
+
+
+def write_discovery_documents(session: Session, run: Run, config, names: dict[str, str]) -> None:
+    """questions.md and decisions.md of the thread, as they stand now; a new version only when they changed."""
+    from controller.app.discovery import questions as q
+    title = run.title.removeprefix("Discovery: ")
+    run_questions = q.questions(session, run.id)
+    texts = {"questions": q.render_questions(run_questions, config, title),
+             "decisions": q.render_decisions(q.decisions(session, run.id), run_questions, config, names, title)}
+    for kind, content in texts.items():
+        current = latest_document(session, run.id, kind)
+        if current is None or current.content != content:
+            document = add_document(session, run.id, kind, content, author_kind="ai", author=COORDINATOR)
+            document.commit_sha = commit_thread(session, run, kind, content, f"sdlc: {kind} v{document.version}")
+
+
+# ---------------------------------------------------------------- keeping up with the default branch (B3)
+
+# Where main is merged into a run's branch: a gate, never while a stage changes the worktree. Before coding the branch
+# holds documents only; after coding the merged code is validated, and tested again at the QC gate.
+SYNC_BEFORE_CODING = (RunStatus.WAITING_SPEC_APPROVAL, RunStatus.WAITING_PLAN_APPROVAL, RunStatus.WAITING_TEST_APPROVAL,
+                      RunStatus.READY)
+SYNC_AFTER_CODING = (RunStatus.WAITING_ACCEPTANCE_APPROVAL, RunStatus.WAITING_PR_APPROVAL)
+
+
+def add_fix_task(session: Session, run: Run, *, actor: str, title: str, fields: dict, reason: str) -> Task:
+    """One more task of the current plan that may change any file of the plan's tasks and of the allowed paths: for
+    a person's defects (fields: defects) or for what merging main left (fields: conflicts). The run codes again."""
+    tasks = current_tasks(session, run)
+    files = sorted({f for t in tasks for f in t.payload.get("modify", []) + t.payload.get("create", [])})
+    criteria = sorted({c for t in tasks for c in t.payload.get("acceptance_criteria", [])})
+    number = max(int(t.external_task_id[1:]) for t in tasks) + 1
+    policy = EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy"))
+    extra_files = sorted(set(fields.get("conflicts", {}).get("files", [])) - set(files))
+    # any file of the allowed paths: a defect may sit in a module an earlier plan wrote, or need a new migration
+    payload = {"id": f"T{number}", "title": title, "depends_on": [],
+               "modify": files + extra_files + list(policy.allowed_paths), "create": list(policy.allowed_paths),
+               "provides": [], "references": [], "acceptance_criteria": criteria,
+               "validation": [c.name for c in policy.validation], **fields}
+    task = Task(run_id=run.id, plan_id=tasks[0].plan_id, external_task_id=payload["id"], payload=payload,
+                status=TaskStatus.READY.value)
+    session.add(task)
+    session.flush()
+    record_event(session, "task.fix_added", actor=actor, run_id=run.id,
+                 payload={"task": payload["id"], "title": title, "reason": reason})
+    schedule_tasks(session, run)
+    return task
+
+
+def _load_update(session: Session, run: Run, loaded: Loaded) -> Loaded:
+    project = session.get(Project, run.project_id)
+    ref = feature_ref(session, run)
+    tasks = current_tasks(session, run)
+    loaded.extra.update(worktree=run.worktree_path or "", main=mirror_for(project).resolve(project.default_branch),
+                        story=ref.story_id if ref else "", status=run.status, branch=run.branch,
+                        coded=run.status in SYNC_AFTER_CODING, task=tasks[-1].payload if tasks else None,
+                        slug=None if get_settings().coding_is_mocked else repo_slug(project.repo_url))
+    pull = session.scalar(select(PullRequest).where(PullRequest.run_id == run.id))
+    loaded.extra["pushed_pr"] = bool(pull and pull.number and not pull.simulated)
+    if loaded.extra["coded"]:
+        loaded.context = build_context(session, run, kind="update_branch")
+    return loaded
+
+
+def _merged_before_a_sync(run: Run, pull: PullRequest, state) -> bool:
+    """The pull request was merged at a head the team pushed, and the platform then merged main into the branch
+    (the merge of this very PR, by a job queued just before it): the story's own work is all in what was merged."""
+    from controller.app import mainline
+    if not (run.worktree_path and pull.head_sha and state.head_sha):
+        return False
+    try:
+        return mainline.only_main_merges(Path(run.worktree_path), state.head_sha, pull.head_sha)
+    except (OSError, mainline.MergeError):
+        return False
+
+
+def _update_branch(team: Team, loaded: Loaded) -> dict:
+    """Merge main; after coding, validate the merged code and (at the PR gate) push it to the open pull request."""
+    from controller.app import mainline
+    extra = loaded.extra
+    worktree = Path(extra["worktree"])
+    if mainline.already_merged(worktree, extra["main"]):  # the PR was merged after this job was queued
+        joblog.note("the default branch already holds this branch: its pull request was merged; nothing to update")
+        return {"merge": {"up_to_date": True}, "main": extra["main"]}
+    joblog.note(f"merging {extra['main'][:12]} from the default branch into {extra['branch']}")
+    merged = mainline.merge_main(worktree, extra["main"], extra["story"])
+    result: dict = {"merge": merged, "main": extra["main"]}
+    if merged["up_to_date"]:
+        joblog.note("the branch already contains it")
+        return result
+    joblog.note(f"merged as {merged['commit'][:12]}; platform files merged: {', '.join(merged['resolved']) or 'none'}; "
+                f"code conflicts: {', '.join(merged['conflicts']) or 'none'}; "
+                f"migrations: {'; '.join(merged['migrations']) or 'one head'}")
+    if extra["coded"] and extra["task"] and not merged["conflicts"] and not merged["migrations"]:
+        task = PlanTask.model_validate({k: v for k, v in extra["task"].items() if k not in ("defects", "conflicts")})
+        check = team.validate(loaded.context, task, attempt=1)
+        result["validation"] = {"ok": check.ok, "detail": check.detail,
+                                "failures": check.evidence.get("failures", "") if check.evidence else ""}
+        joblog.note(f"validation of the merged code: {check.detail[:300]}")
+        if check.ok and extra["status"] == RunStatus.WAITING_PR_APPROVAL and extra["slug"] and extra["pushed_pr"]:
+            github.push(worktree, extra["branch"])
+            result["pushed"] = merged["commit"]
+            joblog.note("pushed to the open pull request")
+    return result
+
+
+def _apply_update_branch(session: Session, run: Run, execution: Execution, result: dict, team: Team) -> None:
+    merged = result["merge"]
+    if merged["up_to_date"]:
+        return
+    validation = result.get("validation")
+    problems = ([f"code conflict in {f}" for f in merged["conflicts"]] + merged["migrations"]
+                + ([f"validation fails after the merge: {validation['detail'][:300]}"]
+                   if validation and not validation["ok"] else []))
+    store_artifact(session, run, "main_sync", TeamRole.COORDINATOR, json.dumps(
+        {"main": result["main"], "commit": merged["commit"], "resolved": merged["resolved"],
+         "conflicts": merged["conflicts"], "migrations": merged["migrations"], "notes": merged["notes"],
+         "validation": validation, "pushed": result.get("pushed"), "problems": problems}))
+    record_event(session, "branch.updated", actor=COORDINATOR, run_id=run.id,
+                 payload={"main": result["main"], "commit": merged["commit"], "problems": problems})
+    status = RunStatus(run.status)
+    if problems:
+        reason = f"main {result['main'][:12]} merged into the branch: " + "; ".join(problems)
+        if current_tasks(session, run) and RunStatus.CODING in RUN_TRANSITIONS[status] and status in SYNC_AFTER_CODING:
+            transition_run(session, run, RunStatus.CODING, actor=COORDINATOR, reason=reason)
+            add_fix_task(session, run, actor=COORDINATOR, title="Resolve the conflicts with the default branch",
+                         reason=reason, fields={"conflicts": {
+                             "main": result["main"], "files": merged["conflicts"], "migrations": merged["migrations"],
+                             "validation": (validation or {}).get("failures", "") if validation and not validation["ok"] else ""}})
+        elif RunStatus.NEEDS_HUMAN in RUN_TRANSITIONS[status]:
+            to_needs_human(session, run, reason)
+        return
+    if status == RunStatus.WAITING_ACCEPTANCE_APPROVAL:  # the evidence was about the code before the merge
+        transition_run(session, run, RunStatus.ACCEPTANCE_TESTING, actor=COORDINATOR,
+                       reason=f"main {result['main'][:12]} merged into the branch; the acceptance tests run again")
+        queue(session, run, "acceptance", key=f"main:{result['main']}")
+    elif status == RunStatus.WAITING_PR_APPROVAL and result.get("pushed"):
+        pull = session.scalar(select(PullRequest).where(PullRequest.run_id == run.id))
+        pull.head_sha, pull.ci_status = result["pushed"], "pending"  # the merge completes the run at this head
+
+
+def _resolve_conflicts(team: Team, loaded: Loaded, task: PlanTask) -> list[dict]:
+    """The task that finishes a merge of main: the QA Engineer resolves conflicts in test files, the Developer in
+    code, migrations and what validation found; no conflict marker may remain, then validation decides."""
+    from controller.app import mainline
+    context, tests = loaded.context, loaded.tests
+    found = loaded.task_payload["conflicts"]
+    worktree = Path(context.worktree)
+    test_files = [f for f in found["files"] if matches_any(f, context.policy.test_paths)]
+    code_files = [f for f in found["files"] if f not in test_files]
+    brief = (f"The default branch ({found['main'][:12]}) was merged into this branch; another story changed the same "
+             f"places. Keep what both sides need: this story's behaviour and the other story's. Remove every conflict "
+             f"marker (<<<<<<<, =======, >>>>>>>).")
+
+    def step(state: TaskStatus, role: TeamRole, result: StepResult) -> dict:
+        joblog.note(f"{task.id} {state.value} by {role.value}: {'ok' if result.ok else 'not ok'}; {result.detail[:300]}")
+        return {"state": state.value, "role": role.value, "ok": result.ok, "detail": result.detail,
+                "dispute": result.dispute, "changed_files": result.changed_files, "evidence": result.evidence}
+
+    if test_files:
+        steps = [step(TaskStatus.WRITING_TESTS, TeamRole.QA_ENGINEER, team.write_tests(
+            context, task, tests, amend=True, feedback=f"{brief}\nResolve the conflicts in these test files: "
+                                                         f"{', '.join(test_files)}"))]
+        if not steps[-1]["ok"]:
+            return steps
+    else:
+        steps = [step(TaskStatus.WRITING_TESTS, TeamRole.QA_ENGINEER, StepResult(True, "no test file in conflict"))]
+    steps.append(step(TaskStatus.RED_CHECK, TeamRole.VALIDATION_GATE,
+                      StepResult(True, "skipped: merging main adds no behaviour; the existing tests decide")))
+    asks = ([f"Resolve the conflicts in: {', '.join(code_files)}"] if code_files else []) + \
+        ([f"Migrations: {problem}" for problem in found.get("migrations", [])]) + \
+        ([f"Validation fails on the merged code:\n{found['validation']}"] if found.get("validation") else [])
+    if asks:
+        steps.append(step(TaskStatus.CODING, TeamRole.DEVELOPER,
+                          team.implement(context, task, 1, tests, feedback="\n".join([brief, *asks]))))
+    else:
+        steps.append(step(TaskStatus.CODING, TeamRole.DEVELOPER, StepResult(True, "no code conflict")))
+    for remediation in range(context.policy.max_remediations + 1):
+        if not steps[-1]["ok"] or steps[-1]["dispute"]:
+            return steps
+        left = mainline.markers_left(worktree, found["files"])
+        if left:
+            check = StepResult(False, f"conflict markers remain in {', '.join(left)}",
+                               evidence={"failures": f"conflict markers remain in {', '.join(left)}"})
+            steps.append(step(TaskStatus.VALIDATING, TeamRole.VALIDATION_GATE, check))
+        else:
+            steps.append(_validated(team, context, task, remediation + 1, step))
+        if steps[-1]["ok"] or steps[-1].get("infrastructure") or remediation == context.policy.max_remediations:
+            return steps
+        failure = steps[-1]["evidence"].get("failures") or steps[-1]["detail"]
+        steps.append(step(TaskStatus.REMEDIATING, TeamRole.DEVELOPER,
+                          team.implement(context, task, remediation + 2, tests, feedback=f"{brief}\n{failure}")))
+    return steps
