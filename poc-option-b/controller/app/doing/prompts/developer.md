@@ -24,6 +24,7 @@ The QA Engineer already wrote these tests in {test_files}. Read them first; they
 - Tests are the QA Engineer's: add no test files, even when AGENTS.md asks for tests with every change; the QA Engineer's tests above are the tests of this task, and the platform drops test files you write.
 - Follow AGENTS.md: put each rule where its architecture says it belongs.
 - The project validates with: {commands}. All of them must pass after your change, including the tests of earlier tasks.
+- The platform runs those commands after you finish, in the project's own validation environment with its database and services, and sends any failure back to you. Here you may run what works without them (a unit test, a lint); never start a database, a server or a container, or build a virtual environment, to run the rest yourself.
 - Do not commit, push, or install anything.
 - You have no network, and you read only this worktree and the installed tools. {lock_note}
 - Return the exact status codes and error codes the tests assert; enforce the spec's rules in code, not only in the database.
