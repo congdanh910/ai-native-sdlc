@@ -984,3 +984,12 @@ def test_every_preview_start_begins_on_fresh_data(tmp_path, monkeypatch):
     preview.start("run-1", tmp_path, Preview(compose=".sdlc/preview.compose.yml", service="web", port=80), 9100,
                   tmp_path / "logs")
     assert calls[0][-3:] == ["down", "-v", "--remove-orphans"] and "up" in calls[1]  # the last start's database goes
+
+
+def test_every_prompt_the_thinking_roles_ask_for_is_known_and_exists():
+    import re as regex
+    from controller.app.integrations.langflow import PROMPTS, ROLES, role_prompt
+    asked = set(regex.findall(r'_ask\(\s*"([a-z-]+)"', (PROJECT_ROOT / "controller/app/team/langflow_team.py").read_text()))
+    assert asked and asked <= set(ROLES), sorted(asked - set(ROLES))
+    for role in asked:
+        assert (PROMPTS / f"{role}.md").is_file() and role_prompt(role)
