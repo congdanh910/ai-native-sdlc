@@ -296,7 +296,7 @@ def onboarding(data: dict) -> dict:
         if isinstance(data.get(key), list):
             data[key] = "\n".join(str(x) for x in data[key])
     if isinstance(data.get("setup"), str):
-        data["setup"] = ["sh", "-c", data["setup"]] if data["setup"].strip() else []
+        data["setup"] = ["sh", "-ec", data["setup"]] if data["setup"].strip() else []
     for command in data.get("validation") or []:
         if isinstance(command, dict) and isinstance(command.get("run"), str):
             command["run"] = ["sh", "-c", command["run"]]

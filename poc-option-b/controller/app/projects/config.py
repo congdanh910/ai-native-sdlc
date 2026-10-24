@@ -17,6 +17,38 @@ def _check_pattern(pattern: str) -> str:
     return pattern
 
 
+SHELLS = ("sh", "bash", "dash", "ash", "zsh")
+# commands that only test something: a guard before && (if [ -f x ] && ...) is meant to stop the step quietly
+GUARD = re.compile(r"(!\s*)?(\[|\[\[|test\b|true\b|false\b|command\s+-v\b)")
+SPLIT = re.compile(r";|\n|\|\||\bthen\b|\bdo\b|\belse\b|\bif\b|\bwhile\b|\buntil\b|\(|\{")
+
+
+def masked_failure(argv: list[str]) -> str:
+    """Why an install script (setup, a command's setup, environment.lock) can fail and still exit 0, or "". Under
+    sh -e a command before && that fails does not stop the script, and without -e only the last command counts: the
+    platform then marks setup done and every validation fails later on a missing tool (attendance 23/10 exit 127,
+    24/10 "python -m venv ... && pip install" ensurepip error with exit 0)."""
+    if len(argv) < 3 or argv[0].rsplit("/", 1)[-1] not in SHELLS or not re.fullmatch(r"-[a-z]*c[a-z]*", argv[1]):
+        return ""
+    script = argv[2]
+    if "e" not in argv[1] and not re.match(r"\s*set\s+-[a-z]*e", script) and len(SPLIT.split(script)) > 1:
+        return f"{argv[0]} {argv[1]} runs several commands without -e, so a failing step does not fail it: use {argv[0]} -ec"
+    for left in script.split("&&")[:-1]:
+        step = SPLIT.split(left)[-1].strip()
+        if step and not GUARD.match(step):
+            return (f"'{step} && ...' hides a failure: under sh -e a command before && that fails does not stop the "
+                    f"script, so a failed install looks done. Separate the steps with ; (a guard such as "
+                    f"[ -f x ] && ... is fine)")
+    return ""
+
+
+def _install_script(value: list[str]) -> list[str]:
+    problem = masked_failure(value)
+    if problem:
+        raise ValueError(problem)
+    return value
+
+
 class Strict(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -53,7 +85,7 @@ class ValidationCommand(Strict):
     def _setup(cls, value: list[str]) -> list[str]:
         if any(not ARG.fullmatch(arg) for arg in value):
             raise ValueError("setup arguments must be non-empty single-line strings")
-        return value
+        return _install_script(value)
 
     @field_validator("name")
     @classmethod
@@ -120,6 +152,11 @@ class Environment(Strict):
     @classmethod
     def _inputs(cls, value: list[str]) -> list[str]:
         return [_check_pattern(pattern) for pattern in value]
+
+    @field_validator("lock")
+    @classmethod
+    def _lock(cls, value: list[str]) -> list[str]:
+        return _install_script(value)
 
     @field_validator("env")
     @classmethod
@@ -330,6 +367,11 @@ class ProjectConfig(Strict):
     ui: Ui = Ui()
     delivery: Delivery = Delivery()
     disputes: Disputes = Disputes()
+
+    @field_validator("setup")
+    @classmethod
+    def _setup(cls, value: list[str]) -> list[str]:
+        return _install_script(value)
 
     @model_validator(mode="after")
     def _consistent(self) -> "ProjectConfig":

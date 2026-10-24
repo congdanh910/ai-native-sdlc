@@ -88,3 +88,22 @@ def test_a_project_can_bring_its_own_environment():
         parse_project_config(own.replace(".sdlc/validation.Dockerfile", "/etc/Dockerfile"))
     with pytest.raises(ValueError, match="upper case"):
         parse_project_config(own.replace("DATABASE_URL", "database_url"))
+
+
+def test_an_install_script_that_can_fail_with_exit_0_does_not_load():
+    from controller.app.projects.config import masked_failure, parse_project_config
+    base = (PROJECT_ROOT / "examples/task-board/.sdlc/project.yaml").read_text()
+    # attendance 24/10: the venv failed, pip never ran, setup exited 0 and was marked done
+    hidden = ["sh", "-ec", "if [ -f backend/pyproject.toml ]; then python -m venv backend/.venv && "
+                           "backend/.venv/bin/pip install -e backend; fi; if [ -f web/package-lock.json ]; then npm ci; fi"]
+    assert "hides a failure" in masked_failure(hidden)
+    assert masked_failure(["sh", "-ec", hidden[2].replace(" && ", "; ")]) == ""
+    assert masked_failure(["sh", "-ec", 'if [ -d a ] && [ -n "$(ls a)" ]; then pip install a; fi']) == ""  # guards
+    assert masked_failure(["sh", "-ec", "[ -f web/package.json ] && npm --prefix web ci"]) == ""
+    assert "without -e" in masked_failure(["sh", "-c", "pip install a; npm ci"])
+    assert masked_failure(["bash", "-c", "set -e; pip install a; npm ci"]) == ""
+    assert masked_failure(["npm", "ci"]) == "" and masked_failure(["sh", "-c", "npm ci"]) == ""
+    with pytest.raises(ValueError, match="hides a failure"):
+        parse_project_config(base + "setup: " + str(hidden).replace("'", '"') + "\n")
+    with pytest.raises(ValueError, match="hides a failure"):
+        parse_project_config(base + "environment:\n  lock: [sh, -ec, 'cd web && npm install --package-lock-only']\n")

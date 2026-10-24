@@ -11,7 +11,7 @@ def test_two_checks_of_one_project_do_not_share_the_checkout_at_once(tmp_path, m
 
     def check(key):
         with registry.checking(key):
-            if inside:
+            if key in inside:
                 overlaps.append(key)
             inside.append(key)
             time.sleep(0.2)
@@ -23,7 +23,7 @@ def test_two_checks_of_one_project_do_not_share_the_checkout_at_once(tmp_path, m
         thread.start()
     for thread in threads:
         thread.join()
-    assert overlaps in ([], ["inventory"], ["attendance"])  # only another project may check at the same time
+    assert overlaps == []  # another project may check at the same time, the same project never
     assert time.monotonic() - started >= 0.4  # the two checks of attendance ran one after the other
 
 
