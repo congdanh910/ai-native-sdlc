@@ -136,6 +136,7 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
   if (need.action === "waiting_acceptance_approval") {
     const report = [...run.documents].reverse().find((d) => d.kind === "acceptance");
     if (!report) return null;
+    const failedTests = ((report as typeof report & { acceptance?: { cases: { status: string }[] } }).acceptance?.cases ?? []).filter((c) => c.status !== "passed" && c.status !== "skipped").length;
     return (
       <Panel run={run} title={`Acceptance ${report.version > 1 ? `v${report.version}` : ""}`.trim()}>
         <p className="m-0 text-sm text-muted">The QA Engineer's end-to-end tests ran against the story's preview. Try the story yourself with the demo accounts, check the evidence of every criterion, then accept it (the pull request opens) or send the defects back to the Developer.</p>
@@ -143,10 +144,10 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
         <AcceptanceReport run={run} doc={report} />
         {run.regression_triage ? <RegressionTriage triage={run.regression_triage} onUse={setReason} /> : null}
         {checklist}
-        <Reason value={reason} onChange={setReason} placeholder="Defects: what you did, what you saw, what you expected. Or what is wrong with the tests, to have them written again" />
+        <Reason value={reason} onChange={setReason} placeholder="Optional: what you did, what you saw, what you expected. The failed tests, the Code Reviewer's findings and the application's errors are sent for you" />
         <div className="flex flex-wrap gap-2">
           <ActionButton variant="primary" success="Accepted; opening the PR" action={() => post("acceptance", { decision: "accept", document_id: report.id, checked })}>Accept the story</ActionButton>
-          <ActionButton variant="danger" disabled={!reason.trim()} action={() => post("acceptance", { decision: "reject", reason })}>Send defects to the Developer</ActionButton>
+          <ActionButton variant="danger" disabled={!reason.trim() && !failedTests} title="The platform writes the notes from the failed tests, the Code Reviewer's findings and the errors the application logged; your text is added first" action={() => post("acceptance", { decision: "reject", reason })}>{reason.trim() ? "Send defects to the Developer" : `Send the ${failedTests} failed test(s) to the Developer`}</ActionButton>
           <ActionButton action={() => post("acceptance", { decision: "retest", reason })}>Run the tests again</ActionButton>
         </div>
       </Panel>

@@ -404,3 +404,32 @@ def test_earlier_stories_tests_the_story_broke_go_to_a_fix_task_before_the_qc(db
                                                    Event.event_type == "acceptance.regressions_sent")).all()
     assert 1 <= len(sent) <= 2  # disputes.max_auto_per_task, then the QC decides
     assert status(run_id) == RunStatus.WAITING_ACCEPTANCE_APPROVAL
+
+
+def test_the_qc_sends_the_failed_tests_without_writing_the_notes(db, sample_repo, monkeypatch):
+    from sqlalchemy.orm.attributes import flag_modified
+    from controller.app import preview
+    with_preview(sample_repo)
+    run_id = new_run(add_project(sample_repo))
+    drain()
+    approve_spec(run_id)
+    drain()
+    approve_plan(run_id)
+    drain()
+    # an older report without the application's errors: they are read from the running preview
+    monkeypatch.setattr(preview, "server_errors", lambda run, budget: [
+        "Traceback (most recent call last):\n  File \"app/domain.py\", line 199\nValueError: session timestamps must be ordered"])
+    with session_scope() as session:
+        report = latest_document(session, run_id, "acceptance")
+        report.data = {**report.data, "cases": [*report.data["cases"], {
+            "title": "AC-01 HR admin sees the employee list", "criteria": [], "status": "failed",
+            "error": "Expected: 200\nReceived: 500"}]}
+        flag_modified(report, "data")
+    with session_scope() as session:
+        services.decide_acceptance(session, services.get_run(session, run_id), actor=OPERATOR, decision="reject",
+                                   reason="")
+    team = Recording()
+    drain(team)
+    notes = next(n for n in team.notes if "QC (acceptance)" in n)
+    assert "1 acceptance test(s) failed on the preview" in notes and "AC-01 HR admin sees the employee list" in notes
+    assert "Received: 500" in notes and "ValueError: session timestamps must be ordered" in notes

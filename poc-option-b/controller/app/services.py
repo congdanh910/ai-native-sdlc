@@ -784,8 +784,11 @@ def decide_acceptance(session: Session, run: Run, *, actor: str, decision: str, 
         transition_run(session, run, RunStatus.PR_OPEN, actor=actor, acting_role=QC, reason="the QC accepted the story")
         coordinator.queue(session, run, "release")
     elif decision == "reject":
-        if not reason.strip():
+        failures = failure_notes(session, run)
+        if not reason.strip() and not failures:
             raise DecisionError("describe the defects: what you did, what you saw, what you expected")
+        # the QC tells what they saw; the failed tests, the triage and the server's errors are written for them
+        reason = "\n\n".join(part for part in (reason.strip(), failures) if part)
         _corrected(run)
         _approval(session, run, "acceptance", "reject", actor, QC, reason=reason)
         transition_run(session, run, RunStatus.CODING, actor=actor, acting_role=QC, reason=reason)
@@ -797,6 +800,32 @@ def decide_acceptance(session: Session, run: Run, *, actor: str, decision: str, 
         coordinator.queue(session, run, "acceptance", key=f"retest:v{run.version}")
     else:
         raise DecisionError(f"unknown acceptance decision {decision!r}")
+
+
+def failure_notes(session: Session, run: Run) -> str:
+    """The defect notes the platform writes for the QC from the latest acceptance report: each failed test with the
+    Code Reviewer's finding (or the test's error) and the errors the application logged, read from the running preview
+    when the report has none. A QC cannot be asked to write a traceback (attendance 24/10)."""
+    from controller.app import preview
+    document = latest_document(session, run.id, "acceptance")
+    if document is None:
+        return ""
+    failed = [c for c in (document.data or {}).get("cases", []) if c.get("status") not in ("passed", "skipped")]
+    if not failed:
+        return ""
+    raw = coordinator.artifact(session, run.id, "regression_triage")
+    stored = json.loads(raw) if raw else {}
+    found = {t["test"]: t["change"] for t in (stored.get("triage") or {}).get("tests", [])} \
+        if stored.get("document") == str(document.id) else {}
+    lines = [f"{len(failed)} acceptance test(s) failed on the preview:"]
+    for n, case in enumerate(failed, 1):
+        detail = found.get(case["title"]) or " ".join((case.get("error") or "").split())[:300]
+        lines.append(f"{n}. {case['title']}" + (f": {detail}" if detail else ""))
+    if not (document.data or {}).get("server_errors"):  # an older report: _add_fix_task adds the report's own
+        errors = preview.server_errors(str(run.id), get_settings().server_error_chars)
+        if errors:
+            lines += ["", "Errors the application logged on the preview:", *errors]
+    return "\n".join(lines)
 
 
 def _send_defects(session: Session, run: Run, *, actor: str, who: str, reason: str) -> None:
