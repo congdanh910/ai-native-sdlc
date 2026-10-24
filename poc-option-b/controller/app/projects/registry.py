@@ -1,6 +1,8 @@
 """Register projects and check whether they are ready for the team."""
 
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
+import fcntl
 from pathlib import Path
 import re
 import shutil
@@ -142,6 +144,21 @@ def _first_error(exc: Exception) -> str:
     return str(exc).splitlines()[0]
 
 
+@contextmanager
+def checking(project_key: str):
+    """Held while a project's default branch is checked out and validated: the API (Check again), the worker's merge
+    poller and a repair can check the same commit at once, and each one removes and re-adds the same checkout
+    (attendance 24/10: one check deleted the other's backend/.venv while it was made, ensurepip exit 1)."""
+    lock_dir = DATA_DIR / "checks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    with open(lock_dir / f"{project_key}.lock", "w") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
 def doing_checks(project: Project, mirror: Mirror, commit: str | None, snapshot: Snapshot | None) -> list[Item]:
     """What coding needs: validation passing on the default branch in its container, and GitHub access."""
     if get_settings().coding_is_mocked:
@@ -155,25 +172,8 @@ def doing_checks(project: Project, mirror: Mirror, commit: str | None, snapshot:
         items.append(Item("validation image", "fail",
                           f"{snapshot.config.validation_image!r} is not a toolchain this platform provides"))
     else:
-        checkout = DATA_DIR / "checks" / project.key / commit[:12]
-        if checkout.exists():
-            _git("--git-dir", str(mirror.path), "worktree", "remove", "--force", str(checkout))
-        _git("--git-dir", str(mirror.path), "worktree", "add", "--quiet", "--detach", str(checkout), commit)
-        logs = DATA_DIR / "logs" / "checks" / project.key / commit[:12]
-        # the checkout is new every time: setup (backend/.venv, node_modules) must run in it again, so the markers of
-        # an earlier check of this commit do not count (attendance, 23/10: exit 127, .venv/bin/python not found)
-        for marker in logs.glob("*.done") if logs.is_dir() else []:
-            marker.unlink()
-        try:
-            gate = ValidationGate(policy, checkout, logs)
-            for report in gate.run([c.name for c in policy.validation], "check"):
-                items.append(Item(f"validation: {report.name}", "ok" if report.ok else "fail",
-                                  f"passed in {report.seconds}s ({policy.validation_image or policy.env_dockerfile})"
-                                  if report.ok else
-                                  f"exit {report.exit_code}{' (timed out)' if report.timed_out else ''}; "
-                                  f"log {report.log_path}"))
-        finally:
-            _git("--git-dir", str(mirror.path), "worktree", "remove", "--force", str(checkout))
+        with checking(project.key):
+            items += _validate_commit(project, mirror, commit, policy)
     slug = repo_slug(project.repo_url)
     if slug is None:
         items.append(Item("GitHub access", "warn", "local repository: pull requests stay simulated in the mirror"))
@@ -182,6 +182,31 @@ def doing_checks(project: Project, mirror: Mirror, commit: str | None, snapshot:
             items.append(Item("GitHub access", "ok", github.check_access(slug)))
         except github.GitHubError as exc:
             items.append(Item("GitHub access", "fail", str(exc)))
+    return items
+
+
+def _validate_commit(project: Project, mirror: Mirror, commit: str, policy) -> list[Item]:
+    """The project's validation commands on a fresh checkout of the commit; hold checking(project.key)."""
+    items: list[Item] = []
+    checkout = DATA_DIR / "checks" / project.key / commit[:12]
+    if checkout.exists():
+        _git("--git-dir", str(mirror.path), "worktree", "remove", "--force", str(checkout))
+    _git("--git-dir", str(mirror.path), "worktree", "add", "--quiet", "--detach", str(checkout), commit)
+    logs = DATA_DIR / "logs" / "checks" / project.key / commit[:12]
+    # the checkout is new every time: setup (backend/.venv, node_modules) must run in it again, so the markers of
+    # an earlier check of this commit do not count (attendance, 23/10: exit 127, .venv/bin/python not found)
+    for marker in logs.glob("*.done") if logs.is_dir() else []:
+        marker.unlink()
+    try:
+        gate = ValidationGate(policy, checkout, logs)
+        for report in gate.run([c.name for c in policy.validation], "check"):
+            items.append(Item(f"validation: {report.name}", "ok" if report.ok else "fail",
+                              f"passed in {report.seconds}s ({policy.validation_image or policy.env_dockerfile})"
+                              if report.ok else
+                              f"exit {report.exit_code}{' (timed out)' if report.timed_out else ''}; "
+                              f"log {report.log_path}"))
+    finally:
+        _git("--git-dir", str(mirror.path), "worktree", "remove", "--force", str(checkout))
     return items
 
 
