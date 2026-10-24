@@ -37,6 +37,13 @@ Sửa nền tảng (fd04270): Acceptance thất bại thì đọc log từng ser
 đầy đủ, không trùng, `SERVER_ERROR_CHARS`), lưu vào tài liệu acceptance (mục "Errors the application logged"), đưa
 vào triage (`server_errors`) và vào task sửa lỗi của QC/regression. Run chờ người dùng ở cổng QC.
 
+Cổng QC: "Send the N failed test(s) to the Developer" không cần viết ghi chú (d18fa3f, `services.failure_notes`). T13
+sửa race (157/157 Acceptance pass); người dùng Accept, run ở cổng PR #15. Review có 8 phiên bản, mỗi lần một vấn đề
+important mới, nhưng `review_fix_rounds` tính cho cả run nên chỉ lần đầu được tự sửa và cổng không hiện chúng. Sửa:
+vòng tự sửa review tính theo mỗi lần code đổi vì lý do khác (task sửa của QC/regression/merge; `task.fix_added` có
+`title`), sửa do chính review không reset; vấn đề important còn mở (`coordinator.open_review_findings`) hiện ở cổng QC
+và PR, nút gửi một lần bấm (Request changes để trống gửi chúng).
+
 ## 24/10: test không được validation chạy
 
 Manage an Account (f662ce06) T2 dừng vì test ở `backend/tests/integration/` (không lệnh nào chạy) bị coi là "pass sẵn".

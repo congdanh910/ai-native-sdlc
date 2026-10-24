@@ -319,7 +319,8 @@ class Disputes(Strict):
     min_confidence: Literal["high", "medium"] = "high"
     max_auto_per_task: int = Field(default=2, ge=0, le=5)  # then the Tech Lead decides
     # the review's important findings (checked against the SDS) go back to the Developer in a fix task this many times
-    # a run before the acceptance tests and the PR; later findings wait for the Code Owner at the PR gate
+    # for each change of the code (a fix of the QC or of a regression, a merge of main); later findings are shown at
+    # the QC's and the Code Owner's gates and sent from there with one click
     review_fix_rounds: int = Field(default=1, ge=0, le=3)
 
 

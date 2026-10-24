@@ -10,7 +10,7 @@ from controller.app.models import (Approval, Artifact, Clarification, Document, 
                                    Run, Source, Task)
 from controller.app.project_docs import SRS_PATH, srs_features
 from controller.app.projects.registry import mirror_for
-from controller.app.coordinator import artifact, evaluate_gate
+from controller.app.coordinator import artifact, evaluate_gate, open_review_findings
 from controller.app.services import needs_classification
 from controller.app.states import ACTIVE, STAGE_STARTER, WAITING_FOR, HumanRole, RunStatus
 
@@ -226,6 +226,8 @@ def run_detail(session: Session, run: Run) -> dict:
                                                   "acceptance.regressions_sent")))
             .order_by(Event.id))],
         "regression_triage": _regression_triage(session, run),
+        "open_findings": open_review_findings(session, run)
+        if run.status in ("WAITING_ACCEPTANCE_APPROVAL", "WAITING_PR_APPROVAL") else [],
     })
     return detail
 

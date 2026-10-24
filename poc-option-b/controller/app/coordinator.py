@@ -1959,13 +1959,20 @@ def _send_review_findings(session: Session, run: Run, review: dict) -> bool:
     from controller.app.services import _send_defects
     important = [f for f in review.get("findings", []) if f.get("severity") == "important"]
     policy = EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy"))
+    # the rounds count since the code last changed for another reason (the QC's or a regression's fix, a merge of
+    # main): new code gets its own review rounds, the review's own fixes do not reset them, so it cannot loop
+    # (Manage an Account 24/10: one round a run left the important findings of 4 later reviews to nobody)
+    changes = [e for e in session.scalars(select(Event).where(Event.run_id == run.id,
+                                                              Event.event_type == "task.fix_added"))
+               if REVIEW_WHO not in (e.payload or {}).get("title", "")]
+    since = max((e.created_at for e in changes), default=None)
     rounds = session.scalar(select(func.count()).select_from(Event).where(
-        Event.run_id == run.id, Event.event_type == "review.findings_sent"))
+        Event.run_id == run.id, Event.event_type == "review.findings_sent",
+        *([Event.created_at > since] if since else [])))
     if not important or not policy.disputes.auto or rounds >= policy.disputes.review_fix_rounds \
             or run.kind not in (RunKind.FEATURE, RunKind.FOUNDATION):
         return False
-    notes = "\n".join(f"{n}. {f['text']}" + (f" ({f['file']})" if f.get("file") else "")
-                      for n, f in enumerate(important, 1))
+    notes = findings_notes(important)
     record_event(session, "review.findings_sent", actor=AUTO_ACTOR, run_id=run.id,
                  payload={"round": rounds + 1, "findings": [f["text"] for f in important]})
     transition_run(session, run, RunStatus.CODING, actor=TeamRole.CODE_REVIEWER.value,
@@ -1973,6 +1980,25 @@ def _send_review_findings(session: Session, run: Run, review: dict) -> bool:
                           "the story is tried on its preview")
     _send_defects(session, run, actor=AUTO_ACTOR, who=REVIEW_WHO, reason=notes)
     return True
+
+
+def open_review_findings(session: Session, run: Run) -> list[dict]:
+    """The latest review's important findings that no fix task took since it was written: shown at the QC's and the
+    Code Owner's gates and sent with one click, when the review's own rounds were used."""
+    document = latest_document(session, run.id, "review")
+    if document is None:
+        return []
+    later = session.scalar(select(func.count()).select_from(Event).where(
+        Event.run_id == run.id, Event.event_type.in_(("task.fix_added", "review.findings_sent")),
+        Event.created_at >= document.created_at))
+    if later:
+        return []
+    return [f for f in (document.data or {}).get("findings", []) if f.get("severity") == "important"]
+
+
+def findings_notes(findings: list[dict]) -> str:
+    return "\n".join(f"{n}. {f['text']}" + (f" ({f['file']})" if f.get("file") else "")
+                     for n, f in enumerate(findings, 1))
 
 
 def after_review(session: Session, run: Run, verdict: str) -> None:
@@ -2434,7 +2460,8 @@ def add_fix_task(session: Session, run: Run, *, actor: str, title: str, fields: 
                 status=TaskStatus.READY.value)
     session.add(task)
     session.flush()
-    record_event(session, "task.fix_added", actor=actor, run_id=run.id, payload={"task": payload["id"], "reason": reason})
+    record_event(session, "task.fix_added", actor=actor, run_id=run.id,
+                 payload={"task": payload["id"], "title": title, "reason": reason})
     schedule_tasks(session, run)
     return task
 

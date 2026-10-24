@@ -433,3 +433,47 @@ def test_the_qc_sends_the_failed_tests_without_writing_the_notes(db, sample_repo
     notes = next(n for n in team.notes if "QC (acceptance)" in n)
     assert "1 acceptance test(s) failed on the preview" in notes and "AC-01 HR admin sees the employee list" in notes
     assert "Received: 500" in notes and "ValueError: session timestamps must be ordered" in notes
+
+
+class EveryReviewFinds(Recording):
+    """Every review finds a new important issue, as Manage an Account's 8 reviews did."""
+    def __init__(self):
+        super().__init__()
+        self.reviews = 0
+
+    def review(self, context, plan, tests, diff="", validation=""):
+        self.reviews += 1
+        review = super().review(context, plan, tests, diff=diff, validation=validation)
+        review.verdict, review.findings = "concerns", [{"severity": "important", "file": "src/tasks.js",
+                                                        "text": f"finding of review {self.reviews}"}]
+        return review
+
+
+def test_new_code_gets_its_own_review_round_and_what_is_left_is_sent_with_one_click(db, sample_repo):
+    with_preview(sample_repo)
+    _sds(sample_repo)
+    team = EveryReviewFinds()
+    run_id = new_run(add_project(sample_repo))
+    drain(team)
+    approve_spec(run_id)
+    drain(team)
+    approve_plan(run_id)
+    drain(team)
+    # review 1 -> its fix; review 2 finds more but the round of this code was used: the QC's gate shows it
+    assert status(run_id) == RunStatus.WAITING_ACCEPTANCE_APPROVAL and team.reviews == 2
+    with session_scope() as session:
+        from controller.app.coordinator import open_review_findings
+        assert [f["text"] for f in open_review_findings(session, services.get_run(session, run_id))] == \
+            ["finding of review 2"]
+        services.decide_acceptance(session, services.get_run(session, run_id), actor=OPERATOR, decision="reject",
+                                   reason="AC-1: the due date is not shown in the list")
+    drain(team)
+    # the QC's fix is new code: review 3 gets a round of its own, review 4's finding waits at the gate again
+    assert team.reviews == 4 and status(run_id) == RunStatus.WAITING_ACCEPTANCE_APPROVAL
+    fixes = _fix_tasks(run_id)
+    assert any("finding of review 2" in f for f in fixes)  # the QC's notes carried the open finding
+    assert any(f.startswith("Code Reviewer (review): 1. finding of review 3") for f in fixes)
+    with session_scope() as session:
+        from controller.app.coordinator import open_review_findings
+        assert [f["text"] for f in open_review_findings(session, services.get_run(session, run_id))] == \
+            ["finding of review 4"]

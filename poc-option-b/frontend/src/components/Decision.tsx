@@ -136,6 +136,7 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
   if (need.action === "waiting_acceptance_approval") {
     const report = [...run.documents].reverse().find((d) => d.kind === "acceptance");
     if (!report) return null;
+    const openFindings = run.open_findings?.length ?? 0;
     const failedTests = ((report as typeof report & { acceptance?: { cases: { status: string }[] } }).acceptance?.cases ?? []).filter((c) => c.status !== "passed" && c.status !== "skipped").length;
     return (
       <Panel run={run} title={`Acceptance ${report.version > 1 ? `v${report.version}` : ""}`.trim()}>
@@ -143,11 +144,12 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
         <PreviewBox run={run} onChange={onDone} />
         <AcceptanceReport run={run} doc={report} />
         {run.regression_triage ? <RegressionTriage triage={run.regression_triage} onUse={setReason} /> : null}
+        <OpenFindings run={run} />
         {checklist}
         <Reason value={reason} onChange={setReason} placeholder="Optional: what you did, what you saw, what you expected. The failed tests, the Code Reviewer's findings and the application's errors are sent for you" />
         <div className="flex flex-wrap gap-2">
           <ActionButton variant="primary" success="Accepted; opening the PR" action={() => post("acceptance", { decision: "accept", document_id: report.id, checked })}>Accept the story</ActionButton>
-          <ActionButton variant="danger" disabled={!reason.trim() && !failedTests} title="The platform writes the notes from the failed tests, the Code Reviewer's findings and the errors the application logged; your text is added first" action={() => post("acceptance", { decision: "reject", reason })}>{reason.trim() ? "Send defects to the Developer" : `Send the ${failedTests} failed test(s) to the Developer`}</ActionButton>
+          <ActionButton variant="danger" disabled={!reason.trim() && !failedTests && !openFindings} title="The platform writes the notes from the failed tests, the Code Reviewer's findings and the errors the application logged; your text is added first" action={() => post("acceptance", { decision: "reject", reason })}>{reason.trim() ? "Send defects to the Developer" : failedTests ? `Send the ${failedTests} failed test(s) to the Developer` : `Send the ${openFindings} review finding(s) to the Developer`}</ActionButton>
           <ActionButton action={() => post("acceptance", { decision: "retest", reason })}>Run the tests again</ActionButton>
         </div>
       </Panel>
@@ -341,12 +343,13 @@ export function DecisionPanel({ run, onDone, onShowSources }: { run: RunDetail; 
             <p className="m-0 text-sm text-muted">Merge it in GitHub; the platform never merges. The run completes when GitHub reports a merge of this exact head (checked every minute).</p>
           </>
         )}
+        <OpenFindings run={run} />
         {checklist}
-        <Reason value={reason} onChange={setReason} placeholder="What should change (required for request changes)" />
+        <Reason value={reason} onChange={setReason} placeholder={run.open_findings?.length ? "Optional: what else should change; the open review findings are sent with it" : "What should change (required for request changes)"} />
         <div className="flex flex-wrap gap-2">
           {pr.simulated ? <ActionButton variant="primary" action={() => post("pr-decision", { decision: "approve", checked })}>Record simulated merge</ActionButton>
             : <ActionButton variant="primary" success="Review checklist recorded; merge in GitHub" action={() => post("pr-decision", { decision: "checklist", checked })}>Record review checklist</ActionButton>}
-          <ActionButton action={() => post("pr-decision", { decision: "request_changes", reason })}>Request changes</ActionButton>
+          <ActionButton action={() => post("pr-decision", { decision: "request_changes", reason })}>{!reason.trim() && run.open_findings?.length ? `Send the ${run.open_findings.length} review finding(s) to the Developer` : "Request changes"}</ActionButton>
           <ActionButton action={() => post("pr-decision", { decision: "rereview", reason })}>Review again</ActionButton>
           <ActionButton variant="danger" action={() => post("pr-decision", { decision: "close", reason })}>Close without merge</ActionButton>
         </div>
@@ -700,6 +703,22 @@ function UiConceptPanel({ run, doc, checklist, checked, post }: {
   );
 }
 
+
+function OpenFindings({ run }: { run: RunDetail }) {
+  const findings = run.open_findings ?? [];
+  if (!findings.length) return null;
+  return (
+    <div className="rounded-lg border border-line p-3 text-sm">
+      <div className="font-semibold">Important review findings no fix took yet</div>
+      <p className="m-0 mt-1 text-xs text-muted">The Code Reviewer found them after the team's automatic fix rounds were used. Send them to the Developer with one click (the button below), or accept knowing they stay.</p>
+      <ul className="m-0 mt-2 flex list-none flex-col gap-2 p-0">
+        {findings.map((f, i) => (
+          <li key={i} className="rounded border border-line p-2"><Badge tone="bad">important</Badge> {f.text}{f.file ? <> <Mono>{f.file}</Mono></> : null}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 function RegressionTriage({ triage, onUse }: { triage: NonNullable<RunDetail["regression_triage"]>; onUse: (note: string) => void }) {
   return (

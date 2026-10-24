@@ -640,6 +640,11 @@ def pr_decision(session: Session, run: Run, *, actor: str, decision: str, reason
                        reason="simulated merge recorded (B2 has no real pull request)")
         coordinator.recheck_after_merge(session, session.get(Project, run.project_id))
     elif decision == "request_changes":
+        findings = coordinator.open_review_findings(session, run) if run.kind in (RunKind.FEATURE, RunKind.FOUNDATION) \
+            else []
+        if findings:  # the review's findings no fix took are sent with the Code Owner's words, or alone
+            reason = "\n\n".join(p for p in ((reason or "").strip(), "The Code Reviewer's important findings no fix "
+                                               "took yet:\n" + coordinator.findings_notes(findings)) if p)
         if not (reason or "").strip():
             raise DecisionError("say which changes the team should make")
         _corrected(run)
@@ -807,12 +812,14 @@ def failure_notes(session: Session, run: Run) -> str:
     Code Reviewer's finding (or the test's error) and the errors the application logged, read from the running preview
     when the report has none. A QC cannot be asked to write a traceback (attendance 24/10)."""
     from controller.app import preview
+    findings = coordinator.open_review_findings(session, run)
+    review = ("The Code Reviewer's important findings no fix took yet:\n" + coordinator.findings_notes(findings)
+              if findings else "")
     document = latest_document(session, run.id, "acceptance")
-    if document is None:
-        return ""
-    failed = [c for c in (document.data or {}).get("cases", []) if c.get("status") not in ("passed", "skipped")]
+    failed = [c for c in (document.data or {}).get("cases", []) if c.get("status") not in ("passed", "skipped")] \
+        if document else []
     if not failed:
-        return ""
+        return review
     raw = coordinator.artifact(session, run.id, "regression_triage")
     stored = json.loads(raw) if raw else {}
     found = {t["test"]: t["change"] for t in (stored.get("triage") or {}).get("tests", [])} \
@@ -825,7 +832,7 @@ def failure_notes(session: Session, run: Run) -> str:
         errors = preview.server_errors(str(run.id), get_settings().server_error_chars)
         if errors:
             lines += ["", "Errors the application logged on the preview:", *errors]
-    return "\n".join(lines)
+    return "\n".join(lines) + (f"\n\n{review}" if review else "")
 
 
 def _send_defects(session: Session, run: Run, *, actor: str, who: str, reason: str) -> None:
