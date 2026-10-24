@@ -189,8 +189,7 @@ def _validate_commit(project: Project, mirror: Mirror, commit: str, policy) -> l
     """The project's validation commands on a fresh checkout of the commit; hold checking(project.key)."""
     items: list[Item] = []
     checkout = DATA_DIR / "checks" / project.key / commit[:12]
-    if checkout.exists():
-        _git("--git-dir", str(mirror.path), "worktree", "remove", "--force", str(checkout))
+    _remove_checkout(mirror, checkout)
     _git("--git-dir", str(mirror.path), "worktree", "add", "--quiet", "--detach", str(checkout), commit)
     logs = DATA_DIR / "logs" / "checks" / project.key / commit[:12]
     # the checkout is new every time: setup (backend/.venv, node_modules) must run in it again, so the markers of
@@ -206,8 +205,19 @@ def _validate_commit(project: Project, mirror: Mirror, commit: str, policy) -> l
                               f"exit {report.exit_code}{' (timed out)' if report.timed_out else ''}; "
                               f"log {report.log_path}"))
     finally:
-        _git("--git-dir", str(mirror.path), "worktree", "remove", "--force", str(checkout))
+        _remove_checkout(mirror, checkout)
     return items
+
+
+def _remove_checkout(mirror: Mirror, checkout: Path) -> None:
+    """Remove the check's checkout, also when a broken check left a folder git no longer knows as a worktree
+    (attendance 24/10: "is not a working tree" failed every Check again)."""
+    if checkout.exists():
+        try:
+            _git("--git-dir", str(mirror.path), "worktree", "remove", "--force", str(checkout))
+        except GitError:
+            shutil.rmtree(checkout)
+    _git("--git-dir", str(mirror.path), "worktree", "prune")
 
 
 def check_project(session: Session, project: Project, actor: str) -> list[Item]:
