@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     sdlc_qwen_enabled: bool = True
     sdlc_default_engine: str = "qwen3"  # engine of a thinking role that SDLC_ENGINES does not name
     sdlc_doing_mode: str = "mock"  # QA Engineer, Developer, Validation Gate: mock or cli (B4)
+    # Claude account of the platform's sessions: its config dir (CLAUDE_CONFIG_DIR of the API and worker). Empty: the
+    # default ~/.claude, never the CLAUDE_CONFIG_DIR of the shell that ran `sdlc up` (a developer's own account).
+    sdlc_claude_config_dir: str = ""
     github_webhook_secret: str = ""  # empty: no webhook; the worker polls GitHub every minute
     # Engines of normal runs per thinking role, e.g. "tech_lead=claude-readonly,qa_analyst=claude-readonly".
     # Roles not named use qwen3. Operator approvals of 2026-10-14 cover the Business Analyst, Tech Lead and

@@ -12,7 +12,7 @@ from sqlalchemy import Engine, text
 from controller.app import capacity, migrations
 from controller.app.compose import run_compose
 from controller.app.config import ENV_FILE, PLACEHOLDER, Settings
-from controller.app.processes import WORKER
+from controller.app.processes import WORKER, platform_env
 from controller.app.tunnel import tunnel_status
 
 OK, WARN, FAIL = "ok", "warn", "fail"
@@ -188,8 +188,8 @@ def check_worker() -> Check:
     return Check("worker", OK, f"pid {pid}")
 
 
-def _run(args: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(args, capture_output=True, text=True, timeout=30, check=False)
+def _run(args: list[str], env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run(args, capture_output=True, text=True, timeout=30, check=False, env=env)
 
 
 def check_executors(settings: Settings) -> list[Check]:
@@ -205,11 +205,12 @@ def check_executors(settings: Settings) -> list[Check]:
         return Check("codex", OK, f"{_run(['codex', '--version']).stdout.strip()}, {text}")
 
     def claude() -> Check:
-        data = json.loads(_run(["claude", "auth", "status"]).stdout or "{}")
+        data = json.loads(_run(["claude", "auth", "status"], env=platform_env(settings)).stdout or "{}")
         if not data.get("loggedIn") or data.get("authMethod") != "claude.ai":
             return Check("claude", FAIL, f"auth {data.get('authMethod') or 'none'}",
                          "Run claude and log in with your claude.ai subscription")
-        return Check("claude", OK, f"{_run(['claude', '--version']).stdout.strip()}, claude.ai subscription")
+        return Check("claude", OK, f"{_run(['claude', '--version']).stdout.strip()}, claude.ai subscription "
+                                   f"{data.get('email') or ''} ({data.get('orgName') or ''})")
 
     def gh() -> Check:
         status = _run(["gh", "auth", "status"])

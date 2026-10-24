@@ -41,3 +41,11 @@ def test_log_captures_output(tmp_path):
     process.start(["sh", "-c", "echo hello"], cwd=tmp_path)
     time.sleep(0.5)
     assert "hello" in process.log_tail()
+
+
+def test_the_platform_uses_its_own_claude_account_not_the_shells(monkeypatch):
+    from types import SimpleNamespace
+    from controller.app.processes import platform_env
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", "/Users/dev/.claude-org")  # a developer's Claude Code session
+    assert "CLAUDE_CONFIG_DIR" not in platform_env(SimpleNamespace(sdlc_claude_config_dir=""))
+    assert platform_env(SimpleNamespace(sdlc_claude_config_dir="/srv/claude"))["CLAUDE_CONFIG_DIR"] == "/srv/claude"

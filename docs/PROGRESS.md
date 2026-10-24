@@ -23,6 +23,11 @@ install ...; fi; ..."`; dưới `sh -e` lệnh trước `&&` fail thì script v�
 làm lại; prompt onboarding yêu cầu `sh -ec` với `;`. Attendance: PR #17 (setup và ci.yml dùng `;`, thêm
 `SESSION_COOKIE_SECURE: 'false'` vào ci.yml) đã merge, CI xanh lần đầu từ Foundation.
 
+Account Claude: phát triển nền tảng dùng congdanh910@gmail.com (phiên Claude Code, `CLAUDE_CONFIG_DIR=~/.claude-org`);
+worker/API của SDLC dùng hera@kegmil.co (`~/.claude`). Restart từ phiên Claude Code từng làm worker kế thừa
+`CLAUDE_CONFIG_DIR` của phiên. Sửa: `processes.platform_env` bỏ biến đó (hoặc dùng `SDLC_CLAUDE_CONFIG_DIR`) khi
+`sdlc up` khởi động API/worker; doctor hiện email và tổ chức của account Claude nền tảng.
+
 ## 24/10: test không được validation chạy
 
 Manage an Account (f662ce06) T2 dừng vì test ở `backend/tests/integration/` (không lệnh nào chạy) bị coi là "pass sẵn".

@@ -30,6 +30,16 @@ def _command_of(pid: int) -> str | None:
     return result.stdout.strip() or None
 
 
+def platform_env(settings) -> dict[str, str]:
+    """The environment of the API, the worker and their health checks: the Claude account is the platform's
+    (SDLC_CLAUDE_CONFIG_DIR or the default ~/.claude), not the one of the shell that started them (24/10: a restart
+    from a developer's Claude Code session moved the worker to the developer's account)."""
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CONFIG_DIR"}
+    if settings.sdlc_claude_config_dir:
+        env["CLAUDE_CONFIG_DIR"] = os.path.expanduser(settings.sdlc_claude_config_dir)
+    return env
+
+
 @dataclass(frozen=True)
 class ManagedProcess:
     name: str

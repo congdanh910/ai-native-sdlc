@@ -14,7 +14,7 @@ from controller.app.compose import QWEN_SERVICES, SERVICES, run_compose, service
 from controller.app.config import ENV_FILE, PROJECT_ROOT, Settings
 from controller.app.db import get_engine
 from controller.app.integrations.langflow import LangflowError, client_from_settings
-from controller.app.processes import API, WORKER, port_listening
+from controller.app.processes import API, WORKER, platform_env, port_listening
 from controller.app.tunnel import TUNNEL, ensure_tunnel, stop_tunnel
 
 SYMBOLS = {health.OK: "✓", health.WARN: "!", health.FAIL: "✗"}
@@ -65,7 +65,8 @@ def _ensure_api(settings: Settings, wait_seconds: float = 20) -> str:
     if port_listening(settings.sdlc_api_port):
         raise CliError(f"port {settings.sdlc_api_port} is used by another process; change SDLC_API_PORT")
     API.start([sys.executable, "-m", "uvicorn", "controller.app.main:app",
-               "--host", "127.0.0.1", "--port", str(settings.sdlc_api_port)], cwd=PROJECT_ROOT)
+               "--host", "127.0.0.1", "--port", str(settings.sdlc_api_port)], cwd=PROJECT_ROOT,
+              env=platform_env(settings))
     deadline = time.monotonic() + wait_seconds
     while time.monotonic() < deadline:
         try:
@@ -80,10 +81,10 @@ def _ensure_api(settings: Settings, wait_seconds: float = 20) -> str:
     raise CliError(f"API did not start. Log:\n{API.log_tail()}")
 
 
-def _ensure_worker() -> str:
+def _ensure_worker(settings: Settings) -> str:
     if WORKER.pid() is not None:
         return "already running"
-    WORKER.start([sys.executable, "-m", "controller.app.worker"], cwd=PROJECT_ROOT)
+    WORKER.start([sys.executable, "-m", "controller.app.worker"], cwd=PROJECT_ROOT, env=platform_env(settings))
     time.sleep(1)
     if WORKER.pid() is None:
         raise CliError(f"worker did not start. Log:\n{WORKER.log_tail()}")
@@ -129,7 +130,7 @@ def cmd_up(args: argparse.Namespace) -> int:
 
     say("5/5 Starting the controller API and the team worker…")
     say(f"    API {_ensure_api(settings)}")
-    say(f"    worker {_ensure_worker()}")
+    say(f"    worker {_ensure_worker(settings)}")
 
     say("\nHealth:")
     checks = health.doctor_checks(settings, get_engine())
