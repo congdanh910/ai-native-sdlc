@@ -2088,7 +2088,7 @@ def poll_pull_requests(session: Session) -> list[uuid.UUID]:
             record_event(session, "pr.updated", actor=TeamRole.RELEASE_ENGINEER.value, run_id=run.id,
                          payload={"number": pull.number, "ci": state.ci_status, "review": state.review_status})
             pull.ci_status, pull.review_status = state.ci_status, state.review_status
-        if state.state == "MERGED" and state.head_sha == pull.head_sha:
+        if state.state == "MERGED" and (state.head_sha == pull.head_sha or _merged_before_a_sync(run, pull, state)):
             pull.merged_sha = state.merged_sha
             transition_run(session, run, RunStatus.COMPLETED, actor="github", acting_role="code_owner",
                            reason=f"PR #{pull.number} merged as {state.merged_sha} (head {state.head_sha[:12]})")
@@ -2417,11 +2417,26 @@ def _load_update(session: Session, run: Run, loaded: Loaded) -> Loaded:
     return loaded
 
 
+def _merged_before_a_sync(run: Run, pull: PullRequest, state) -> bool:
+    """The pull request was merged at a head the team pushed, and the platform then merged main into the branch
+    (the merge of this very PR, by a job queued just before it): the story's own work is all in what was merged."""
+    from controller.app import mainline
+    if not (run.worktree_path and pull.head_sha and state.head_sha):
+        return False
+    try:
+        return mainline.only_main_merges(Path(run.worktree_path), state.head_sha, pull.head_sha)
+    except (OSError, mainline.MergeError):
+        return False
+
+
 def _update_branch(team: Team, loaded: Loaded) -> dict:
     """Merge main; after coding, validate the merged code and (at the PR gate) push it to the open pull request."""
     from controller.app import mainline
     extra = loaded.extra
     worktree = Path(extra["worktree"])
+    if mainline.already_merged(worktree, extra["main"]):  # the PR was merged after this job was queued
+        joblog.note("the default branch already holds this branch: its pull request was merged; nothing to update")
+        return {"merge": {"up_to_date": True}, "main": extra["main"]}
     joblog.note(f"merging {extra['main'][:12]} from the default branch into {extra['branch']}")
     merged = mainline.merge_main(worktree, extra["main"], extra["story"])
     result: dict = {"merge": merged, "main": extra["main"]}

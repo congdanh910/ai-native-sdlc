@@ -78,3 +78,22 @@ def test_main_merges_into_the_branch_with_code_conflicts_left_for_the_developer(
     assert markers_left(repo, ["app.py", spec]) == ["app.py"]
     assert git(repo, "merge-base", "--is-ancestor", main, "HEAD") == ""  # one merge commit: main is an ancestor
     assert merge_main(repo, main) == {"up_to_date": True}
+
+
+def test_a_branch_whose_pull_request_was_merged_is_not_updated_and_its_merge_is_recognised(tmp_path):
+    from controller.app.mainline import already_merged, only_main_merges
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, "init", "--quiet", "-b", "main")
+    commit(repo, {"app.py": "x = 1\n"}, "base")
+    git(repo, "checkout", "--quiet", "-b", "run")
+    pushed = commit(repo, {"app.py": "x = 2\n"}, "feat(T1): story")
+    git(repo, "checkout", "--quiet", "main")
+    git(repo, "merge", "--quiet", "--no-ff", "-m", "Merge pull request #16", "run")  # the Code Owner merges
+    main = git(repo, "rev-parse", "HEAD")
+    git(repo, "checkout", "--quiet", "run")
+    assert already_merged(repo, main)  # update_branch, queued just before the merge, does nothing
+    synced = merge_main(repo, main)["commit"]  # what the old job did: merge this very PR back into the branch
+    assert only_main_merges(repo, pushed, synced)  # merged at pushed: the run completes
+    later = commit(repo, {"app.py": "x = 3\n"}, "feat(T2): more")
+    assert not only_main_merges(repo, pushed, later)  # work after the merged head: not all of it was merged

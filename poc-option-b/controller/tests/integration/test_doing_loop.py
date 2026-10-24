@@ -154,6 +154,31 @@ def test_a_merge_of_another_head_needs_a_human(db, sample_repo, tmp_path, monkey
     assert status(run_id) == "NEEDS_HUMAN"
 
 
+def test_a_merge_at_the_pushed_head_before_a_sync_with_main_completes_the_run(db, sample_repo, tmp_path, monkeypatch):
+    """Create an Employee, 24/10: update_branch, queued a second before the Code Owner merged the PR, merged that very
+    merge back into the branch and recorded the new head; the merge of the head the team pushed is still the story."""
+    from controller.app import coordinator
+    from controller.app.doing.github import PullState
+    from controller.app.models import PullRequest
+    from controller.tests.conftest import git
+
+    run_id = _to_coding(sample_repo)
+    drain(team(FakeCli(), FakeContainer(), tmp_path))
+    with session_scope() as session:
+        run = session.get(Run, run_id)
+        pull = session.scalar(select(PullRequest).where(PullRequest.run_id == run_id))
+        pushed, worktree = pull.head_sha, run.worktree_path
+        git(Path(worktree), "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "--allow-empty",
+            "-m", "sdlc: merge 37f0c3c1b374 from the default branch")
+        pull.simulated, pull.number, pull.head_sha = False, 9, git(Path(worktree), "rev-parse", "HEAD").strip()
+    monkeypatch.setattr(coordinator, "repo_slug", lambda url: "o/r")
+    monkeypatch.setattr(coordinator.github, "pull_state",
+                        lambda slug, number: PullState("MERGED", pushed, "e" * 40, "success", "approved"))
+    with session_scope() as session:
+        coordinator.poll_pull_requests(session)
+    assert status(run_id) == "COMPLETED"
+
+
 class DisputingCli(FakeCli):
     """The first Developer session disputes; QA sessions in amend mode edit an existing test line."""
 

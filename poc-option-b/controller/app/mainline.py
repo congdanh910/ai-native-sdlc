@@ -135,6 +135,22 @@ def is_up_to_date(worktree: Path, main: str) -> bool:
     return _git(worktree, "merge-base", "--is-ancestor", main, "HEAD", check=False).returncode == 0
 
 
+def already_merged(worktree: Path, main: str) -> bool:
+    """main already holds the branch: its pull request was merged, there is nothing to bring in."""
+    return _git(worktree, "merge-base", "--is-ancestor", "HEAD", main, check=False).returncode == 0
+
+
+MERGE_SUBJECT = "sdlc: merge "
+
+
+def only_main_merges(worktree: Path, old: str, new: str) -> bool:
+    """Every commit from old to new (first parents) is the platform merging main into the branch: a pull request
+    merged at old holds all of this story's own work."""
+    result = _git(worktree, "log", "--first-parent", "--format=%s", f"{old}..{new}", check=False)
+    subjects = [line for line in result.stdout.splitlines() if line]
+    return result.returncode == 0 and bool(subjects) and all(s.startswith(MERGE_SUBJECT) for s in subjects)
+
+
 def merge_main(worktree: Path, main: str, story: str = "") -> dict:
     """Merge main into the branch and commit. Platform files are merged here; code conflicts are committed with
     their markers for the Developer's task (the merge must be one commit, so main is an ancestor afterwards)."""
@@ -161,7 +177,7 @@ def merge_main(worktree: Path, main: str, story: str = "") -> dict:
             notes += tc_collisions(path, ours.stdout, merged, story)
     if left:
         _git(worktree, "add", "--", *left)  # with their markers: the Developer's task resolves them
-    message = (f"sdlc: merge {main[:12]} from the default branch"
+    message = (f"{MERGE_SUBJECT}{main[:12]} from the default branch"
                + (f"; {len(left)} conflict(s) left for the Developer" if left else ""))
     _git(worktree, "commit", "--no-verify", "-m", message)
     return {"up_to_date": False, "commit": _git(worktree, "rev-parse", "HEAD").stdout.strip(),
