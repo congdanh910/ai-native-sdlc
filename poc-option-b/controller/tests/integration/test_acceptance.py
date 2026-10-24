@@ -327,3 +327,57 @@ def test_a_test_the_story_broke_goes_to_the_qc_with_the_judgement(db, sample_rep
         assert latest_document(session, run_id, "acceptance").data["problems"][0].startswith("regression: ")
         triage = _regression_triage(session, run)
         assert triage["tests"][0]["verdict"] == "broken" and triage["note"] == ""
+
+
+class FindingReviewer(Recording):
+    """The first review finds an important issue (the SDS supports it unless it names CONTRADICTS-SDS); later reviews
+    pass."""
+    def __init__(self, finding="Account creation has no Idempotency-Key handling"):
+        super().__init__()
+        self.finding, self.reviews = finding, 0
+
+    def review(self, context, plan, tests, diff="", validation=""):
+        self.reviews += 1
+        review = super().review(context, plan, tests, diff=diff, validation=validation)
+        if self.reviews == 1:
+            review.verdict, review.findings = "concerns", [{"severity": "important", "text": self.finding,
+                                                            "file": "src/tasks.js"}]
+        return review
+
+
+def _sds(repo) -> None:
+    (repo / "SDS.md").write_text("# SDS\n\n## 6. API Design\n\nRetries reuse the Idempotency-Key.\n")
+    git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "add", ".")
+    git(repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "-m", "sds")
+
+
+def test_important_review_findings_go_to_a_fix_task_before_the_acceptance_tests(db, sample_repo):
+    from sqlalchemy import select
+    from controller.app.models import Event
+    with_preview(sample_repo)
+    _sds(sample_repo)
+    team = FindingReviewer()
+    run_id = new_run(add_project(sample_repo))
+    drain(team)
+    approve_spec(run_id)
+    drain(team)
+    approve_plan(run_id)
+    drain(team)
+    assert status(run_id) == RunStatus.WAITING_ACCEPTANCE_APPROVAL and team.reviews == 2
+    fixes = _fix_tasks(run_id)
+    assert len(fixes) == 1 and fixes[0].startswith("Code Reviewer (review): 1. Account creation has no Idempotency-Key")
+    with session_scope() as session:
+        assert session.scalar(select(Event).where(Event.run_id == run_id, Event.event_type == "review.findings_sent"))
+
+
+def test_review_findings_the_sds_contradicts_are_dropped_without_a_person(db, sample_repo):
+    with_preview(sample_repo)
+    _sds(sample_repo)
+    team = FindingReviewer("CONTRADICTS-SDS: use 422 for every invalid field")
+    run_id = new_run(add_project(sample_repo))
+    drain(team)
+    approve_spec(run_id)
+    drain(team)
+    approve_plan(run_id)
+    drain(team)
+    assert status(run_id) == RunStatus.WAITING_ACCEPTANCE_APPROVAL and team.reviews == 1 and _fix_tasks(run_id) == []

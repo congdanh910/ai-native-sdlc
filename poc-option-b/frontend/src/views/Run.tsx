@@ -482,11 +482,11 @@ function MainSync({ sync }: { sync: NonNullable<RunDetail["main_sync"]> }) {
 function AutoDecisions({ decisions }: { decisions: NonNullable<RunDetail["auto_decisions"]> }) {
   return (
     <details className="rounded-xl border border-line bg-panel p-3 text-sm">
-      <summary className="cursor-pointer"><b>Decisions taken by the AI</b> <span className="text-xs text-muted">{decisions.length} technical dispute(s) settled by the Code Reviewer without a person (disputes.auto)</span></summary>
+      <summary className="cursor-pointer"><b>Decisions taken by the AI</b> <span className="text-xs text-muted">{decisions.length} technical decision(s) taken by the Code Reviewer without a person (disputes.auto)</span></summary>
       <ul className="m-0 mt-2 flex list-none flex-col gap-2 p-0">
         {decisions.map((d, i) => (
           <li key={i} className="rounded border border-line p-2">
-            <div className="flex flex-wrap items-center gap-2"><Mono>{d.task}</Mono><Badge tone="accent">{d.decision.replace(/_/g, " ")}</Badge><span className="text-xs text-muted">{d.confidence} confidence · {new Date(d.at).toLocaleString()}</span></div>
+            <div className="flex flex-wrap items-center gap-2"><Mono>{d.task}</Mono><Badge tone="accent">{d.decision.replace(/_/g, " ")}</Badge><span className="text-xs text-muted">{d.confidence ? `${d.confidence} confidence · ` : ""}{new Date(d.at).toLocaleString()}</span></div>
             {d.situation ? <p className="m-0 mt-1 text-ink-2">{d.situation}</p> : null}
             <p className="m-0 mt-1 whitespace-pre-wrap">{d.reason}</p>
             {d.files?.length ? <p className="m-0 mt-1 text-xs">Files allowed: <Mono>{d.files.join(", ")}</Mono></p> : null}

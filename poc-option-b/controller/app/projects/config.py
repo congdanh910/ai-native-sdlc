@@ -281,6 +281,9 @@ class Disputes(Strict):
     auto: bool = True
     min_confidence: Literal["high", "medium"] = "high"
     max_auto_per_task: int = Field(default=2, ge=0, le=5)  # then the Tech Lead decides
+    # the review's important findings (checked against the SDS) go back to the Developer in a fix task this many times
+    # a run before the acceptance tests and the PR; later findings wait for the Code Owner at the PR gate
+    review_fix_rounds: int = Field(default=1, ge=0, le=3)
 
 
 class Delivery(Strict):

@@ -91,9 +91,11 @@ def before_coding(criteria: list[Criterion], plan: PlanPayload, tests: TestPlan)
 
 def after_coding(plan: PlanPayload, tests: TestPlan, statuses: dict[str, str], changed: list[str],
                  test_paths: list[str], documents: tuple[str, ...] = ("specs/", ".sdlc/", "SRS.md", "SDS.md"),
-                 also_allowed: list[str] = ()) -> list[dict]:
+                 also_allowed: list[str] = (), written: dict[str, list[str]] | None = None) -> list[dict]:
     """also_allowed: what the tasks added after the plan may change (a fix task for a person's defects, the task that
-    resolves conflicts with main; their files are patterns of the allowed paths), so their changes are planned too."""
+    resolves conflicts with main; their files are patterns of the allowed paths), so their changes are planned too.
+    written: the test files each task's tests were committed in (the red check may have sent them to a folder the
+    validation runs, away from the planned target file)."""
     findings = []
     for task in plan.tasks:
         status = statuses.get(task.id, "missing")
@@ -110,7 +112,13 @@ def after_coding(plan: PlanPayload, tests: TestPlan, statuses: dict[str, str], c
     for path in untouched:
         findings.append(_finding("Medium", "scope", f"{path} is planned but unchanged"))
     for path in sorted(test_files - set(changed)):
-        findings.append(_finding("High", "tests", f"{path} holds planned test cases but was not changed"))
+        owners = sorted({c.task_id for c in tests.cases if c.target_file == path})
+        moved = sorted({f for task in owners for f in (written or {}).get(task, []) if f in changed})
+        if owners and all(set((written or {}).get(task, [])) & set(changed) for task in owners):
+            findings.append(_finding("Low", "tests", f"{path} holds planned test cases of {', '.join(owners)}; they "
+                                                     f"were written in {', '.join(moved)}"))
+        else:
+            findings.append(_finding("High", "tests", f"{path} holds planned test cases but was not changed"))
     return findings
 
 

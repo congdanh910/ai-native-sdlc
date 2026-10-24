@@ -56,3 +56,15 @@ def test_files_a_fix_or_conflict_task_may_change_count_as_planned():
                                      also_allowed=["backend/**"])
     assert [f["text"] for f in findings if f["category"] == "scope" and f["severity"] == "High"] == [
         "src/a.js changed but no task plans it"]  # outside what the added task may change
+
+
+def test_planned_tests_the_task_wrote_in_another_folder_are_delivered():
+    changed = ["src/tasks.js", "test/unit/tasks.test.js"]
+    moved = analysis.after_coding(plan(("T1", ["AC-01"])), cases_of(("TC-1", "T1", "AC-01")), {"T1": "PASSED"},
+                                  changed, ["test/**"], written={"T1": ["test/unit/tasks.test.js"]})
+    assert [(f["severity"], f["text"]) for f in moved] == [
+        ("Low", "test/tasks.test.js holds planned test cases of T1; they were written in test/unit/tasks.test.js")]
+    lost = analysis.after_coding(plan(("T1", ["AC-01"])), cases_of(("TC-1", "T1", "AC-01")), {"T1": "PASSED"},
+                                 ["src/tasks.js"], ["test/**"], written={"T1": []})
+    assert ("High", "test/tasks.test.js holds planned test cases but was not changed") in \
+        [(f["severity"], f["text"]) for f in lost]

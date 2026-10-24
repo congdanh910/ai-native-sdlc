@@ -1088,7 +1088,16 @@ def _apply_check_defects(session: Session, run: Run, execution: Execution, resul
     if run.status != RunStatus.CODING:
         return
     conflicts = [p for p in check["points"] if p["verdict"] in ("conflict", "not_actionable")]
-    if conflicts:
+    if conflicts and defects["who"] == REVIEW_WHO:  # the team's own findings: the SDS wins, no person is asked
+        kept = [p for p in check["points"] if p not in conflicts]
+        if not kept:
+            transition_run(session, run, RunStatus.REVIEWING, actor=TeamRole.CODE_REVIEWER.value,
+                           reason="the SDS contradicts every important review finding; none is fixed")
+            after_review(session, run, "concerns")
+            return
+        defects = {**defects, "reason": defects["reason"] + "\n\nThe SDS check found these do not hold; leave them: "
+                   + "; ".join(f"{p['point']} ({p['note']})" for p in conflicts)}
+    elif conflicts:
         to_needs_human(session, run, f"{DEFECTS_CONFLICT}: " + "; ".join(
             f"{p['point']} ({p['note']})" for p in conflicts)[:900])
         return
@@ -1899,13 +1908,44 @@ def _apply_review(session: Session, run: Run, execution: Execution, result: dict
     document = add_document(session, run.id, "review", markdown, author_kind="ai",
                             author=TeamRole.CODE_REVIEWER.value, data=review)
     document.commit_sha = commit_thread(session, run, "review", document.content, "sdlc: review")
+    if _send_review_findings(session, run, review):
+        return
+    after_review(session, run, review["verdict"])
+
+
+REVIEW_WHO = "Code Reviewer (review)"
+
+
+def _send_review_findings(session: Session, run: Run, review: dict) -> bool:
+    """The review's important findings go to a fix task before the acceptance tests (disputes.review_fix_rounds a run),
+    checked against the SDS first like a person's defect notes; a finding the SDS contradicts is dropped."""
+    from controller.app.services import _send_defects
+    important = [f for f in review.get("findings", []) if f.get("severity") == "important"]
+    policy = EffectivePolicy.model_validate_json(artifact(session, run.id, "effective_policy"))
+    rounds = session.scalar(select(func.count()).select_from(Event).where(
+        Event.run_id == run.id, Event.event_type == "review.findings_sent"))
+    if not important or not policy.disputes.auto or rounds >= policy.disputes.review_fix_rounds \
+            or run.kind not in (RunKind.FEATURE, RunKind.FOUNDATION):
+        return False
+    notes = "\n".join(f"{n}. {f['text']}" + (f" ({f['file']})" if f.get("file") else "")
+                      for n, f in enumerate(important, 1))
+    record_event(session, "review.findings_sent", actor=AUTO_ACTOR, run_id=run.id,
+                 payload={"round": rounds + 1, "findings": [f["text"] for f in important]})
+    transition_run(session, run, RunStatus.CODING, actor=TeamRole.CODE_REVIEWER.value,
+                   reason=f"the review found {len(important)} important issue(s); the Developer fixes them before "
+                          "the story is tried on its preview")
+    _send_defects(session, run, actor=AUTO_ACTOR, who=REVIEW_WHO, reason=notes)
+    return True
+
+
+def after_review(session: Session, run: Run, verdict: str) -> None:
     if acceptance_enabled(session, run):
         transition_run(session, run, RunStatus.ACCEPTANCE_TESTING, actor=TeamRole.CODE_REVIEWER.value,
-                       reason=f"review verdict: {review['verdict']}; the story is tried on its preview")
+                       reason=f"review verdict: {verdict}; the story is tried on its preview")
         queue(session, run, "acceptance")
         return
     transition_run(session, run, RunStatus.PR_OPEN, actor=TeamRole.CODE_REVIEWER.value,
-                   reason=f"review verdict: {review['verdict']}")
+                   reason=f"review verdict: {verdict}")
     queue(session, run, "release")
 
 
@@ -1973,7 +2013,12 @@ def record_analysis(session: Session, run: Run, stage: str) -> None:
             # tasks added after the plan (defects, conflicts with main) may change what their payload names
             added = [p for t in current_tasks(session, run) if t.payload.get("defects") or t.payload.get("conflicts")
                      for p in [*t.payload.get("modify", []), *t.payload.get("create", [])]]
-            findings = analysis.after_coding(payload, tests, statuses, changed, test_paths, also_allowed=added)
+            written = {}
+            for task in payload.tasks:  # where each task's tests went: the red check may have moved them
+                commit = changes.find_commit(Path(run.worktree_path), run.base_commit, f"test({task.id}):")
+                written[task.id] = changes.files_of(Path(run.worktree_path), commit) if commit else []
+            findings = analysis.after_coding(payload, tests, statuses, changed, test_paths, also_allowed=added,
+                                             written=written)
     document = add_document(session, run.id, "analysis", analysis.render(run.title, stage, findings), author_kind="ai",
                             author=TeamRole.COORDINATOR.value, data={"stage": stage, "findings": findings})
     document.commit_sha = commit_thread(session, run, f"analysis-{stage}", document.content,
