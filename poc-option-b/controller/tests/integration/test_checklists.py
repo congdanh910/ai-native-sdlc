@@ -120,3 +120,35 @@ def test_a_failing_check_without_findings_of_its_own_gets_the_gate_s_standard_ne
     assert check_fixes("tests", "coverage", "no test: AC-03")[0] == {
         "action": "redesign_tests", "why": "Every criterion needs a test case.", "reason": "Add a test case for each criterion that has none (no test: AC-03)."}
     assert check_fixes("plan", "unknown-item", "x") == []
+
+
+def test_criteria_the_plan_forgot_on_the_tasks_that_build_them_are_added_by_the_controller(db, sample_repo):
+    from controller.app import services
+    from controller.app.db import session_scope
+    from controller.app.documents import latest_plan
+    from controller.app.schemas import TestPlan
+    from controller.app.team.mock import MockTeam
+    from controller.tests.integration.test_team_loop import (OPERATOR, add_project, approve_plan, approve_spec,
+                                                             new_run, status)
+
+    class ForgetfulPlan(MockTeam):
+        """Redesigned, the QA Analyst proves AC-02 with a test next to T1's code; the plan has AC-02 on T2 only."""
+        def design_tests(self, context, plan):
+            tests = super().design_tests(context, plan)
+            return TestPlan.model_validate({**tests.model_dump(), "cases": [
+                {**c.model_dump(), "task_id": "T1", "target_file": "src/app.test.js"} if c.criterion == "AC-02"
+                else c.model_dump() for c in tests.cases]})
+
+    run_id = new_run(add_project(sample_repo))
+    drain()
+    approve_spec(run_id)
+    drain()
+    approve_plan(run_id, tests=False)
+    with session_scope() as session:
+        services.reject_tests(session, services.get_run(session, run_id), actor=OPERATOR,
+                              reason="cover AC-02 where it is built", next_step="redo")
+    drain(ForgetfulPlan())
+    assert status(run_id) == "WAITING_TEST_APPROVAL" and _gate_check(run_id, "analysis")["ok"]
+    with session_scope() as session:
+        plan = latest_plan(session, run_id)
+        assert plan.payload["tasks"][0]["acceptance_criteria"] == ["AC-01", "AC-02"] and plan.author_kind == "ai"

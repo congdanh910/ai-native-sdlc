@@ -1864,6 +1864,28 @@ def enter_quality_gate(session: Session, run: Run, plan, *, actor: str, acting_r
     document = add_tests_document(session, run, plan)
     transition_run(session, run, RunStatus.WAITING_TEST_APPROVAL, actor=actor, acting_role=acting_role,
                    reason=f"test cases v{document.version} ready for QC")
+    _amend_forgotten_criteria(session, run, plan)
+
+
+def _amend_forgotten_criteria(session: Session, run: Run, plan) -> None:
+    """Every blocking finding of the analysis is a criterion the plan forgot on the task that builds what its test
+    proves: the controller adds them in one plan version, as the gate's Amend buttons would, so nobody clicks four
+    times (Manage Employees Across Locations, 24/10). Anything else stays for the QC."""
+    from controller.app import analysis, services
+    spec = latest_document(session, run.id, "spec")
+    if spec is None or not plan.test_plan:
+        return
+    found = analysis.blocking(analysis.before_coding(parse_criteria(spec.content), PlanPayload.model_validate(plan.payload),
+                                                     TestPlan.model_validate(plan.test_plan)))
+    amendments = [f["fix"]["amend"] for f in found if (f.get("fix") or {}).get("amend")]
+    if not found or len(amendments) != len(found):
+        return
+    unique = list({(a["task"], a["criterion"]): a for a in amendments}.values())
+    services.amend_criteria(session, run, unique, actor=AUTO_ACTOR,
+                            reason="the analysis found test cases proving criteria the plan forgot on the tasks that "
+                                   "build them: " + "; ".join(f["text"] for f in found)[:900])
+    record_event(session, "plan.auto_amended", actor=AUTO_ACTOR, run_id=run.id,
+                 payload={"amendments": unique})
 
 
 def add_tests_document(session: Session, run: Run, plan):

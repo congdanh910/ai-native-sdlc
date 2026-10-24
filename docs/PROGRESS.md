@@ -49,6 +49,11 @@ main, nhánh có 0007_multi_site_management trên 0006 → 2 head. Sửa: `mainl
 migration đầu tiên của nhánh sang head mới nhất của main (down_revision + dòng Revises) nếu chỉ có một chuỗi của nhánh
 và một head của main; Resume từ Needs human về đúng cổng mà merge main dừng (`services._back_to_gate`, kiểm migration
 và conflict marker trước; cổng QC thì chạy lại Acceptance). Run 0e3654aa đã nối lại migration (commit 1ae77f0).
+Sau đó ở cổng test case, phân tích chéo chặn với 4 lỗi High (TC-47/52/60/61 kiểm AC-08/AC-12/EC-01/EC-02 trong file API
+của T4 nhưng plan chỉ gán cho T5). Cách sửa là nút Amend (thêm tiêu chí vào task, không gọi AI) phải bấm từng cái. Sửa:
+`coordinator._amend_forgotten_criteria` khi vào cổng test case, nếu mọi lỗi chặn đều sửa được bằng amend thì controller
+tự thêm hết trong một phiên bản plan (`services.amend_criteria`, event `plan.auto_amended`). Run 0e3654aa: plan v7, cổng
+sạch, chờ QC duyệt test case.
 
 ## 24/10: test không được validation chạy
 
