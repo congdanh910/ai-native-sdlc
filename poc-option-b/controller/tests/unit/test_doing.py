@@ -1038,4 +1038,5 @@ def test_tests_of_a_task_no_code_followed_are_found_and_those_made_to_pass_stay(
     commit({"app/rules.py": "c1"}, "feat(T1): rules")
     commit({"tests/test_storage.py": "t2"}, "test(T2): storage")  # plan v4's T2: replanned before its code
     commit({"plan.md": "v5"}, "sdlc: plan v5 approved")
-    assert unfinished_test_files(tmp_path, base) == ["tests/test_storage.py"]
+    commit({"tests/test_more_rules.py": "t1b"}, "test(T1): rules (committed)")  # T1 passed as already built
+    assert unfinished_test_files(tmp_path, base, {"T1"}) == ["tests/test_storage.py"]

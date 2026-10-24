@@ -250,15 +250,15 @@ def commits_touching(worktree: Path, base: str, until: str, paths: list[str]) ->
     return commits
 
 
-def unfinished_test_files(worktree: Path, base: str) -> list[str]:
-    """Test files a test(Tn): commit since base added for a task that has no feat(Tn): commit after it: the QA Engineer
-    wrote them for a plan that was replaced before the Developer made them pass (Manage Employees Across Locations,
-    24/10: plan v4's T2 tests stayed through three replans and failed the new T1's validation)."""
+def unfinished_test_files(worktree: Path, base: str, passed: set[str] = frozenset()) -> list[str]:
+    """Test files a test(Tn): commit since base added for a task that never passed (not in passed, no feat(Tn): commit
+    after it): the QA Engineer wrote them for a plan that was replaced before they were made to pass (Manage Employees
+    Across Locations, 24/10: plan v4's T2 tests stayed through three replans and failed the new T1's validation)."""
     added: dict[str, set[str]] = {}
     for line in reversed(_git("log", "--first-parent", "--format=%H %s", f"{base}..HEAD", cwd=worktree).splitlines()):
         sha, _, subject = line.partition(" ")
         found = re.match(r"(test|feat)\((T\d+)\):", subject)
-        if not found:
+        if not found or found[2] in passed:  # a task that passed (also as already built) keeps its tests
             continue
         if found[1] == "feat":
             added.pop(found[2], None)  # its tests were made to pass
