@@ -2,6 +2,13 @@
 
 _Cập nhật: 2026-10-24_
 
+## 24/10 chiều: run đứng vì giờ reset hạn mức bị đẩy sang ngày mai
+
+Manage an Account (f662ce06) đứng từ 13:48: job T11 chạy lúc 13:47:59, Codex vẫn báo "try again at 1:48 PM", lúc
+ghi hạn mức đã là 13:48:06 nên `providers.reset_time` cộng thêm một ngày (chờ tới 13:48 ngày 25/10). Sửa: lấy mốc giờ
+gần nhất (hôm qua/hôm nay/mai); mốc vừa trôi qua thì thử lại sau `subscription_wait_seconds`. Đã restart worker, Mark
+available cho Codex; T11 chạy lại lúc 15:42.
+
 ## 24/10: test không được validation chạy
 
 Manage an Account (f662ce06) T2 dừng vì test ở `backend/tests/integration/` (không lệnh nào chạy) bị coi là "pass sẵn".

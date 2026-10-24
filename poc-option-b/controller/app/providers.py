@@ -97,18 +97,19 @@ def limits(now: datetime | None = None) -> dict[str, dict]:
 
 def reset_time(message: str, now: datetime | None = None) -> datetime:
     """When the provider says it is back ("try again at 7:44 PM", the machine's local time), else after
-    subscription_wait_seconds."""
+    subscription_wait_seconds. The time is the nearest such clock time: one that has just passed (the message came
+    seconds before the reset, or the reset is late) means trying again after subscription_wait_seconds, not tomorrow."""
     now = now or datetime.now(timezone.utc)
+    wait = now + timedelta(seconds=get_settings().subscription_wait_seconds)
     found = RESET_AT.search(message or "")
     if found:
         hour, minute, half = int(found[1]), int(found[2] or 0), (found[3] or "").upper()
         hour = hour % 12 + (12 if half == "PM" else 0) if half else hour
         local = now.astimezone()
-        at = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        if at <= local:
-            at += timedelta(days=1)
-        return at.astimezone(timezone.utc)
-    return now + timedelta(seconds=get_settings().subscription_wait_seconds)
+        today = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        at = min((today + timedelta(days=d) for d in (-1, 0, 1)), key=lambda t: abs(t - local))
+        return at.astimezone(timezone.utc) if at > local else wait
+    return wait
 
 
 def mark_limited(engine: str, message: str) -> datetime:

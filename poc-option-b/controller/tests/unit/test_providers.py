@@ -15,6 +15,19 @@ def test_the_reset_time_a_provider_gives_is_read_in_local_time():
     assert provider_of("codex-readonly") == "codex" and provider_of("claude") == "claude"
 
 
+def test_a_reset_time_that_has_just_passed_is_tried_again_soon_not_tomorrow():
+    from datetime import timedelta
+    # Codex answered "try again at 1:48 PM" at 13:48:06 local: the window is back, not a day away
+    local = datetime.now().astimezone().replace(hour=13, minute=48, second=6, microsecond=0)
+    now = local.astimezone(timezone.utc)
+    at = reset_time("You've hit your usage limit ... try again at 1:48 PM.", now)
+    assert now < at <= now + timedelta(hours=1)
+    # late in the evening a reset after midnight is still the next morning
+    late = local.replace(hour=23, minute=30).astimezone(timezone.utc)
+    early = reset_time("try again at 1:10 AM", late).astimezone()
+    assert (early.hour, early.minute) == (1, 10) and early > late
+
+
 def test_the_chosen_model_and_effort_reach_the_cli_commands(tmp_path):
     from pathlib import Path
     from controller.app.doing.executors import ClaudeExecutor, CodexExecutor, Session
